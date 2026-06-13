@@ -1,5 +1,9 @@
 # pyflam
 
+[![CI](https://github.com/crifod/pyflam/actions/workflows/ci.yml/badge.svg)](https://github.com/crifod/pyflam/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
+
 An open-source Python reimplementation of the fire-behavior science behind
 [FlamMap](https://www.firelab.org/project/flammap) — built up from the published,
 peer-reviewed models rather than by decompiling the Windows binary.
@@ -22,10 +26,24 @@ outputs against real FlamMap/BehavePlus runs, not by reading their code.
 
 ```bash
 cd pyflam
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev]"      # core + test runner
 ```
 
-(Only dependency is NumPy. `pytest` comes with the `dev` extra.)
+Core dependencies are **NumPy** and **SciPy**. Optional extras unlock more:
+
+| extra | enables | install |
+|-------|---------|---------|
+| `dev` | the test runner (`pytest`) | `pip install -e ".[dev]"` |
+| `geo` | GeoTIFF/`.lcp` I/O (rasterio), GeoJSON reprojection (pyproj), contour-traced perimeters (scikit-image) | `pip install -e ".[geo]"` |
+| `atmos` | reading/fetching forecast & reanalysis (xarray, cfgrib, netcdf4, cdsapi) | `pip install -e ".[atmos]"` |
+
+Two engines are **external** and discovered at runtime (only needed for the
+high-fidelity paths; the rest of pyflam works without them):
+
+- **OpenFOAM** — the RANS terrain wind and the fire-plume coupling
+  (`brew install gerlero/openfoam/openfoam`, or set `PYFLAM_OPENFOAM`).
+- **Herbie** (`pip install herbie-data`) — live GFS forecast fetch; **ERA5** fetch
+  needs `cdsapi` + Copernicus credentials (`~/.cdsapirc`).
 
 ## Quick start
 
@@ -594,7 +612,35 @@ a crown-fire diff and a spotting-off single-fire perimeter diff remain.
   numerical weather prediction models in complex terrain with WindNinja.*
   (Momentum/CFD wind over terrain.)
 
+## Contributing
+
+Contributions are welcome — bug fixes, new science, validation against real
+FlamMap/BehavePlus runs. Development setup:
+
+```bash
+git clone https://github.com/crifod/pyflam && cd pyflam
+python -m pip install -e ".[dev,geo]"
+pytest -q
+```
+
+Guidelines:
+
+- **Test the way the suite does.** Each module pairs *physics/property* tests
+  (relationships the model must obey) with a *golden-master* regression that locks
+  current outputs. Add both for new science, and cite the source equation in the
+  code (see `pyflam/rothermel.py` for the style).
+- **Optional-dependency tests skip themselves.** Anything needing OpenFOAM, live
+  GFS (Herbie/cfgrib) or ERA5 (cdsapi + credentials) skips when the dependency or
+  credentials are absent — install them locally to exercise those paths. See
+  `tests/REFERENCE.md` (validation) and `tests/CFD_VALIDATION.md` (the CFD bench).
+- **CI must stay green.** `.github/workflows/ci.yml` runs the suite on Python
+  3.11–3.13; please run `pytest` before opening a PR.
+- **Validation is the gold standard.** A cell-by-cell diff against real FlamMap
+  output beats any golden-master number — `pyflam.validate` and the
+  `tests/validate_flammap_*.py` scripts are the harness.
+
 ## License
 
-MIT (this reimplementation). FlamMap itself is a separate USDA Forest Service
-product; nothing here is derived from its binaries.
+MIT — see [LICENSE](LICENSE). FlamMap itself is a separate USDA Forest Service
+product; this is an independent reimplementation from published models and
+contains no FlamMap code.
