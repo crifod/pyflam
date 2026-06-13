@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install pyflam and test dependencies
+        # Core + dev + geo (rasterio) + the optional readers used by the
+        # atmosphere / operative tests. OpenFOAM, Herbie/cfgrib (live GFS) and
+        # cdsapi (ERA5) are intentionally NOT installed: those tests skip
+        # themselves in CI (no solver / no network / no credentials).
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,geo]" xarray netcdf4 scikit-image pyproj
+
+      - name: Run test suite
+        run: pytest -q -p no:warnings
