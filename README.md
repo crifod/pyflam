@@ -1,6 +1,6 @@
 # pyflam
 
-[![CI](https://github.com/crifod/pyflam/actions/workflows/ci.yml/badge.svg)](https://github.com/crifod/pyflam/actions/workflows/ci.yml)
+[![CI](https://github.com/crifod/pyflam/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/crifod/pyflam/actions/workflows/ci.yml?query=branch%3Amain)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 
