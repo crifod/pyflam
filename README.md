@@ -696,18 +696,29 @@ that diff is the true acceptance criterion before trusting the numbers.
 | **3** | Directional (vector) spread (`pyflam.mtt.spread_field`) + per-fuel/canopy wind adjustment factor (`pyflam.wind_reduction`) | ✅ |
 | **4** | Crown fire: Van Wagner (1977), Rothermel (1991), Scott & Reinhardt (2001) | ✅ |
 | **5** | Spread engine: Minimum Travel Time (Finney 2002), elliptical wavelets (Finney 1998) | ✅ |
-| **6** | Validation harness vs. real FlamMap rasters (`pyflam.validate`); ROS ~3%, max-spread direction ~1° | 🚧 |
+| **6** | Validation vs. real FlamMap rasters (`pyflam.validate`); ROS ~3%, max-spread dir ~1°, conditional fireline intensity ~2% | 🚧 |
 
 Step 5 implements MTT with ember spotting (`pyflam.spotting`) and a fuel-load
 factor; FARSITE-style explicit perimeter looping is an alternative not provided.
-Against a real FlamMap run (`tests/REFERENCE.md`): surface ROS matches to ~3% and
-max-spread direction to ~1° over 1.6M cells. Burn probability is only partly
-recoverable — adding spotting raises it ~36× (to within ~3× of FlamMap), but its
-parameters are calibrated and the cell-level pattern is Monte-Carlo-noise-limited;
-a crown-fire diff and a spotting-off single-fire perimeter diff remain. The
-*connected* metric is stronger: the conditional fireline intensity from
-`burn_probability(..., return_metrics=True)` matches FlamMap's `FIRE_LINE_INT`
-mean to within ~2% (`validate_flammap_mtt.py --burnprob`).
+
+Validation runs against the real FlamMap rasters in the Tuscany dataset via
+`tests/validate_flammap_mtt.py` (`--direction` / `--burnprob`, also `--ensemble`,
+`--condition`, `--compare-methods`). Confirmed so far, over the 1.6M-cell landscape:
+
+- **Surface ROS** matches FlamMap to **~3%** (slope 0.98, *r* 0.9998) and **max
+  spread direction** to **~1°** (mean 0.96°) — the deterministic engine is validated.
+- **Conditional fireline intensity** from `burn_probability(..., return_metrics=True)`
+  matches FlamMap's `FIRE_LINE_INT` mean to **~2%** — the strongest connected-metric
+  agreement.
+- **Burn probability** is only partly recoverable: ember spotting raises pyflam's
+  mean BP ~36× (to within ~3× of FlamMap), but the spotting parameters are
+  calibrated and the cell-level pattern is Monte-Carlo-noise-limited at a few
+  hundred fires; the spatial correlation stays low.
+
+**Remaining for step 6:** a crown-fire diff (the dataset has no canopy bands), a
+spotting-off single-fire **perimeter / time-of-arrival** diff (the dataset ships no
+arrival-time raster — only BP/intensity/ROS/spread-direction), and tightening the
+burn-probability spatial agreement.
 
 ## References
 
