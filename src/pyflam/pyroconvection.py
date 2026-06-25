@@ -30,6 +30,8 @@ References:
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 from . import cfd
@@ -139,6 +141,31 @@ def _uv_to_windfield(u, v, like):
                      speed_units="m/s", crs=like.crs)
 
 
+def _stabilize_wind(wf_new, wf_prev, ls, *, relax, max_factor, ambient_mean_ms):
+    """Damp and cap the plume-fed wind to keep the coupling feedback bounded.
+
+    Under-relaxation blends this increment's wind with the previous one
+    (vectorially, in u/v) -- ``relax=1`` is no damping; smaller damps harder. The
+    cap limits each cell's speed to ``max_factor * ambient mean speed``, so the
+    crowning -> plume -> wind -> crown loop cannot run away. A no-op at the defaults
+    (``relax=1``, ``max_factor=inf``).
+    """
+    wf = wf_new if wf_new.shape == ls.shape else wf_new.to_landscape(ls)
+    if relax < 1.0 and wf_prev is not None:
+        wp = wf_prev if wf_prev.shape == ls.shape else wf_prev.to_landscape(ls)
+        up, vp = _windfield_to_uv(wp)
+        un, vn = _windfield_to_uv(wf)
+        wf = _uv_to_windfield((1.0 - relax) * up + relax * un,
+                              (1.0 - relax) * vp + relax * vn, like=wf)
+    if math.isfinite(max_factor) and ambient_mean_ms > 0.0:
+        cap = max_factor * ambient_mean_ms
+        u, v = _windfield_to_uv(wf)
+        spd = np.hypot(u, v)
+        scale = np.where(spd > cap, cap / np.maximum(spd, 1e-9), 1.0)
+        wf = _uv_to_windfield(u * scale, v * scale, like=wf)
+    return wf
+
+
 def superpose_plume(ambient_wf, base_wf, fire_wf):
     """Add a plume perturbation (fire - base) onto an ambient wind field.
 
@@ -218,6 +245,8 @@ def fire_atmosphere_march(
     cbh_scale: float = 0.1,
     cbd_scale: float = 0.01,
     crown_heat_content: float = 18000.0,
+    wind_relax: float = 1.0,
+    max_wind_factor: float = math.inf,
     return_history: bool = False,
     **cfd_kwargs,
 ):
@@ -260,8 +289,15 @@ def fire_atmosphere_march(
     and canopy base-height / bulk-density bands on ``ls``; the output then also
     carries the final ``fire_type`` raster.
 
+    **Feedback stability.** The plume->wind->spread loop is positive feedback, so two
+    bounds keep it from running away: ``wind_relax`` (0-1) under-relaxes the wind by
+    blending each increment with the previous (``1`` = none, default; ``~0.5`` damps),
+    and ``max_wind_factor`` caps each cell's speed at that multiple of the ambient
+    mean wind (default ``inf`` = no cap). ``return_history`` adds ``mean_wind`` per
+    increment so a run's boundedness can be checked.
+
     Returns a dict with ``arrival_time`` (minutes); with ``return_history`` also
-    ``winds``/``fields``/``times`` lists, one per increment.
+    ``winds``/``fields``/``times``/``mean_wind`` lists, one per increment.
     """
     if atmosphere is None and None in (speed, direction, m_1h, m_10h, m_100h):
         raise ValueError(
@@ -343,13 +379,23 @@ def fire_atmosphere_march(
     nrows, ncols = ls.shape
     n = nrows * ncols
 
+    def _mean_ms(w):
+        return float(np.nanmean(w.speed_ft_per_min())) * _MS_PER_FT_MIN
+
+    def _ambient_mean_ms(spd_scalar, wf_a):
+        if wf_a is not None:
+            return _mean_ms(wf_a)
+        return float(spd_scalar) if spd_scalar is not None else 0.0
+
     # Increment 0: ambient wind, no plume.
     moist, spd, dirn, ambient_q[0], wf_atm = resolve(0.0)
     wf = wf_atm if wf_atm is not None else ambient_wind_provider(ls, spd, dirn)
     field = build_field(wf, moist)
     arrival = minimum_travel_time(field, ignitions, max_time=dt, ring=ring)
 
-    history = {"winds": [wf], "fields": [field], "times": [dt]}
+    wf_prev = wf
+    history = {"winds": [wf], "fields": [field], "times": [dt],
+               "mean_wind": [_mean_ms(wf)]}
     t = dt
     while t < total_time - 1e-9:
         t_next = min(t + dt, total_time)
@@ -366,6 +412,11 @@ def fire_atmosphere_march(
                   if plume else wf_atm)       # merge the plume onto the ambient field
         else:
             wf = wind_provider(ls, field.fireline_intensity, active, spd, dirn)
+        # Bound the feedback: under-relax against the previous wind and cap the speed.
+        wf = _stabilize_wind(wf, wf_prev, ls, relax=wind_relax,
+                             max_factor=max_wind_factor,
+                             ambient_mean_ms=_ambient_mean_ms(spd, wf_atm))
+        wf_prev = wf
         field = build_field(wf, moist)
         graph = build_traveltime_graph(field, ring=ring)
         rb, cb = np.where(burned)
@@ -378,6 +429,7 @@ def fire_atmosphere_march(
             history["winds"].append(wf)
             history["fields"].append(field)
             history["times"].append(t_next)
+            history["mean_wind"].append(_mean_ms(wf))
         t = t_next
 
     out = {"arrival_time": arrival}

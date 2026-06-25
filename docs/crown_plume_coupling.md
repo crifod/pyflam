@@ -153,14 +153,18 @@ res = pyflam.fire_atmosphere_march(
    `crown_spread_field`), so crown intensity feeds the plume/spotting and the crown
    ROS drives growth; output carries the `fire_type` raster. Wind provider injectable
    → tested without OpenFOAM. *Done (`tests/test_crown_march.py`).*
-4. **Feedback stability** (§5) + synthetic convergence test. *Medium.* (The feedback
-   path now exists; under-relaxation / convergence guards are the remaining work.)
+4. ✅ **Feedback stability** (§5) + stress test. *Done* — `fire_atmosphere_march`
+   gained `wind_relax` (under-relaxation: vector blend of consecutive winds; `1` =
+   none) and `max_wind_factor` (cap each cell's speed at that multiple of the ambient
+   mean), a no-op at the defaults; `return_history` adds `mean_wind` per increment.
+   `tests/test_feedback_stability.py` proves a runaway plume is bounded.
 5. **Spotting-from-crown-intensity** verification + plume-enhancement physics test.
    *Small.* (Spotting already lofts from `field.fireline_intensity`, which is crown
    intensity under `crown=True`; a dedicated physics test remains.)
 6. **Quantitative validation** once a canopy landscape + FlamMap crown raster exist.
 
-Steps 1–3 are done: a crown-aware spread field, the single wind reconciliation, and
-the march wiring that closes the crowning → plume → wind → crown feedback. The next
-increment is step 4 — bounding that feedback (under-relaxation + a convergence guard)
-with a synthetic stress test.
+Steps 1–4 are done: a crown-aware spread field, the single wind reconciliation, the
+march wiring that closes the crowning → plume → wind → crown feedback, and the
+stabilizers that keep it bounded. The next increment is step 5 — a dedicated test
+that ember spotting strengthens under crown intensity (the loft path already reads
+the crown `fireline_intensity`).
