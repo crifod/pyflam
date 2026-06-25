@@ -158,13 +158,19 @@ res = pyflam.fire_atmosphere_march(
    none) and `max_wind_factor` (cap each cell's speed at that multiple of the ambient
    mean), a no-op at the defaults; `return_history` adds `mean_wind` per increment.
    `tests/test_feedback_stability.py` proves a runaway plume is bounded.
-5. **Spotting-from-crown-intensity** verification + plume-enhancement physics test.
-   *Small.* (Spotting already lofts from `field.fireline_intensity`, which is crown
-   intensity under `crown=True`; a dedicated physics test remains.)
+5. ✅ **Spotting-from-crown-intensity** physics test. *Done* —
+   `tests/test_crown_spotting.py`: the spotting models loft from
+   `field.fireline_intensity`, so a crown-aware field (whose crown intensity ran
+   ~40x the surface value in the test landscape) drives much farther firebrand
+   reach (`SpottingModel.max_spot_distance`) and lands embers farther downwind
+   (`generate_spots`) than the surface field. No new code — the step-1 crown-aware
+   field already carries the right intensity into the existing loft path.
 6. **Quantitative validation** once a canopy landscape + FlamMap crown raster exist.
 
-Steps 1–4 are done: a crown-aware spread field, the single wind reconciliation, the
-march wiring that closes the crowning → plume → wind → crown feedback, and the
-stabilizers that keep it bounded. The next increment is step 5 — a dedicated test
-that ember spotting strengthens under crown intensity (the loft path already reads
-the crown `fireline_intensity`).
+Steps 1–5 are done — the crown / plume / spotting coupling is built end to end: a
+crown-aware spread field, a single wind reconciliation, the march wiring that closes
+the crowning → plume → wind → crown feedback, the stabilizers that bound it, and the
+crown-driven spotting it produces. **Only step 6 remains** (quantitative validation
+against FlamMap crown output), blocked on data — a landscape with canopy bands and a
+FlamMap crown-activity raster — not on code; the harness
+(`validate_flammap_crown.py`) is ready for it.
