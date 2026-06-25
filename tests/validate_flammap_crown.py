@@ -8,6 +8,13 @@ FlamMap's "Crown Fire Activity" raster is the same classification, so the diff i
 3-class confusion matrix (`pyflam.validate.compare_categories`) plus field
 comparisons of crown fraction / intensity where both classify crowning.
 
+Note: FlamMap is **not ground truth** for crown fire. FlamMap and the Rothermel +
+Van Wagner operational stack under-predict crown fire spread (Cruz & Alexander 2010),
+which is why pyflam defaults to the Cruz et al. (2005) crown ROS. So this harness is
+for *comparing* crown classifications across models/sources (Cruz vs Rothermel vs
+FlamMap), not for treating a FlamMap diff as an acceptance test -- a disagreement
+where pyflam-Cruz crowns and FlamMap stays surface is expected, not an error.
+
 **Data requirements** (this is why it's a harness, not yet a result): the landscape
 must carry **canopy base height (CBH)** and **canopy bulk density (CBD)** bands, and
 the FlamMap run must export a crown-fire-activity raster. The bundled Tuscany

@@ -735,17 +735,21 @@ Validation runs against the real FlamMap rasters in the Tuscany dataset via
 **Next focus — completing step 6 validation.** With the core engines in place, the
 active priority is closing the remaining diffs against real FlamMap output:
 
-- **Crown fire** — the harness is **built and self-tested** (`tests/validate_flammap_crown.py`,
-  `validate.compare_categories` for the surface/passive/active confusion matrix);
-  run `python tests/validate_flammap_crown.py --synthetic` to exercise it. The
-  **whole crown pipeline now runs on a file-based landscape** via
-  `tests/make_synthetic_canopy_lcp.py`, which writes a synthetic `.lcp` with the full
-  canopy fuel stack (CBH/CBD/CH) and runs read → crown classification (Cruz 2005 vs
-  Rothermel 1991) → crown-aware spread field → plume-coupled crown march on it. The
-  one thing still missing for a quantitative diff is a **FlamMap crown-activity
-  raster** — the bundled Tuscany dataset has no canopy bands and only surface-fire
-  output, so a real diff awaits either a FlamMap run on a canopy landscape or the
-  synthetic one above paired with a FlamMap export.
+- **Crown fire** — *deliberately not validated against FlamMap.* FlamMap and the
+  whole Rothermel + Van Wagner operational stack are known to **under-predict crown
+  fire spread** (Cruz & Alexander 2010), which is exactly why pyflam implements the
+  newer **Cruz, Alexander & Wakimoto (2005/2004)** crown ROS and initiation models
+  instead. So the validation here is *fidelity to those literature-validated models*,
+  not a diff against a biased reference: the equations are unit-tested against the
+  published coefficients (`tests/test_crownfire_cruz.py`), so pyflam inherits their
+  validation against observed wildfires (Cruz 2005: ~61% of variance over 57
+  wildfire observations). `tests/make_synthetic_canopy_lcp.py` exercises the whole
+  pipeline on a real `.lcp` (read → Cruz vs Rothermel classification → crown-aware
+  spread field → plume-coupled crown march) and shows the operational
+  under-prediction directly — Rothermel leaves cells passive that Cruz makes active.
+  The `compare_categories` harness remains for *comparing crown models / sources*
+  (incl. FlamMap, as a comparison rather than ground truth), not as an acceptance
+  test. Validation against *observed* crown-fire ROS would be the right next anchor.
 - **Perimeter / time-of-arrival** — a spotting-off single-fire diff
   (`compare_perimeters` / `compare_arrival_times`) needs a FlamMap arrival-time
   export; the current dataset ships only BP / intensity / ROS / spread-direction.

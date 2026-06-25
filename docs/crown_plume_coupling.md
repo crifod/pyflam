@@ -165,12 +165,18 @@ res = pyflam.fire_atmosphere_march(
    reach (`SpottingModel.max_spot_distance`) and lands embers farther downwind
    (`generate_spots`) than the surface field. No new code — the step-1 crown-aware
    field already carries the right intensity into the existing loft path.
-6. **Quantitative validation** once a canopy landscape + FlamMap crown raster exist.
+6. **Quantitative validation against _observed_ crown fire** (not FlamMap). FlamMap
+   and the Rothermel + Van Wagner stack under-predict crown fire (Cruz & Alexander
+   2010), so a diff against FlamMap would validate against a known-biased reference —
+   the opposite of the point. Instead: (a) the Cruz 2005/2004 equations are
+   unit-tested against their published coefficients, so pyflam inherits their
+   literature validation against observed wildfires; (b) the right next anchor is a
+   comparison to observed crown-fire rate of spread (analogous to
+   `spotting.LITERATURE_SPOT_ANCHORS`), if such data can be sourced.
 
 Steps 1–5 are done — the crown / plume / spotting coupling is built end to end: a
 crown-aware spread field, a single wind reconciliation, the march wiring that closes
 the crowning → plume → wind → crown feedback, the stabilizers that bound it, and the
-crown-driven spotting it produces. **Only step 6 remains** (quantitative validation
-against FlamMap crown output), blocked on data — a landscape with canopy bands and a
-FlamMap crown-activity raster — not on code; the harness
-(`validate_flammap_crown.py`) is ready for it.
+crown-driven spotting it produces. Step 6 is reframed away from FlamMap (above): the
+implementation is faithful to the literature-validated Cruz models, exercised end to
+end on a synthetic canopy `.lcp` (`tests/make_synthetic_canopy_lcp.py`).
