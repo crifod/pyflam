@@ -696,7 +696,7 @@ that diff is the true acceptance criterion before trusting the numbers.
 | **3** | Directional (vector) spread (`pyflam.mtt.spread_field`) + per-fuel/canopy wind adjustment factor (`pyflam.wind_reduction`) | ✅ |
 | **4** | Crown fire: Van Wagner (1977), Rothermel (1991), Scott & Reinhardt (2001) | ✅ |
 | **5** | Spread engine: Minimum Travel Time (Finney 2002), elliptical wavelets (Finney 1998) | ✅ |
-| **6** | Validation vs. real FlamMap rasters (`pyflam.validate`); ROS ~3%, max-spread dir ~1°, conditional fireline intensity ~2% | 🚧 |
+| **6** | Validation vs. real FlamMap rasters (`pyflam.validate`); ROS ~3%, max-spread dir ~1°, conditional fireline intensity ~2% | 🚧 **← next focus** |
 
 Step 5 implements MTT with ember spotting (`pyflam.spotting`) and a fuel-load
 factor; FARSITE-style explicit perimeter looping is an alternative not provided.
@@ -715,10 +715,14 @@ Validation runs against the real FlamMap rasters in the Tuscany dataset via
   calibrated and the cell-level pattern is Monte-Carlo-noise-limited at a few
   hundred fires; the spatial correlation stays low.
 
-**Remaining for step 6:** a crown-fire diff (the dataset has no canopy bands), a
-spotting-off single-fire **perimeter / time-of-arrival** diff (the dataset ships no
-arrival-time raster — only BP/intensity/ROS/spread-direction), and tightening the
-burn-probability spatial agreement.
+**Next focus — completing step 6 validation.** With the core engines in place, the
+active priority is closing the remaining diffs against real FlamMap output: a
+crown-fire diff (needs a landscape with canopy bands — the Tuscany dataset has
+none), a spotting-off single-fire **perimeter / time-of-arrival** diff (needs a
+FlamMap arrival-time export — the current dataset ships only BP / intensity / ROS /
+spread-direction rasters), and tightening the **burn-probability spatial
+agreement** (more fires + calibrated spotting). Contributions of reference datasets
+with those outputs are especially welcome.
 
 ## References
 
