@@ -549,9 +549,17 @@ res = pyflam.burn_probability([(0.5, calm), (0.5, windy)], ign,
   is usable/testable with or without OpenFOAM). Quasi-steady.
 - `pyflam.rothermel.SurfaceKernel` — the wind/slope-independent Rothermel terms,
   computed once per fuel + moisture and applied to scalar or array (wind, slope).
-- `pyflam.crownfire` — crown fire: Van Wagner (1977) initiation, Rothermel (1991)
-  active spread, Scott & Reinhardt (2001) surface/passive/active classification,
-  crown fraction burned, and torching/crowning indices (point + landscape).
+- `pyflam.crownfire` — crown fire: Van Wagner (1977) initiation, Scott & Reinhardt
+  (2001) surface/passive/active classification, crown fraction burned, and
+  torching/crowning indices (point + landscape). The **active-spread model is
+  selectable** (`crown_spread=`): `"rothermel1991"` (the classic `3.34·R_10`,
+  default) or **`"cruz2005"`** (`active_crown_ros_cruz` — Cruz, Alexander & Wakimoto
+  2005, `f(U10, CBD, fine moisture)`), which Cruz & Alexander (2010) showed has far
+  less of the crown-fire under-prediction bias built into the Rothermel + Van Wagner
+  operational stack; the Cruz path also drops the unsubstantiated crown-fraction
+  ROS reduction. `crown_fire_probability` adds the **CFIS logistic crown-initiation**
+  model (Cruz et al. 2004) — a probability of crowning as an alternative to the
+  deterministic Van Wagner threshold.
 - `pyflam.mtt` — fire growth: directional elliptical spread (Finney 1998 +
   Anderson 1983 length-to-breadth), the Minimum Travel Time arrival-time /
   perimeter solver (Finney 2002), `burn_probability` (many fixed-duration fires on

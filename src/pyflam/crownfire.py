@@ -70,6 +70,73 @@ _CROWN_WIND_REDUCTION = 0.4
 # CFB = 0.9 at the active-crowning spread rate R'_active.
 _CFB_AT_ACTIVE = 0.9
 
+# --- Cruz, Alexander & Wakimoto (2005) active crown-fire rate of spread ---------
+# CROS_active = 11.02 * U10^0.90 * CBD^0.19 * exp(-0.17 * M1)   [m/min]
+# U10 = 10-m open wind (km/h), CBD = canopy bulk density (kg/m^3), M1 = fine dead
+# fuel moisture (%). The empirical successor to Rothermel (1991); operational
+# systems built on Rothermel's 3.34 correlation have a significant crown-fire
+# under-prediction bias (Cruz & Alexander 2010).
+_CRUZ2005 = (11.02, 0.90, 0.19, 0.17)
+# 20-ft (6.1 m) open wind -> 10-m open wind: the log-wind-profile ratio over open
+# ground (U10 ~ U20ft / 0.87).
+_U20FT_TO_U10 = 1.0 / 0.87
+_FT_PER_MIN_TO_KM_PER_H = 0.018288         # 1 ft/min = 0.018288 km/h
+
+# --- Cruz, Alexander & Wakimoto (2004) crown-fire-initiation logistic model -----
+# P(crown) = 1 / (1 + exp(-g));  g = 4.236 + 0.357*U10 - 0.710*FSG + SFC_effect
+#   - 0.331*EFFM.  U10 (km/h), FSG = fuel strata gap (m, ~ height to live crown
+# base), SFC = surface fuel consumption (kg/m^2), EFFM = estimated fine dead fuel
+# moisture (%). Nagelkerke R^2 = 0.74, 85% correct, ROC 0.94 (n=71).
+_CFO_CONST, _CFO_U10, _CFO_FSG, _CFO_EFFM = 4.236, 0.357, -0.710, -0.331
+_CFO_SFC_LOW, _CFO_SFC_MID = -4.613, -1.856   # SFC <1.0 ; 1.0-2.0 (>=2.0 -> 0)
+
+
+def active_crown_ros_cruz(wind_20ft_ft_per_min, *, canopy_bulk_density,
+                          m_1h: float) -> float:
+    """Cruz, Alexander & Wakimoto (2005) active crown-fire spread rate (m/min).
+
+    ``CROS_active = 11.02 * U10^0.90 * CBD^0.19 * exp(-0.17 * M1)`` -- the
+    empirical successor to :func:`active_crown_ros` (Rothermel 1991), with far less
+    under-prediction bias (Cruz & Alexander 2010). ``wind_20ft_ft_per_min`` is the
+    20-ft open wind (ft/min; converted internally to a 10-m open wind),
+    ``canopy_bulk_density`` kg/m^3, ``m_1h`` the dead 1-h fuel moisture (fraction).
+    Returns 0 for zero CBD (no canopy).
+    """
+    cbd = float(canopy_bulk_density)
+    if cbd <= 0.0:
+        return 0.0
+    a, p_u, p_cbd, k_m = _CRUZ2005
+    u10 = max(float(wind_20ft_ft_per_min) * _FT_PER_MIN_TO_KM_PER_H * _U20FT_TO_U10,
+              0.0)
+    return a * u10 ** p_u * cbd ** p_cbd * math.exp(-k_m * float(m_1h) * 100.0)
+
+
+def _sfc_category_effect(sfc):
+    """Cruz (2004) categorical surface-fuel-consumption logit term (kg/m^2)."""
+    return np.where(sfc < 1.0, _CFO_SFC_LOW, np.where(sfc < 2.0, _CFO_SFC_MID, 0.0))
+
+
+def crown_fire_probability(*, wind_10m_kmh, fuel_strata_gap,
+                           surface_fuel_consumption, fine_fuel_moisture):
+    """Cruz, Alexander & Wakimoto (2004) probability of crown-fire occurrence (0..1).
+
+    The CFIS logistic crown-fire-initiation model -- a probabilistic alternative to
+    the deterministic Van Wagner threshold (:func:`critical_fireline_intensity` /
+    :func:`crown_fire_behavior`'s ``initiates``). Inputs: ``wind_10m_kmh`` (km/h,
+    10-m open wind), ``fuel_strata_gap`` (m, the gap from the top of the surface
+    fuel to the live crown base -- often approximated by canopy base height),
+    ``surface_fuel_consumption`` (kg/m^2), ``fine_fuel_moisture`` (%). Scalars or
+    arrays.
+    """
+    u10 = np.asarray(wind_10m_kmh, dtype=float)
+    fsg = np.asarray(fuel_strata_gap, dtype=float)
+    effm = np.asarray(fine_fuel_moisture, dtype=float)
+    sfc = np.asarray(surface_fuel_consumption, dtype=float)
+    g = (_CFO_CONST + _CFO_U10 * u10 + _CFO_FSG * fsg
+         + _sfc_category_effect(sfc) + _CFO_EFFM * effm)
+    p = 1.0 / (1.0 + np.exp(-g))
+    return float(p) if p.ndim == 0 else p
+
 
 @dataclass
 class CrownFireBehavior:
@@ -173,8 +240,16 @@ def crown_fire_behavior(
     m_100h: float,
     m_live_herb: float = 0.0,
     m_live_woody: float = 0.0,
+    crown_spread: str = "rothermel1991",
 ) -> CrownFireBehavior:
     """Classify and quantify crown fire at one point (Scott & Reinhardt 2001).
+
+    ``crown_spread`` selects the **active** crown-fire spread-rate model:
+    ``"rothermel1991"`` (default, ``3.34 * R_10``) or ``"cruz2005"`` (Cruz et al.
+    2005, ``f(U10, CBD, fine moisture)`` -- much less under-prediction bias; see
+    :func:`active_crown_ros_cruz`). With ``"cruz2005"`` an *active* crown fire
+    spreads at the full Cruz rate (no crown-fraction-burned reduction, which Cruz &
+    Alexander 2010 found unsubstantiated) and consumes the whole canopy.
 
     Parameters
     ----------
@@ -197,10 +272,16 @@ def crown_fire_behavior(
 
     i_crit = critical_fireline_intensity(canopy_base_height, foliar_moisture)
     r_active_crit = critical_active_ros(canopy_bulk_density)
-    r_active = active_crown_ros(
-        wind_20ft_ft_per_min, m_1h=m_1h, m_10h=m_10h, m_100h=m_100h,
-        m_live_herb=m_live_herb, m_live_woody=m_live_woody,
-    )
+    if crown_spread == "cruz2005":
+        r_active = active_crown_ros_cruz(
+            wind_20ft_ft_per_min, canopy_bulk_density=canopy_bulk_density, m_1h=m_1h)
+    elif crown_spread == "rothermel1991":
+        r_active = active_crown_ros(
+            wind_20ft_ft_per_min, m_1h=m_1h, m_10h=m_10h, m_100h=m_100h,
+            m_live_herb=m_live_herb, m_live_woody=m_live_woody,
+        )
+    else:
+        raise ValueError("crown_spread must be 'rothermel1991' or 'cruz2005'")
 
     initiates = i_surface >= i_crit and i_crit > 0.0
 
@@ -216,9 +297,14 @@ def crown_fire_behavior(
         fire_type = "surface"
         r_final = r_surface
     else:
-        cfb = crown_fraction_burned(r_surface, r_init, r_active_crit)
-        r_final = r_surface + cfb * (r_active - r_surface)
-        fire_type = "active" if r_active >= r_active_crit else "passive"
+        active = r_active >= r_active_crit
+        fire_type = "active" if active else "passive"
+        if crown_spread == "cruz2005" and active:
+            cfb = 1.0                       # active crown -> whole canopy consumed
+            r_final = r_active              # full Cruz rate (no CFB reduction)
+        else:
+            cfb = crown_fraction_burned(r_surface, r_init, r_active_crit)
+            r_final = r_surface + cfb * (r_active - r_surface)
 
     # Total fireline intensity: surface plus the canopy fuel actually consumed
     # (CFB * canopy load), as Byram intensity I = H * w * R (SI: kW/m).
@@ -341,11 +427,14 @@ def crown_fire_potential(
     cbh_scale: float = 0.1,
     cbd_scale: float = 0.01,
     heat_content: float = 18000.0,
+    crown_spread: str = "rothermel1991",
 ) -> dict[str, np.ndarray]:
     """Per-cell crown-fire potential over a whole landscape.
 
     Runs the surface model (uniform moisture, per-cell slope), then applies the
     crown-fire classification of :func:`crown_fire_behavior` cell-by-cell.
+    ``crown_spread`` selects the active spread model: ``"rothermel1991"`` (default)
+    or ``"cruz2005"`` (Cruz et al. 2005, less under-prediction bias).
     Requires the landscape to carry ``canopy_base_height`` and
     ``canopy_bulk_density`` bands.
 
@@ -389,12 +478,23 @@ def crown_fire_potential(
     moist = dict(m_1h=m_1h, m_10h=m_10h, m_100h=m_100h,
                  m_live_herb=m_live_herb, m_live_woody=m_live_woody)
 
-    # Fuel-model-10 active crown ROS depends only on wind + moisture, so compute
+    # Active crown ROS depends only on wind + moisture (+ CBD for Cruz), so compute
     # it once across the grid (vectorized) rather than per cell.
-    fm10_kernel = _kernel(fuel_models.get(10), **moist)
-    r_active = _ROTHERMEL_CROWN_FACTOR * ft_per_min_to_m_per_min(
-        fm10_kernel.rate_of_spread(_CROWN_WIND_REDUCTION * wind20, 0.0)
-    )
+    if crown_spread == "cruz2005":
+        a, p_u, p_cbd, k_m = _CRUZ2005
+        u10 = np.maximum(wind20 * _FT_PER_MIN_TO_KM_PER_H * _U20FT_TO_U10, 0.0)
+        r_active = np.where(
+            cbd > 0.0,
+            a * u10 ** p_u * np.maximum(cbd, 1e-12) ** p_cbd
+            * np.exp(-k_m * float(moist["m_1h"]) * 100.0),
+            0.0)
+    elif crown_spread == "rothermel1991":
+        fm10_kernel = _kernel(fuel_models.get(10), **moist)
+        r_active = _ROTHERMEL_CROWN_FACTOR * ft_per_min_to_m_per_min(
+            fm10_kernel.rate_of_spread(_CROWN_WIND_REDUCTION * wind20, 0.0)
+        )
+    else:
+        raise ValueError("crown_spread must be 'rothermel1991' or 'cruz2005'")
     r_active_crit = np.where(cbd > 0.0, CRITICAL_MASS_FLOW / np.maximum(cbd, 1e-9),
                              np.inf)
     i_crit = np.where(
@@ -436,7 +536,14 @@ def crown_fire_potential(
             np.clip(1.0 - np.exp(-a_c * (r_surf - r_init)), 0.0, 1.0),
             0.0,
         )
-        r_final = np.where(initiates, r_surf + cfb_cell * (rac - r_surf), r_surf)
+        if crown_spread == "cruz2005":
+            active = initiates & (rac >= racc)        # CAC >= 1
+            cfb_cell = np.where(active, 1.0, cfb_cell)  # active -> whole canopy
+            r_final = np.where(
+                active, rac,                            # full Cruz rate, no reduction
+                np.where(initiates, r_surf + cfb_cell * (rac - r_surf), r_surf))
+        else:
+            r_final = np.where(initiates, r_surf + cfb_cell * (rac - r_surf), r_surf)
         ftype = np.where(~initiates, 0, np.where(rac >= racc, 2, 1)).astype(np.int8)
 
         i_crown = heat_content * (cfb_cell * canopy_load[mask]) * (r_final / 60.0)

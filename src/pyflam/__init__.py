@@ -54,8 +54,10 @@ from .windsolver import solve_mass_consistent, wind_field_from_landscape
 from .cfd import solve_rans
 from .crownfire import (
     CrownFireBehavior,
+    active_crown_ros_cruz,
     crown_fire_behavior,
     crown_fire_potential,
+    crown_fire_probability,
     crowning_index,
     torching_index,
 )
@@ -146,6 +148,8 @@ __all__ = [
     "CrownFireBehavior",
     "crown_fire_behavior",
     "crown_fire_potential",
+    "crown_fire_probability",
+    "active_crown_ros_cruz",
     "crowning_index",
     "torching_index",
     "SpreadField",
