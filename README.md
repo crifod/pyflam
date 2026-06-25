@@ -664,9 +664,12 @@ res = pyflam.burn_probability([(0.5, calm), (0.5, windy)], ign,
   FlamMap output rasters (bias/RMSE/ratios/correlation/OLS, log-space and
   "within X%" stats, burn/no-burn classification), a parameter scan to recover
   unknown run settings, **perimeter overlap** (`compare_perimeters`: Jaccard /
-  Dice / Hausdorff) and **arrival-time agreement** (`compare_arrival_times`) for
-  the MTT growth engine vs a FlamMap single-fire (spotting-off) export. See
-  `tests/REFERENCE.md` and `tests/validate_flammap_perimeter.py`.
+  Dice / Hausdorff), **arrival-time agreement** (`compare_arrival_times`) for the
+  MTT growth engine vs a FlamMap single-fire (spotting-off) export, and
+  **categorical agreement** (`compare_categories`: confusion matrix + per-class
+  recall) for classified rasters such as crown fire type (surface/passive/active).
+  See `tests/REFERENCE.md`, `tests/validate_flammap_perimeter.py` and
+  `tests/validate_flammap_crown.py`.
 - `pyflam.units` — English/SI unit conversions.
 
 ## Testing
@@ -716,13 +719,21 @@ Validation runs against the real FlamMap rasters in the Tuscany dataset via
   hundred fires; the spatial correlation stays low.
 
 **Next focus — completing step 6 validation.** With the core engines in place, the
-active priority is closing the remaining diffs against real FlamMap output: a
-crown-fire diff (needs a landscape with canopy bands — the Tuscany dataset has
-none), a spotting-off single-fire **perimeter / time-of-arrival** diff (needs a
-FlamMap arrival-time export — the current dataset ships only BP / intensity / ROS /
-spread-direction rasters), and tightening the **burn-probability spatial
-agreement** (more fires + calibrated spotting). Contributions of reference datasets
-with those outputs are especially welcome.
+active priority is closing the remaining diffs against real FlamMap output:
+
+- **Crown fire** — the harness is **built and self-tested** (`tests/validate_flammap_crown.py`,
+  `validate.compare_categories` for the surface/passive/active confusion matrix);
+  run `python tests/validate_flammap_crown.py --synthetic` to exercise it. It needs
+  a landscape with **canopy base height + bulk density** bands and a FlamMap
+  crown-activity raster — the bundled Tuscany dataset has neither (canopy cover only,
+  surface-fire output), so the script reports what's missing on that data.
+- **Perimeter / time-of-arrival** — a spotting-off single-fire diff
+  (`compare_perimeters` / `compare_arrival_times`) needs a FlamMap arrival-time
+  export; the current dataset ships only BP / intensity / ROS / spread-direction.
+- **Burn-probability spatial agreement** — tighten it with more fires + calibrated
+  spotting.
+
+Contributions of reference datasets carrying those outputs are especially welcome.
 
 ## References
 

@@ -306,6 +306,73 @@ def compare_arrival_times(pyflam_arrival, reference_arrival, *,
     return compare_fields(a, b, mask=both, burn_threshold=-np.inf)
 
 
+@dataclass
+class CategoryComparison:
+    """Confusion matrix + agreement between two categorical rasters."""
+
+    labels: list                # ordered category values that were scored
+    matrix: np.ndarray          # matrix[i, j] = #(pyflam == labels[i] & ref == labels[j])
+    n: int                      # cells compared
+    overall_agreement: float    # fraction on the diagonal
+
+    def as_dict(self) -> dict:
+        d = asdict(self)
+        d["matrix"] = self.matrix.tolist()
+        return d
+
+    def recall(self, label) -> float:
+        """Fraction of the reference cells of ``label`` that pyflam also labelled so."""
+        j = self.labels.index(label)
+        tot = int(self.matrix[:, j].sum())
+        return self.matrix[j, j] / tot if tot else float("nan")
+
+    def summary(self, names=None) -> str:
+        names = names or [str(v) for v in self.labels]
+        out = [f"categorical agreement: {100*self.overall_agreement:.2f}% "
+               f"over {self.n} cells",
+               "  confusion (rows = pyflam, cols = reference):",
+               "          " + "".join(f"{nm:>10}" for nm in names)]
+        for i, nm in enumerate(names):
+            cells = "".join(f"{int(self.matrix[i, j]):>10}" for j in range(len(names)))
+            out.append(f"  {nm:>7} {cells}")
+        for j, nm in enumerate(names):
+            tot = int(self.matrix[:, j].sum())
+            hit = int(self.matrix[j, j])
+            frac = f"{100*hit/tot:.1f}%" if tot else "n/a"
+            out.append(f"  reference {nm}: {hit}/{tot} matched ({frac})")
+        return "\n".join(out)
+
+
+def compare_categories(pyflam, reference, *, labels, mask=None) -> CategoryComparison:
+    """Confusion matrix between two categorical rasters (e.g. crown fire type:
+    surface / passive / active).
+
+    ``labels`` is the ordered list of category values to score; cells whose value
+    (in either raster) is outside ``labels``, or outside ``mask``, are ignored.
+    """
+    a = np.asarray(pyflam)
+    b = np.asarray(reference)
+    if a.shape != b.shape:
+        raise ValueError(f"shape mismatch: {a.shape} vs {b.shape}")
+    labels = list(labels)
+    sel = np.ones(a.shape, dtype=bool) if mask is None else np.asarray(mask, bool)
+    sel = sel & np.isin(a, labels) & np.isin(b, labels)
+    av, bv = a[sel], b[sel]
+
+    k = len(labels)
+    matrix = np.zeros((k, k), dtype=np.int64)
+    ai = np.full(av.shape, -1, dtype=np.int64)
+    bi = np.full(bv.shape, -1, dtype=np.int64)
+    for i, v in enumerate(labels):           # loop over the few labels, vectorized
+        ai[av == v] = i
+        bi[bv == v] = i
+    np.add.at(matrix, (ai, bi), 1)
+    n = int(matrix.sum())
+    agreement = float(np.trace(matrix) / n) if n else float("nan")
+    return CategoryComparison(labels=labels, matrix=matrix, n=n,
+                              overall_agreement=agreement)
+
+
 def scan_parameter(run, values, reference, *, mask=None, metric="log_rmse"):
     """Sweep one run input and report which value best matches the reference.
 
