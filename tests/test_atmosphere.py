@@ -364,3 +364,29 @@ def test_gridded_atmosphere_nearest_point():
     assert st.relative_humidity == pytest.approx(25.0)
     assert st.cape == pytest.approx(1200.0)
     assert atm.stability_class(st) == "unstable"
+
+
+@pytest.mark.skipif(
+    __import__("importlib").util.find_spec("xarray") is None,
+    reason="needs xarray")
+def test_state_at_with_scalar_time_coordinate():
+    """A single-forecast field carries time as a scalar coord; passing an explicit
+    time must not raise (regression: live GFS fetch returns exactly this layout)."""
+    import xarray as xr
+    from datetime import datetime
+    lats = np.array([40.0, 41.0, 42.0])
+    lons = np.array([10.0, 11.0, 12.0])
+    ds = xr.Dataset(
+        {
+            "t2m": (("latitude", "longitude"), np.full((3, 3), 305.0)),
+            "r2": (("latitude", "longitude"), np.full((3, 3), 30.0)),
+        },
+        coords={"latitude": lats, "longitude": lons,
+                "time": np.datetime64("2026-06-24T14:00")},   # 0-d scalar coord
+    )
+    assert "time" in ds.coords and "time" not in ds.dims
+    prov = atm.GriddedAtmosphere(ds, {"temperature_K": "t2m",
+                                      "relative_humidity": "r2"})
+    st = prov.state_at(40.9, 11.2, time=datetime(2026, 6, 24, 14, 0))
+    assert st.relative_humidity == pytest.approx(30.0)
+    assert st.temperature == pytest.approx(305.0 - 273.15, abs=0.1)

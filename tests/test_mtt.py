@@ -272,6 +272,106 @@ def test_burn_probability_skips_nonburnable_ignition():
     assert nf == 1                        # only the burnable ignition counts
 
 
+def test_burn_probability_batched_matches_unbatched():
+    """The fast multi-source batch must give the same BP as one fire per solve."""
+    ls = _grid(41)
+    field = pyflam.spread_field(
+        ls, wind_midflame=mph_to_ft_per_min(5), wind_direction=270.0, **SCENARIO)
+    igns = [(10, 10), (30, 30), (20, 5), (15, 25)]
+    big, nf_b = pyflam.burn_probability(field, igns, max_time=18.0, batch_size=64)
+    one, nf_1 = pyflam.burn_probability(field, igns, max_time=18.0, batch_size=1)
+    assert nf_b == nf_1 == 4
+    np.testing.assert_array_equal(big, one)
+
+
+# --- Burn probability: connected metrics --------------------------------------
+
+def test_burn_probability_metrics_shapes_and_conditional_flame_length():
+    ls = _grid(31)
+    field = pyflam.spread_field(
+        ls, wind_midflame=mph_to_ft_per_min(5), wind_direction=270.0, **SCENARIO)
+    res = pyflam.burn_probability(
+        field, [(15, 15)] * 4, max_time=20.0, return_metrics=True)
+    assert isinstance(res, pyflam.BurnProbabilityResult)
+    assert res.n_fires == 4
+    assert res.burn_prob.shape == field.shape
+    assert res.conditional_flame_length.shape == field.shape
+    assert res.flp.shape[1:] == field.shape
+    assert res.flp.shape[0] == res.flame_length_classes.size - 1
+    assert res.fire_sizes.shape == (4,)
+
+    burned = res.burn_prob > 0
+    # Single deterministic weather: conditional flame length at a burned cell is
+    # just that cell's own Byram flame length.
+    fli = field.fireline_intensity
+    fl = np.where(fli > 0.0, 0.45 * fli ** 0.46, 0.0)
+    np.testing.assert_allclose(
+        res.conditional_flame_length[burned], fl[burned], rtol=1e-6)
+    # Unburned cells are nan; FLP columns over a burned cell sum to 1.
+    assert np.isnan(res.conditional_flame_length[~burned]).all()
+    col = res.flp[:, 15, 15]
+    assert col.sum() == pytest.approx(1.0)
+
+
+def test_burn_probability_weather_ensemble_spreads_flame_length():
+    """Two weather scenarios must produce a non-degenerate FLP distribution."""
+    ls = _grid(31)
+    calm = pyflam.spread_field(ls, wind_midflame=0.0, **SCENARIO)
+    windy = pyflam.spread_field(
+        ls, wind_midflame=mph_to_ft_per_min(12), wind_direction=270.0, **SCENARIO)
+    rng = np.random.default_rng(0)
+    res = pyflam.burn_probability(
+        [(0.5, calm), (0.5, windy)], [(15, 15)] * 200,
+        max_time=20.0, return_metrics=True, rng=rng)
+    assert res.n_fires == 200
+    # The ignition cell burns in every fire under both weathers, so its flame
+    # length spans more than one FLP class -> a real distribution, not a spike.
+    col = res.flp[:, 15, 15]
+    assert col.sum() == pytest.approx(1.0)
+    assert int((col > 0).sum()) >= 2
+
+
+def test_burn_probability_per_scenario_spotting_wind():
+    """Each scenario dict's own wind must drive its fires' ember spotting."""
+    ls = _grid(41)
+    # Two nonburnable columns split the grid; only spotting can cross them.
+    ls.fuel_model[:, 20:22] = 91
+    field = pyflam.spread_field(ls, wind_midflame=0.0, **SCENARIO)
+
+    class _DirSpotter:
+        """Drop one guaranteed ember a few cells along ``wind_direction``."""
+        def generate_spots(self, fld, arrival, *, wind_20ft, wind_direction,
+                           max_time, rng, fuel_moisture=None):
+            burning = np.argwhere(np.isfinite(arrival) & (arrival <= max_time))
+            if burning.size == 0 or wind_20ft <= 0:
+                return []
+            # deg FROM -> push toward (wind_direction + 180); 90 FROM => spot east.
+            toward = math.radians((wind_direction + 180.0) % 360.0)
+            dr = int(round(-4 * math.cos(toward)))
+            dc = int(round(4 * math.sin(toward)))
+            spots = []
+            for r, c in burning:
+                nr, nc = int(r) + dr, int(c) + dc
+                if 0 <= nr < fld.shape[0] and 0 <= nc < fld.shape[1]:
+                    spots.append((nr, nc, float(arrival[r, c]) + 1.0))
+            return spots
+
+    rng = np.random.default_rng(0)
+    common = dict(ignitions=[(20, 10)] * 6, max_time=40.0, spotting=_DirSpotter(),
+                  ring=2)
+    # Wind FROM the west (270) pushes embers east, across the barrier.
+    east, _ = pyflam.burn_probability(
+        [{"field": field, "wind_20ft": 1000.0, "wind_direction": 270.0}],
+        rng=np.random.default_rng(0), **common)
+    # Wind FROM the east (90) pushes embers west, away from the barrier.
+    west, _ = pyflam.burn_probability(
+        [{"field": field, "wind_20ft": 1000.0, "wind_direction": 90.0}],
+        rng=np.random.default_rng(0), **common)
+    right = slice(22, 41)
+    assert east[:, right].sum() > 0          # embers crossed eastward
+    assert west[:, right].sum() == 0         # none crossed when wind blows west
+
+
 # --- Golden-master ------------------------------------------------------------
 
 def test_golden_master_arrival():

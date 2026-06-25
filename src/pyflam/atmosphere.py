@@ -469,7 +469,9 @@ class GriddedAtmosphere(AtmosphereProvider):
     def state_at(self, latitude, longitude, time=None):
         sel = {self.lat_name: latitude, self.lon_name: self._wrap_lon(longitude)}
         point = self.ds.sel(**sel, method="nearest")
-        if time is not None and self.time_name in self.ds.coords:
+        # Only select on time when it is an indexable dimension; a single-time
+        # field carries time as a scalar coordinate that cannot be `.sel`-ed.
+        if time is not None and self.time_name in self.ds.dims:
             point = point.sel({self.time_name: time}, method="nearest")
         kw = {}
         for canon, var in self.var_map.items():
@@ -491,7 +493,7 @@ class GriddedAtmosphere(AtmosphereProvider):
         lon_da = xr.DataArray(self._wrap_lon(np.asarray(lon2d).ravel()), dims="p")
         pts = self.ds.sel({self.lat_name: lat_da, self.lon_name: lon_da},
                           method="nearest")
-        if time is not None and self.time_name in self.ds.coords:
+        if time is not None and self.time_name in self.ds.dims:
             pts = pts.sel({self.time_name: time}, method="nearest")
         shape = ls.shape
         kw = {}

@@ -10,9 +10,9 @@ README.md for the roadmap.
 from __future__ import annotations
 
 from . import (
-    atmosphere, cfd, crownfire, fuel_models, io_lcp, landscape, meteo_report,
-    mtt, nrt, operative, pyroconvection, rothermel, spotting, units, validate,
-    wind, wind_reduction, windsolver,
+    atmosphere, cfd, crownfire, fuel_conditioning, fuel_models, io_lcp,
+    landscape, meteo_report, mtt, nrt, operative, pyroconvection, rothermel,
+    spotting, units, validate, wind, wind_reduction, windsolver,
 )
 from .nrt import RunProduct, run_realtime
 from .meteo_report import MeteoReport, meteo_report as build_meteo_report
@@ -24,6 +24,11 @@ from .atmosphere import (
     AtmosphericState, AtmosphereProvider, ConstantAtmosphere,
     DeadFuelMoistureModel, GriddedAtmosphere, open_atmosphere,
     spread_inputs_from_state,
+)
+from .fuel_conditioning import (
+    canopy_transmission, condition_dead_fuel_moisture, condition_from_weather,
+    dead_fuel_moisture_vpd, equation_of_time, solar_position, sun_exposure,
+    terrain_insolation_factor, vapour_pressure_deficit,
 )
 from .pyroconvection import (
     couple_fire_wind, fire_atmosphere_march, fire_heat_flux, merge_plume_wind,
@@ -55,7 +60,9 @@ from .crownfire import (
     torching_index,
 )
 from .mtt import (
+    BurnProbabilityResult,
     SpreadField,
+    anisotropic_eikonal,
     burn_probability,
     ignition_from_xy,
     minimum_travel_time,
@@ -85,6 +92,16 @@ __all__ = [
     "DeadFuelMoistureModel",
     "open_atmosphere",
     "spread_inputs_from_state",
+    "fuel_conditioning",
+    "condition_dead_fuel_moisture",
+    "condition_from_weather",
+    "sun_exposure",
+    "solar_position",
+    "equation_of_time",
+    "terrain_insolation_factor",
+    "canopy_transmission",
+    "vapour_pressure_deficit",
+    "dead_fuel_moisture_vpd",
     "fuel_models",
     "io_lcp",
     "landscape",
@@ -134,8 +151,10 @@ __all__ = [
     "SpreadField",
     "spread_field",
     "minimum_travel_time",
+    "anisotropic_eikonal",
     "spread_perimeter",
     "burn_probability",
+    "BurnProbabilityResult",
     "perimeter_mask",
     "ignition_from_xy",
 ]

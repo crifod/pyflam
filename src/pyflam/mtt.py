@@ -48,6 +48,12 @@ import numpy as np
 from . import fuel_models
 from .rothermel import kernel_param_groups, surface_kernel
 
+try:                                    # optional: JIT the Eikonal sweep (pyflam[accel])
+    import numba
+    _HAVE_NUMBA = True
+except Exception:                       # pragma: no cover - numba is optional
+    _HAVE_NUMBA = False
+
 # Anderson (1983) length-to-breadth ratio is capped here, as in FARSITE, so the
 # ellipse can't become an unphysical sliver at extreme winds.
 _MAX_LENGTH_BREADTH = 8.0
@@ -333,6 +339,358 @@ def build_traveltime_graph(field: SpreadField, *, ring: int = 2,
     return sparse.csr_matrix((data, indices, indptr), shape=(n, n))
 
 
+def _shift_inf(arr: np.ndarray, dr: int, dc: int) -> np.ndarray:
+    """``out[r, c] = arr[r + dr, c + dc]`` with out-of-range entries set to inf."""
+    nr, nc = arr.shape
+    out = np.full_like(arr, np.inf)
+    rd0, rd1 = max(0, -dr), min(nr, nr - dr)
+    cd0, cd1 = max(0, -dc), min(nc, nc - dc)
+    if rd0 < rd1 and cd0 < cd1:
+        out[rd0:rd1, cd0:cd1] = arr[rd0 + dr:rd1 + dr, cd0 + dc:cd1 + dc]
+    return out
+
+
+# Eight compass neighbours ordered around the cell; consecutive pairs span the
+# eight triangular simplices used by the semi-Lagrangian update.
+_EIKONAL_NEIGHBORS = [(0, 1), (-1, 1), (-1, 0), (-1, -1),
+                      (0, -1), (1, -1), (1, 0), (1, 1)]
+
+
+def _eikonal_samples(csx, csy, alpha_samples):
+    """Tabulate the (simplex, alpha) sources: neighbour offsets, distance, bearing."""
+    dar, dac, dbr, dbc, als, dists, bears = [], [], [], [], [], [], []
+    alphas = np.linspace(0.0, 1.0, alpha_samples)
+    for i in range(8):
+        a_off, b_off = _EIKONAL_NEIGHBORS[i], _EIKONAL_NEIGHBORS[(i + 1) % 8]
+        ax, ay = a_off[1] * csx, -a_off[0] * csy
+        bx, by = b_off[1] * csx, -b_off[0] * csy
+        for al in alphas:
+            yx, yy = al * ax + (1 - al) * bx, al * ay + (1 - al) * by
+            dist = math.hypot(yx, yy)
+            if dist == 0.0:
+                continue
+            bearing = math.degrees(math.atan2(-yx, -yy)) % 360.0
+            dar.append(a_off[0]); dac.append(a_off[1])
+            dbr.append(b_off[0]); dbc.append(b_off[1])
+            als.append(float(al)); dists.append(dist); bears.append(bearing)
+    return (np.array(dar, np.int64), np.array(dac, np.int64),
+            np.array(dbr, np.int64), np.array(dbc, np.int64),
+            np.array(als, np.float64), np.array(dists, np.float64),
+            np.array(bears, np.float64))
+
+
+_NB8 = np.array(_EIKONAL_NEIGHBORS, dtype=np.int64)   # 8 compass offsets, for the heap
+
+
+if _HAVE_NUMBA:
+    @numba.njit(cache=True)
+    def _eikonal_heap_numba(arrival, ros_max, ecc, heading, dar, dac, dbr, dbc,
+                            alphas, dists, bearings, nb8, src_r, src_c, max_time):
+        """Heap-based narrow-band anisotropic Fast Marching of the semi-Lagrangian
+        update. Each cell is *accepted* (finalised) the first time it is popped, and
+        a cell's tentative value is built only from already-accepted neighbours --
+        the Fast-Marching causality that makes acceptance final, so the non-decreasing
+        pop order lets a finite ``max_time`` prune exactly like Dijkstra. Only the
+        advancing front is ever touched, so it is far cheaper than sweeping the whole
+        grid for a small bounded fire. (Accept-on-pop is exact for the isotropic part
+        and an Ordered-Upwind approximation for the anisotropic part.)"""
+        nr, nc = arrival.shape
+        ns = alphas.shape[0]
+        deg2rad = math.pi / 180.0
+        accepted = np.zeros((nr, nc), np.uint8)
+        cap = 1024
+        ht = np.empty(cap, np.float64)
+        hr = np.empty(cap, np.int64)
+        hc = np.empty(cap, np.int64)
+        size = 0
+        for i in range(src_r.shape[0]):                 # push ignition cells (T=0)
+            ht[size] = arrival[src_r[i], src_c[i]]
+            hr[size] = src_r[i]; hc[size] = src_c[i]
+            j = size; size += 1
+            while j > 0:
+                p = (j - 1) // 2
+                if ht[p] <= ht[j]:
+                    break
+                ht[p], ht[j] = ht[j], ht[p]
+                hr[p], hr[j] = hr[j], hr[p]
+                hc[p], hc[j] = hc[j], hc[p]
+                j = p
+
+        while size > 0:
+            t = ht[0]; r = hr[0]; c = hc[0]             # pop min
+            size -= 1
+            ht[0] = ht[size]; hr[0] = hr[size]; hc[0] = hc[size]
+            i = 0
+            while True:
+                l = 2 * i + 1; rr = 2 * i + 2; sm = i
+                if l < size and ht[l] < ht[sm]:
+                    sm = l
+                if rr < size and ht[rr] < ht[sm]:
+                    sm = rr
+                if sm == i:
+                    break
+                ht[sm], ht[i] = ht[i], ht[sm]
+                hr[sm], hr[i] = hr[i], hr[sm]
+                hc[sm], hc[i] = hc[i], hc[sm]
+                i = sm
+            if accepted[r, c]:
+                continue                                # already finalised (stale)
+            if t > max_time:
+                break                                   # prune: nothing left is closer
+            accepted[r, c] = 1                          # accept-on-pop: value is final
+
+            for k in range(8):                          # relax the 8 neighbours of (r,c)
+                vr = r + nb8[k, 0]; vc = c + nb8[k, 1]
+                if vr < 0 or vr >= nr or vc < 0 or vc >= nc:
+                    continue
+                if accepted[vr, vc]:
+                    continue
+                rm = ros_max[vr, vc]
+                if rm <= 0.0:
+                    continue
+                e = ecc[vr, vc]; hd = heading[vr, vc]
+                best = arrival[vr, vc]
+                improved = False
+                for s in range(ns):
+                    ra = vr + dar[s]; ca = vc + dac[s]
+                    rb = vr + dbr[s]; cb = vc + dbc[s]
+                    # only accepted neighbours carry usable (final) times
+                    ta = (arrival[ra, ca] if 0 <= ra < nr and 0 <= ca < nc
+                          and accepted[ra, ca] else 1e300)
+                    tb = (arrival[rb, cb] if 0 <= rb < nr and 0 <= cb < nc
+                          and accepted[rb, cb] else 1e300)
+                    al = alphas[s]
+                    if al == 0.0:
+                        interp = tb
+                    elif al == 1.0:
+                        interp = ta
+                    elif ta >= 1e300 or tb >= 1e300:
+                        continue
+                    else:
+                        interp = al * ta + (1.0 - al) * tb
+                    if interp >= 1e300:
+                        continue
+                    denom = 1.0 - e * math.cos(deg2rad * (bearings[s] - hd))
+                    speed = rm * (1.0 - e) / denom
+                    if speed <= 0.0:
+                        continue
+                    cand = interp + dists[s] / speed
+                    if cand < best:
+                        best = cand
+                        improved = True
+                if improved:
+                    arrival[vr, vc] = best
+                    if size >= cap:                     # grow heap arrays
+                        ncap = cap * 2
+                        nt = np.empty(ncap, np.float64); nt[:size] = ht[:size]; ht = nt
+                        n2 = np.empty(ncap, np.int64); n2[:size] = hr[:size]; hr = n2
+                        n3 = np.empty(ncap, np.int64); n3[:size] = hc[:size]; hc = n3
+                        cap = ncap
+                    ht[size] = best; hr[size] = vr; hc[size] = vc
+                    j = size; size += 1
+                    while j > 0:
+                        p = (j - 1) // 2
+                        if ht[p] <= ht[j]:
+                            break
+                        ht[p], ht[j] = ht[j], ht[p]
+                        hr[p], hr[j] = hr[j], hr[p]
+                        hc[p], hc[j] = hc[j], hc[p]
+                        j = p
+        return arrival
+
+    @numba.njit(cache=True)
+    def _eikonal_gauss_seidel(arrival, ros_max, ecc, heading, dar, dac, dbr, dbc,
+                              alphas, dists, bearings, r0, r1, c0, c1,
+                              max_passes, tol):
+        """Gauss-Seidel fast sweeping of the semi-Lagrangian anisotropic-Eikonal
+        update (in place), restricted to the ``[r0:r1, c0:c1]`` box. Four alternating
+        sweep directions per pass propagate information across the box, so it
+        converges in far fewer passes than a Jacobi iteration; the box lets the heap
+        backend correct only the (small) burned region."""
+        nr, nc = arrival.shape
+        ns = alphas.shape[0]
+        deg2rad = math.pi / 180.0
+        for _ in range(max_passes):
+            max_change = 0.0
+            for sr in range(2):
+                for sc in range(2):
+                    rlo = r0 if sr == 0 else r1 - 1
+                    rhi = r1 if sr == 0 else r0 - 1
+                    rstep = 1 if sr == 0 else -1
+                    clo = c0 if sc == 0 else c1 - 1
+                    chi = c1 if sc == 0 else c0 - 1
+                    cstep = 1 if sc == 0 else -1
+                    for r in range(rlo, rhi, rstep):
+                        for c in range(clo, chi, cstep):
+                            rm = ros_max[r, c]
+                            if rm <= 0.0:
+                                continue
+                            cur = arrival[r, c]
+                            best = cur
+                            e = ecc[r, c]
+                            hd = heading[r, c]
+                            for s in range(ns):
+                                ra = r + dar[s]; ca = c + dac[s]
+                                rb = r + dbr[s]; cb = c + dbc[s]
+                                ta = (arrival[ra, ca]
+                                      if 0 <= ra < nr and 0 <= ca < nc else 1e300)
+                                tb = (arrival[rb, cb]
+                                      if 0 <= rb < nr and 0 <= cb < nc else 1e300)
+                                al = alphas[s]
+                                if al == 0.0:
+                                    interp = tb
+                                elif al == 1.0:
+                                    interp = ta
+                                elif ta >= 1e300 or tb >= 1e300:
+                                    interp = 1e300
+                                else:
+                                    interp = al * ta + (1.0 - al) * tb
+                                if interp >= 1e300:
+                                    continue
+                                denom = 1.0 - e * math.cos(
+                                    deg2rad * (bearings[s] - hd))
+                                speed = rm * (1.0 - e) / denom
+                                if speed <= 0.0:
+                                    continue
+                                cand = interp + dists[s] / speed
+                                if cand < best:
+                                    best = cand
+                            if best < cur:
+                                if cur - best > max_change:
+                                    max_change = cur - best
+                                arrival[r, c] = best
+            if max_change < tol:
+                break
+        return arrival
+else:                                   # pragma: no cover - exercised without numba
+    _eikonal_gauss_seidel = None
+    _eikonal_heap_numba = None
+
+
+def anisotropic_eikonal(
+    field: SpreadField,
+    ignitions,
+    *,
+    max_time: float = math.inf,
+    alpha_samples: int = 9,
+    max_iter: int | None = None,
+    tol: float = 1e-7,
+    backend: str | None = None,
+) -> np.ndarray:
+    """Fire arrival time by an anisotropic-Eikonal (Finsler) front solver.
+
+    An alternative to the Dijkstra-on-a-lattice :func:`minimum_travel_time` that
+    solves the same problem as a front rather than a graph: the arrival time is the
+    geodesic distance in the Finsler metric whose unit ball is the cell's elliptical
+    fire shape. It uses a **semi-Lagrangian** update -- the characteristic may arrive
+    from any point on the segment between two adjacent neighbours (a 1-D minimisation
+    over ``alpha_samples`` interpolation points per simplex), not only from the
+    discrete lattice directions -- iterated with fast sweeping. That removes most of
+    MTT's angular (lattice) bias, so a calm fire stays a circle and a wind-driven
+    fire a smooth ellipse instead of a faceted polygon (Sethian & Vladimirsky 2003;
+    Mirebeau 2014; cf. the Randers-Finsler formulation of Gahtan et al. 2026).
+
+    ``backend`` (all give the same arrival field): ``"heap"`` is a heap-based
+    narrow-band Ordered-Upwind solve that only touches the advancing front, so a
+    finite ``max_time`` **prunes like Dijkstra** -- much cheaper for a small bounded
+    fire and the right choice for burn probability; ``"numba"`` is Gauss-Seidel
+    sweeping (good when the whole grid burns); ``"numpy"`` is a portable vectorized
+    sweep (no numba). ``None`` picks ``"heap"`` when numba is available, else
+    ``"numpy"``. Speed is taken from the cell being updated, so on a *uniform* field
+    this matches the analytic ``distance / R(bearing)`` solution closely; on
+    heterogeneous fields it differs from MTT's harmonic-mean-of-endpoints by
+    construction. ``minimum_travel_time(method="fast_marching")`` dispatches here.
+
+    Returns the arrival-time array (inf for unreached cells / past ``max_time``).
+    """
+    nrows, ncols = field.shape
+    ros_max = np.ascontiguousarray(field.ros_max, dtype=np.float64)
+    ecc = np.ascontiguousarray(field.eccentricity, dtype=np.float64)
+    heading = np.ascontiguousarray(field.heading, dtype=np.float64)
+    burnable = ros_max > 0.0
+
+    arrival = np.full(field.shape, np.inf, dtype=np.float64)
+    seeded = False
+    for r, c in ignitions:
+        if 0 <= r < nrows and 0 <= c < ncols and burnable[r, c]:
+            arrival[r, c] = 0.0
+            seeded = True
+    if not seeded:
+        return arrival
+
+    dar, dac, dbr, dbc, als, dists, bears = _eikonal_samples(
+        field.cellsize_x, field.cellsize_y, alpha_samples)
+    if max_iter is None:
+        max_iter = 4 * (nrows + ncols)
+
+    if backend is None:
+        backend = "heap" if _HAVE_NUMBA else "numpy"
+    if backend in ("heap", "numba") and not _HAVE_NUMBA:
+        raise ImportError(
+            f"backend={backend!r} needs numba: pip install 'pyflam[accel]'")
+
+    if backend == "heap":
+        src = [(r, c) for r, c in ignitions
+               if 0 <= r < nrows and 0 <= c < ncols and burnable[r, c]]
+        src_r = np.array([s[0] for s in src], dtype=np.int64)
+        src_c = np.array([s[1] for s in src], dtype=np.int64)
+        # Pass 1: heap Fast Marching identifies + prunes the burned region (cheap,
+        # first-order). Pass 2: Gauss-Seidel corrects it to the accurate fixed point
+        # over only that region's bounding box -- sweep accuracy at pruned cost.
+        _eikonal_heap_numba(arrival, ros_max, ecc, heading, dar, dac, dbr, dbc,
+                            als, dists, bears, _NB8, src_r, src_c, float(max_time))
+        rows, cols = np.where(np.isfinite(arrival))
+        if rows.size:
+            r0 = max(0, int(rows.min()) - 2); r1 = min(nrows, int(rows.max()) + 3)
+            c0 = max(0, int(cols.min()) - 2); c1 = min(ncols, int(cols.max()) + 3)
+            _eikonal_gauss_seidel(arrival, ros_max, ecc, heading, dar, dac, dbr, dbc,
+                                  als, dists, bears, r0, r1, c0, c1, max_iter, tol)
+    elif backend == "numba":
+        _eikonal_gauss_seidel(arrival, ros_max, ecc, heading, dar, dac, dbr, dbc,
+                              als, dists, bears, 0, nrows, 0, ncols, max_iter, tol)
+    elif backend == "numpy":
+        _eikonal_numpy(arrival, ros_max, ecc, heading, dar, dac, dbr, dbc,
+                       als, dists, bears, max_iter, tol)
+    else:
+        raise ValueError("backend must be None, 'heap', 'numba' or 'numpy'")
+
+    if math.isfinite(max_time):
+        arrival[arrival > max_time] = np.inf
+    return arrival
+
+
+def _eikonal_numpy(arrival, ros_max, ecc, heading, dar, dac, dbr, dbc,
+                   als, dists, bears, max_iter, tol):
+    """Portable vectorized fallback for :func:`anisotropic_eikonal` (no numba)."""
+    ns = als.shape[0]
+    prev_finite = -1
+    for it in range(max_iter):
+        before = arrival.copy()
+        idx = range(ns) if it % 2 == 0 else range(ns - 1, -1, -1)
+        for s in idx:
+            psi = np.radians(bears[s] - heading)
+            speed = ros_max * (1.0 - ecc) / (1.0 - ecc * np.cos(psi))
+            with np.errstate(divide="ignore", invalid="ignore"):
+                step = np.where(speed > 0.0, dists[s] / speed, np.inf)
+            ta = _shift_inf(arrival, dar[s], dac[s])
+            tb = _shift_inf(arrival, dbr[s], dbc[s])
+            al = als[s]
+            if al == 0.0:
+                interp = tb
+            elif al == 1.0:
+                interp = ta
+            else:
+                interp = al * ta + (1.0 - al) * tb
+            np.minimum(arrival, interp + step, out=arrival)
+        nfin = int(np.isfinite(arrival).sum())
+        both = np.isfinite(arrival) & np.isfinite(before)
+        delta = float(np.max(before[both] - arrival[both])) if both.any() else 0.0
+        if nfin == prev_finite and delta < tol:
+            break
+        prev_finite = nfin
+    return arrival
+
+
 def minimum_travel_time(
     field: SpreadField,
     ignitions,
@@ -340,6 +698,7 @@ def minimum_travel_time(
     max_time: float = math.inf,
     ring: int = 2,
     chunk_rows: int | None = None,
+    method: str = "mtt",
 ) -> np.ndarray:
     """Fire arrival time (minutes) by Minimum Travel Time (Finney 2002).
 
@@ -349,6 +708,13 @@ def minimum_travel_time(
     average for travel time over the segment); the minimum-time path to every
     cell is then a shortest-path problem. Nonburnable cells (``ros_max == 0``)
     are barriers.
+
+    ``method`` selects the propagation engine: ``"mtt"`` (default) is the
+    Dijkstra-on-a-lattice solver below; ``"fast_marching"`` dispatches to
+    :func:`anisotropic_eikonal`, a semi-Lagrangian anisotropic-Eikonal front solver
+    that removes most of MTT's lattice (angular) bias at the cost of being a pure
+    NumPy prototype rather than the C-level Dijkstra. ``ring``/``chunk_rows`` apply
+    to the ``"mtt"`` path only.
 
     The graph is built vectorized (chunked for huge grids, see
     :func:`build_traveltime_graph` and ``chunk_rows``) and the shortest path is
@@ -360,6 +726,11 @@ def minimum_travel_time(
     Returns a float array (same shape as the field); unburned/unreachable cells
     and anything past ``max_time`` are ``inf``.
     """
+    if method == "fast_marching":
+        return anisotropic_eikonal(field, ignitions, max_time=max_time)
+    if method != "mtt":
+        raise ValueError("method must be 'mtt' or 'fast_marching'")
+
     from scipy.sparse.csgraph import dijkstra
 
     nrows, ncols = field.shape
@@ -473,8 +844,93 @@ def spread_with_spotting(
     return arrival
 
 
+# FlamMap-style flame-length-probability (FLP) classes: 20 bins of 2 ft from 0 to
+# 40 ft with an open-ended top class, matching the ``FIL1..FIL20`` columns of a
+# FlamMap MTT random-ignition ``FLP_METRIC`` table. Override via
+# ``flame_length_classes`` to match a run configured with different categories.
+DEFAULT_FLAME_LENGTH_CLASSES = np.array(
+    [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 18.0, 20.0,
+     22.0, 24.0, 26.0, 28.0, 30.0, 32.0, 34.0, 36.0, 38.0, math.inf])
+
+
+@dataclass
+class BurnProbabilityResult:
+    """Burn probability plus the connected per-cell fire-behavior metrics.
+
+    Returned by :func:`burn_probability` when ``return_metrics=True`` -- the
+    pyflam analog of the full output set of a FlamMap MTT Random-Ignition run
+    (``BURN_PROB``, ``FIRE_LINE_INT`` and ``FLP_METRIC``). All "conditional"
+    rasters are *given the cell burned* (i.e. averaged only over the fires that
+    reached the cell) and are ``nan`` where the cell never burned.
+    """
+
+    burn_prob: np.ndarray              # [0, 1] fraction of fires that reached each cell
+    n_fires: int                       # fires actually ignited
+    conditional_flame_length: np.ndarray   # ft, mean flame length given the cell burned
+    conditional_intensity: np.ndarray      # Btu/ft/s, mean fireline intensity given burned
+    flame_length_classes: np.ndarray       # class edges (ft), length n_classes + 1
+    flp: np.ndarray                    # (n_classes, nrows, ncols) P(class | burned)
+    fire_sizes: np.ndarray             # per-fire burned area (landscape units squared)
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        return self.burn_prob.shape
+
+    def flame_length_class_centers(self) -> np.ndarray:
+        """Representative flame length (ft) for each FLP class (top class = its low edge)."""
+        edges = self.flame_length_classes
+        centers = 0.5 * (edges[:-1] + edges[1:])
+        if not math.isfinite(centers[-1]):
+            centers[-1] = edges[-2]
+        return centers
+
+
+def _normalize_scenarios(field, graph):
+    """Coerce ``field`` into a list of weather-scenario dicts.
+
+    ``field`` is either one :class:`SpreadField` (a single deterministic weather)
+    or a sequence describing a weather ensemble, whose entries are each a
+    ``SpreadField``, a ``(weight, field)`` pair, a ``(weight, field, graph)``
+    triple, or a ``dict`` with a ``"field"`` key and optional ``"weight"``,
+    ``"graph"``, ``"wind_20ft"`` and ``"wind_direction"`` keys. The dict form is
+    what lets a scenario carry its **own spotting wind** (ft/min and deg FROM); a
+    scenario that omits them falls back to ``burn_probability``'s ``wind_20ft`` /
+    ``wind_direction``. Each scenario keeps its own (lazily built) travel-time
+    graph.
+    """
+    def make(weight, f, g, w20=None, wdir=None):
+        return {"weight": float(weight), "field": f, "graph": g,
+                "wind_20ft": w20, "wind_direction": wdir}
+
+    if isinstance(field, SpreadField):
+        return [make(1.0, field, graph)]
+    scenarios = []
+    for entry in field:
+        if isinstance(entry, SpreadField):
+            scenarios.append(make(1.0, entry, None))
+        elif isinstance(entry, dict):
+            if "field" not in entry:
+                raise ValueError("scenario dict must have a 'field' key")
+            scenarios.append(make(
+                entry.get("weight", 1.0), entry["field"], entry.get("graph"),
+                entry.get("wind_20ft"), entry.get("wind_direction")))
+        else:
+            entry = tuple(entry)
+            if len(entry) == 2:
+                scenarios.append(make(entry[0], entry[1], None))
+            elif len(entry) == 3:
+                scenarios.append(make(entry[0], entry[1], entry[2]))
+            else:
+                raise ValueError(
+                    "scenario entries must be a SpreadField, a dict, "
+                    "(weight, field) or (weight, field, graph)")
+    if not scenarios:
+        raise ValueError("no weather scenarios provided")
+    return scenarios
+
+
 def burn_probability(
-    field: SpreadField,
+    field,
     ignitions,
     *,
     max_time: float,
@@ -486,56 +942,168 @@ def burn_probability(
     wind_direction: float = 0.0,
     fuel_moisture=None,
     rng=None,
+    return_metrics: bool = False,
+    flame_length_classes=None,
+    batch_size: int | None = None,
 ):
-    """Burn probability from many fixed-duration MTT fires (FlamMap-style MTT BP).
+    """Burn probability + connected metrics from many MTT fires (FlamMap MTT BP).
 
     Each entry in ``ignitions`` is a *separate* fire (a ``(row, col)`` ignition);
     every fire grows for ``max_time`` minutes and the per-cell burn probability is
-    the fraction of fires that reached the cell. This is the deterministic-weather
-    analog of FlamMap's random-ignition burn-probability run (fire-to-fire weather
-    variation is not modelled).
+    the fraction of fires that reached the cell -- pyflam's analog of FlamMap's
+    random-ignition burn-probability run.
 
-    Pass a :class:`pyflam.spotting.SpottingModel` as ``spotting`` (with
-    ``wind_20ft`` in ft/min and ``wind_direction`` in deg FROM) to grow each fire
-    *with ember spotting* via :func:`spread_with_spotting` -- which is what lets
-    fires cross fuel barriers and reproduces a spotting-on FlamMap run. Without it
-    each fire is a plain contiguous MTT fire.
+    **Weather variation (accuracy).** ``field`` is either one :class:`SpreadField`
+    (one deterministic weather, as before) or a *weather ensemble*: a sequence of
+    ``SpreadField`` / ``(weight, field)`` / ``(weight, field, graph)`` scenarios,
+    or scenario ``dict``\\s (``{"field":..., "weight":..., "graph":...,
+    "wind_20ft":..., "wind_direction":...}``). Each fire is assigned a scenario
+    drawn in proportion to its weight, so the fire-to-fire weather variation that
+    makes FlamMap's flame-length distribution (FLP) meaningful is reproduced. One
+    travel-time graph is built (and reused) per scenario, so an ensemble of a few
+    scenarios stays cheap.
 
-    The travel-time graph is built **once** and reused for every fire, so
-    thousands of bounded fires are cheap. Pass a prebuilt ``graph`` to reuse it.
+    **Spotting.** Pass a :class:`pyflam.spotting.SpottingModel` /
+    :class:`pyflam.spotting.FirebrandPhysics` as ``spotting`` (with ``wind_20ft``
+    in ft/min and ``wind_direction`` in deg FROM) to grow each fire *with ember
+    spotting* via :func:`spread_with_spotting`, letting fires cross fuel barriers.
+    In an ensemble, a scenario's ``dict`` may carry its own ``wind_20ft`` /
+    ``wind_direction`` so ember transport uses that scenario's wind (otherwise the
+    call-level values apply to every scenario).
 
-    Returns ``(burn_prob, n_fires)``: a float array (cells in [0, 1]) and the
-    number of fires actually ignited (ignitions on nonburnable cells are skipped).
+    **Speed.** Without spotting the fires are solved in batches with one
+    multi-source SciPy Dijkstra call per batch (set ``batch_size``; the default is
+    chosen to bound peak memory), which is markedly faster than one solve per fire.
+
+    Returns ``(burn_prob, n_fires)`` by default: a float array (cells in [0, 1])
+    and the number of fires actually ignited (ignitions on nonburnable cells are
+    skipped). With ``return_metrics=True`` returns a :class:`BurnProbabilityResult`
+    that also carries conditional flame length, conditional fireline intensity and
+    the per-class flame-length probabilities (``flame_length_classes`` overrides
+    the default 20 FlamMap-style bins).
     """
     from scipy.sparse.csgraph import dijkstra
 
-    nrows, ncols = field.shape
-    n = nrows * ncols
-    burnable = np.asarray(field.ros_max) > 0.0
-    if graph is None:
-        graph = build_traveltime_graph(field, ring=ring, chunk_rows=chunk_rows)
     if rng is None:
         rng = np.random.default_rng()
 
-    count = np.zeros((nrows, ncols), dtype=np.int32)
-    n_fires = 0
-    for r, c in ignitions:
-        if not (0 <= r < nrows and 0 <= c < ncols and burnable[r, c]):
-            continue
-        if spotting is not None:
-            arrival = spread_with_spotting(
-                field, [(r, c)], max_time=max_time, wind_20ft=wind_20ft,
-                wind_direction=wind_direction, model=spotting, rng=rng,
-                graph=graph, fuel_moisture=fuel_moisture)
-            count += np.isfinite(arrival) & (arrival <= max_time)
-        else:
-            dist = dijkstra(graph, directed=True, indices=r * ncols + c,
-                            min_only=True, limit=max_time)
-            count += (dist <= max_time).reshape(nrows, ncols)
-        n_fires += 1
+    scenarios = _normalize_scenarios(field, graph)
+    nrows, ncols = scenarios[0]["field"].shape
+    n = nrows * ncols
+    base = scenarios[0]["field"]
+    cellarea = base.cellsize_x * base.cellsize_y
 
-    prob = (count / n_fires if n_fires else count).astype(float)
-    return prob, n_fires
+    if flame_length_classes is None:
+        edges = DEFAULT_FLAME_LENGTH_CLASSES
+    else:
+        edges = np.asarray(flame_length_classes, dtype=float)
+    n_classes = edges.size - 1
+
+    # Auto batch size keeps the dense (batch x n_cells) Dijkstra output near a
+    # ~256 MB ceiling; tiny grids fall back to a modest cap.
+    if batch_size is None:
+        batch_size = max(1, min(256, int(256e6 / (8.0 * max(n, 1)))))
+
+    # Per-scenario flattened rasters used to score burned cells.
+    for sc in scenarios:
+        f = sc["field"]
+        ros = np.asarray(f.ros_max, dtype=float).reshape(-1)
+        sc["burnable"] = ros > 0.0
+        if return_metrics:
+            fli = (np.zeros(n) if f.fireline_intensity is None
+                   else np.asarray(f.fireline_intensity, dtype=float).reshape(-1))
+            fl = np.where(fli > 0.0, 0.45 * fli ** 0.46, 0.0)
+            sc["fli"] = fli
+            sc["fl"] = fl
+            sc["cls"] = np.clip(np.digitize(fl, edges) - 1, 0, n_classes - 1)
+
+    def scenario_graph(sc):
+        if sc["graph"] is None:
+            sc["graph"] = build_traveltime_graph(
+                sc["field"], ring=ring, chunk_rows=chunk_rows)
+        return sc["graph"]
+
+    # Assign each ignition to a weather scenario (drawn by weight).
+    ignitions = list(ignitions)
+    weights = np.array([sc["weight"] for sc in scenarios], dtype=float)
+    weights /= weights.sum()
+    if len(scenarios) == 1:
+        scen_idx = np.zeros(len(ignitions), dtype=int)
+    else:
+        scen_idx = rng.choice(len(scenarios), size=len(ignitions), p=weights)
+
+    count = np.zeros(n, dtype=np.int64)
+    fli_sum = np.zeros(n) if return_metrics else None
+    fl_sum = np.zeros(n) if return_metrics else None
+    flp_count = np.zeros((n_classes, n), dtype=np.int64) if return_metrics else None
+    fire_sizes: list[float] = []
+    cell_ids = np.arange(n) if return_metrics else None
+
+    def accumulate(sc, burned):
+        """Fold a ``(k, n)`` boolean burned matrix (k fires) into the running totals."""
+        per_cell = burned.sum(axis=0).astype(np.int64)
+        count[:] += per_cell
+        fire_sizes.extend((burned.sum(axis=1) * cellarea).tolist())
+        if return_metrics:
+            fli_sum[:] += per_cell * sc["fli"]
+            fl_sum[:] += per_cell * sc["fl"]
+            np.add.at(flp_count, (sc["cls"], cell_ids), per_cell)
+
+    n_fires = 0
+    for si, sc in enumerate(scenarios):
+        burnable = sc["burnable"]
+        sources = []
+        for i, (r, c) in enumerate(ignitions):
+            if scen_idx[i] != si:
+                continue
+            if 0 <= r < nrows and 0 <= c < ncols and burnable[r * ncols + c]:
+                sources.append(r * ncols + c)
+        if not sources:
+            continue
+        g = scenario_graph(sc)
+
+        if spotting is not None:
+            # Per-scenario spotting wind if the scenario set it, else the call's.
+            sc_w20 = wind_20ft if sc["wind_20ft"] is None else sc["wind_20ft"]
+            sc_wdir = (wind_direction if sc["wind_direction"] is None
+                       else sc["wind_direction"])
+            for src in sources:
+                r, c = divmod(src, ncols)
+                arrival = spread_with_spotting(
+                    sc["field"], [(r, c)], max_time=max_time, wind_20ft=sc_w20,
+                    wind_direction=sc_wdir, model=spotting, rng=rng,
+                    graph=g, fuel_moisture=fuel_moisture)
+                burned = (np.isfinite(arrival) & (arrival <= max_time)).reshape(1, n)
+                accumulate(sc, burned)
+                n_fires += 1
+        else:
+            srcarr = np.asarray(sources, dtype=np.int64)
+            for start in range(0, srcarr.size, batch_size):
+                chunk = srcarr[start:start + batch_size]
+                dist = dijkstra(g, directed=True, indices=chunk,
+                                min_only=False, limit=max_time)
+                accumulate(sc, dist <= max_time)
+                n_fires += chunk.size
+
+    prob = (count / n_fires if n_fires else count.astype(float))
+    prob = prob.reshape(nrows, ncols)
+    if not return_metrics:
+        return prob, n_fires
+
+    with np.errstate(invalid="ignore", divide="ignore"):
+        safe = np.where(count > 0, count, 1)
+        cfl = np.where(count > 0, fl_sum / safe, np.nan).reshape(nrows, ncols)
+        cint = np.where(count > 0, fli_sum / safe, np.nan).reshape(nrows, ncols)
+        flp = np.where(count > 0, flp_count / safe, 0.0).reshape(n_classes, nrows, ncols)
+    return BurnProbabilityResult(
+        burn_prob=prob,
+        n_fires=n_fires,
+        conditional_flame_length=cfl,
+        conditional_intensity=cint,
+        flame_length_classes=edges,
+        flp=flp,
+        fire_sizes=np.asarray(fire_sizes, dtype=float),
+    )
 
 
 def _mtt_python(
@@ -630,6 +1198,7 @@ def spread_perimeter(
     max_time: float = math.inf,
     ring: int = 2,
     chunk_rows: int | None = None,
+    method: str = "mtt",
 ) -> dict[str, np.ndarray]:
     """One-call fire growth: build the spread field and run MTT over a landscape.
 
@@ -638,6 +1207,8 @@ def spread_perimeter(
     ``arrival_time`` raster (minutes), the ``spread_field`` (a
     :class:`SpreadField`) and the heading ``ros_max`` raster (ft/min).
 
+    ``method`` chooses the propagation engine (``"mtt"`` Dijkstra, default, or
+    ``"fast_marching"`` anisotropic-Eikonal; see :func:`minimum_travel_time`).
     ``chunk_rows`` controls the chunked graph build for huge landscapes (see
     :func:`build_traveltime_graph`); leave ``None`` to auto-chunk.
     """
@@ -648,6 +1219,7 @@ def spread_perimeter(
     )
     arrival = minimum_travel_time(
         field, ignitions, max_time=max_time, ring=ring, chunk_rows=chunk_rows,
+        method=method,
     )
     return {
         "arrival_time": arrival,

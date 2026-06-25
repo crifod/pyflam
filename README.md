@@ -9,11 +9,26 @@ An open-source Python reimplementation of the fire-behavior science behind
 [FlamMap](https://www.firelab.org/project/flammap) — built up from the published,
 peer-reviewed models rather than by decompiling the Windows binary.
 
-**Status: roadmap steps 1–5 implemented** — the Rothermel surface fire spread
-model (the scientific core of FlamMap's "Basic Fire Behavior": rate of spread,
-reaction intensity, fireline intensity, flame length), landscape I/O, two terrain
-wind solvers, crown fire, and a directional Minimum Travel Time spread/perimeter
-engine. Validation against real FlamMap output (step 6) is the remaining work.
+**Status: roadmap steps 1–5 implemented, step 6 (validation) in progress** — the
+Rothermel surface fire spread model (the scientific core of FlamMap's "Basic Fire
+Behavior": rate of spread, reaction intensity, fireline intensity, flame length),
+landscape I/O, two terrain wind solvers, crown fire, ember spotting, and a
+directional Minimum Travel Time spread/perimeter engine. On top of that core:
+
+- **Burn probability + connected metrics** — the full FlamMap MTT random-ignition
+  output set (BP, conditional flame length / fireline intensity, the flame-length
+  probability classes, fire-size distribution), with a fire-to-fire **weather
+  ensemble** and batched multi-source solves.
+- **Weather-driven, per-cell dead fuel moisture** — derive moisture from a
+  date/time/location off live **GFS/ERA5** or manual T/RH, then condition it
+  per cell for terrain insolation (slope/aspect) and canopy shading (FlamMap's
+  "dead fuel moisture conditioning"); EMC or VPD submodels.
+- **A selectable propagation engine** — the classic MTT Dijkstra *or* an
+  anisotropic-Eikonal (Finsler) front solver with lower lattice bias, Numba-JIT
+  with `max_time` pruning that beats Dijkstra for bounded single fires.
+
+Validation against real FlamMap output (step 6) is ongoing — surface ROS matches
+to ~3% and max-spread direction to ~1° on a 1.6M-cell landscape so far.
 
 ## Why reimplement instead of decompile
 
@@ -37,6 +52,7 @@ Core dependencies are **NumPy** and **SciPy**. Optional extras unlock more:
 | `dev` | the test runner (`pytest`) | `pip install -e ".[dev]"` |
 | `geo` | GeoTIFF/`.lcp` I/O (rasterio), GeoJSON reprojection (pyproj), contour-traced perimeters (scikit-image) | `pip install -e ".[geo]"` |
 | `atmos` | reading/fetching forecast & reanalysis (xarray, cfgrib, netcdf4, cdsapi) | `pip install -e ".[atmos]"` |
+| `accel` | Numba JIT for the anisotropic-Eikonal solver (`method="fast_marching"`) | `pip install -e ".[accel]"` |
 
 Two engines are **external** and discovered at runtime (only needed for the
 high-fidelity paths; the rest of pyflam works without them):
@@ -218,6 +234,34 @@ that into the spotting and the buoyant-RANS coupling. Reading/fetching
 forecast/reanalysis data needs the `atmos` extra (`pip install 'pyflam[atmos]'`);
 the state physics and the synthetic/`ConstantAtmosphere` provider work with no
 extra deps.
+
+### Per-cell dead fuel moisture from weather (terrain + canopy)
+
+Instead of typing fixed fuel moistures, derive them for a **date / time /
+location** and spread them across the landscape with terrain insolation
+(slope/aspect) and canopy shading — pyflam's analog of FlamMap's *dead fuel
+moisture conditioning*. Sun-exposed (south-facing, open) cells come out drier,
+shaded (north-facing, under canopy) cells moister — a ~2× fine-fuel spread under
+one weather:
+
+```python
+from datetime import datetime
+
+# weather from a live GFS run (or omit `atmosphere=` and pass temperature/RH manually)
+prov = pyflam.atmosphere.fetch_gfs(run="2025-07-29 12:00", fxx=2)   # needs Herbie
+moist = pyflam.condition_from_weather(
+    ls, time=datetime(2025, 7, 29, 14, 0), atmosphere=prov,
+    latitude=43.0, longitude=11.0,        # auto from the landscape CRS if geolocated
+    model="emc",                          # or "vpd" (Resco de Dios 2015 / Nolan 2016)
+)
+#   -> {"m_1h": <2D array>, "m_10h": ..., "m_100h": ...}, ready for spread_field
+
+field = pyflam.spread_field(ls, wind_midflame=w, m_live_herb=0.6, m_live_woody=0.9, **moist)
+```
+
+`condition_dead_fuel_moisture` is the lower-level entry (explicit T/RH + sun
+geometry); `solar_position` (with optional `longitude`/`timezone` for clock time),
+`terrain_insolation_factor` and `canopy_transmission` expose the pieces.
 
 This is the step from "a robust FlamMap-equivalent core" toward a weather-driven
 operational/research tool — real winds, real moisture, real convection.
@@ -422,6 +466,54 @@ ignition takes ~2.6 s. *Note:* the graph itself still scales with cell count, so
 a whole region at 1 m would need spatial tiling — chunking bounds the build, not
 the final graph size.
 
+### Choosing the propagation engine
+
+`minimum_travel_time` and `spread_perimeter` take `method=` — the classic MTT
+Dijkstra, or an anisotropic-Eikonal (Finsler) front solver that carries much less
+of MTT's angular (lattice) bias, since the elliptical spread law is exactly a
+Randers–Finsler metric:
+
+```python
+field = pyflam.spread_field(ls, wind_midflame=mph_to_ft_per_min(8),
+                            wind_direction=270.0, **sc)
+
+mtt = pyflam.minimum_travel_time(field, [(r, c)], max_time=60.0)            # default
+fm  = pyflam.minimum_travel_time(field, [(r, c)], max_time=60.0,
+                                 method="fast_marching")                    # Eikonal
+```
+
+With `pyflam[accel]` (Numba) the Eikonal solver is a narrow-band Fast-Marching pass
+that prunes the burned region with `max_time` and then corrects it to full sweep
+accuracy on that region — for a bounded single fire it is ~2× faster than Dijkstra
+*and* more accurate (MTT's lattice paths are longer, so it under-predicts extent).
+MTT stays the default and the scalable choice for batched burn probability.
+`tests/benchmark_propagation.py` quantifies the bias and timing.
+
+### Burn probability + connected metrics
+
+Many fixed-duration fires from random ignitions give the FlamMap MTT
+random-ignition output set. `return_metrics=True` returns the connected metrics
+(conditional flame length / fireline intensity, the flame-length-probability
+classes, the per-fire size distribution); pass a **weather ensemble** (a list of
+scenarios) to vary the weather fire-to-fire:
+
+```python
+import numpy as np
+rng = np.random.default_rng(0)
+rows, cols = np.where(field.ros_max > 0)            # burnable cells
+ign = list(zip(*(a[rng.integers(0, rows.size, 500)] for a in (rows, cols))))
+
+res = pyflam.burn_probability(field, ign, max_time=60.0, return_metrics=True)
+res.burn_prob                      # [0,1] per cell
+res.conditional_flame_length       # ft, mean given the cell burned
+res.flp                            # (n_classes, H, W) flame-length-class probabilities
+res.fire_sizes                     # per-fire burned area
+
+# weather ensemble: each fire drawn from a list of (weight, field) scenarios
+res = pyflam.burn_probability([(0.5, calm), (0.5, windy)], ign,
+                              max_time=60.0, return_metrics=True, rng=rng)
+```
+
 ## What's implemented
 
 - `pyflam.rothermel` — full Rothermel (1972) surface model with Albini (1976)
@@ -464,6 +556,40 @@ the final graph size.
   Anderson 1983 length-to-breadth), the Minimum Travel Time arrival-time /
   perimeter solver (Finney 2002), `burn_probability` (many fixed-duration fires on
   one prebuilt graph), and `spread_with_spotting` (MTT coupled to ember spotting).
+  **Selectable propagation engine**: `minimum_travel_time`/`spread_perimeter` take
+  `method="mtt"` (default, Dijkstra on a travel-time lattice — fast, C-level,
+  scalable, the basis of burn probability and flow paths) or
+  `method="fast_marching"` (`anisotropic_eikonal`, a semi-Lagrangian
+  anisotropic-Eikonal/Finsler front solver). The elliptical spread law
+  `R(ψ)=R_max(1-e)/(1-e·cos ψ)` is exactly a Randers–Finsler metric, so the Eikonal
+  backend solves the *same* `SpreadField` with much less of MTT's angular (lattice)
+  bias: benchmarked against the analytic `distance/R(bearing)` on a uniform field
+  (`tests/benchmark_propagation.py`), it roughly halves the error of MTT ring-2 on
+  a wind-driven ellipse (mean ~4% vs ~12%, max ~46% vs ~145%) and beats even MTT
+  ring-3 there. Three interchangeable backends (identical results), **JIT-compiled
+  with Numba** when `pyflam[accel]` is installed (portable NumPy fallback): the
+  default `"heap"` is a narrow-band Fast-Marching pass (accept-on-pop causality)
+  that identifies and **prunes the burned region with `max_time` like Dijkstra**,
+  followed by a Gauss–Seidel correction over just that region's bounding box for
+  full sweep accuracy; `"numba"`/`"numpy"` are whole-grid sweeps. For a bounded
+  fire on a 400² grid the heap backend is **~2× faster than MTT-Dijkstra** (35 ms vs
+  73 ms) *and* more accurate — MTT's lattice bias lengthens paths and under-predicts
+  extent. So the Eikonal backend is now competitive even for bounded single-fire
+  runs; MTT stays the default for batched burn probability / flow paths. (Sethian &
+  Vladimirsky 2003; Mirebeau 2014; Gahtan et al. 2026.)
+  `burn_probability` reproduces a FlamMap MTT random-ignition run's **full output
+  set**: with `return_metrics=True` it returns a `BurnProbabilityResult` carrying
+  burn probability **and the connected metrics** — conditional flame length,
+  conditional fireline intensity (validated to within ~2% of FlamMap's
+  `FIRE_LINE_INT`), the per-class flame-length probabilities (FlamMap's
+  `FLP_METRIC` / `FIL1..FIL20`, classes configurable via `flame_length_classes`),
+  and the per-fire size distribution. Pass a **weather ensemble** (a list of
+  `(weight, field)` scenarios — or scenario `dict`s — instead of one field) to
+  model fire-to-fire weather variation, which is what makes the flame-length
+  distribution non-degenerate, as in FlamMap; a scenario `dict` may carry its own
+  `wind_20ft` / `wind_direction` so that with spotting on, ember transport uses
+  that scenario's wind too. Fires are solved in **batched multi-source Dijkstra**
+  calls (one per `batch_size` fires, memory auto-bounded) rather than one per fire.
 - `pyflam.spotting` — ember (firebrand) spotting, two models that both couple
   into MTT growth and burn probability:
   - `SpottingModel` — fast **parameterized** model (flame-length loft + lognormal
@@ -501,6 +627,29 @@ the final graph size.
   moisture, midflame wind, Monin-Obukhov stability, ambient buoyant heat flux,
   convective plume/spotting enhancement). Drives `fire_atmosphere_march` for
   near-real-time or reanalysis runs.
+- `pyflam.fuel_conditioning` — **per-cell dead fuel moisture conditioning** (the
+  analog of FlamMap's "dead fuel moisture conditioning"): turns scalar or gridded
+  weather (T, RH) plus the landscape's slope/aspect/elevation/canopy-cover bands
+  into per-cell `m_1h`/`m_10h`/`m_100h` rasters that splat straight into
+  `spread_field`. Sun-exposed fuels (south-facing, open, steep toward the sun)
+  absorb more shortwave, run warmer than the air, and sit at a lower equilibrium
+  moisture (drier); shaded fuels (north-facing, under canopy, at night) stay near
+  the ambient EMC (moister) — a ~2× fine-fuel-moisture spread across one landscape
+  under identical weather. `solar_position` (+ `equation_of_time`; pass
+  `longitude`/`timezone` to use local clock time instead of solar time) and
+  `terrain_insolation_factor` give the per-cell beam geometry, `canopy_transmission`
+  the shading, and `condition_dead_fuel_moisture` the moisture. The moisture
+  submodel is selectable: `model="emc"` (NFDRS equilibrium moisture, default) or
+  `model="vpd"` (the semi-mechanistic vapour-pressure-deficit model,
+  `dead_fuel_moisture_vpd` — Resco de Dios 2015 / Nolan 2016, the better fine-fuel
+  point estimator but with fitted, recalibratable coefficients). Holden & Jolly
+  2011; Rothermel 1983. Lets burn-probability / MTT runs use a spatially varying
+  moisture field instead of a single scalar. `condition_from_weather(ls, time=,
+  atmosphere=…)` is the run-setup front door: it derives the initial dead fuel
+  moisture for a **date/time/location** from a meteo provider (GFS/ERA5/gridded via
+  `pyflam.atmosphere`; sampled per cell on a geolocated landscape) when available,
+  and falls back to a manually entered `temperature`/`relative_humidity` when no
+  meteo data exist — so fuel moisture comes from weather, not a hand-typed default.
 - `pyflam.meteo_report` — near-real-time fire-weather variation report: samples an
   atmosphere provider across the run window and tracks how temperature, RH, wind,
   dead fuel moisture (per time lag), convective state (CAPE/CIN/PBL/stability) and
@@ -526,10 +675,14 @@ the final graph size.
 pytest
 ```
 
-The suite has two layers: physics/property tests (model must obey known
-relationships) and a golden-master regression locking current numeric outputs.
-See `tests/REFERENCE.md` for how to validate against real FlamMap output — that
-diff is the true acceptance criterion before trusting the numbers.
+The suite (~490 tests) has two layers: physics/property tests (the model must obey
+known relationships) and a golden-master regression locking current numeric
+outputs. The `tests/validate_flammap_*.py` scripts diff pyflam against the real
+FlamMap rasters in the Tuscany dataset (run them directly, e.g.
+`python tests/validate_flammap_mtt.py --burnprob`), and
+`tests/benchmark_propagation.py` quantifies the MTT-vs-Eikonal lattice bias and
+timing. See `tests/REFERENCE.md` for how to validate against real FlamMap output —
+that diff is the true acceptance criterion before trusting the numbers.
 
 ## Roadmap
 
@@ -551,7 +704,10 @@ Against a real FlamMap run (`tests/REFERENCE.md`): surface ROS matches to ~3% an
 max-spread direction to ~1° over 1.6M cells. Burn probability is only partly
 recoverable — adding spotting raises it ~36× (to within ~3× of FlamMap), but its
 parameters are calibrated and the cell-level pattern is Monte-Carlo-noise-limited;
-a crown-fire diff and a spotting-off single-fire perimeter diff remain.
+a crown-fire diff and a spotting-off single-fire perimeter diff remain. The
+*connected* metric is stronger: the conditional fireline intensity from
+`burn_probability(..., return_metrics=True)` matches FlamMap's `FIRE_LINE_INT`
+mean to within ~2% (`validate_flammap_mtt.py --burnprob`).
 
 ## References
 
