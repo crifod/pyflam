@@ -91,6 +91,15 @@ _CFO_CONST, _CFO_U10, _CFO_FSG, _CFO_EFFM = 4.236, 0.357, -0.710, -0.331
 _CFO_SFC_LOW, _CFO_SFC_MID = -4.613, -1.856   # SFC <1.0 ; 1.0-2.0 (>=2.0 -> 0)
 
 
+def wind_20ft_to_u10_kmh(wind_20ft_ft_per_min):
+    """20-ft open wind (ft/min) -> 10-m open wind (km/h) for the Cruz models.
+
+    The single wind conversion used everywhere crown spread needs U10 (so the
+    plume-coupling feedback drives one consistent wind source). Scalars or arrays.
+    """
+    return wind_20ft_ft_per_min * _FT_PER_MIN_TO_KM_PER_H * _U20FT_TO_U10
+
+
 def active_crown_ros_cruz(wind_20ft_ft_per_min, *, canopy_bulk_density,
                           m_1h: float) -> float:
     """Cruz, Alexander & Wakimoto (2005) active crown-fire spread rate (m/min).
@@ -106,8 +115,7 @@ def active_crown_ros_cruz(wind_20ft_ft_per_min, *, canopy_bulk_density,
     if cbd <= 0.0:
         return 0.0
     a, p_u, p_cbd, k_m = _CRUZ2005
-    u10 = max(float(wind_20ft_ft_per_min) * _FT_PER_MIN_TO_KM_PER_H * _U20FT_TO_U10,
-              0.0)
+    u10 = max(float(wind_20ft_to_u10_kmh(wind_20ft_ft_per_min)), 0.0)
     return a * u10 ** p_u * cbd ** p_cbd * math.exp(-k_m * float(m_1h) * 100.0)
 
 
@@ -482,7 +490,7 @@ def crown_fire_potential(
     # it once across the grid (vectorized) rather than per cell.
     if crown_spread == "cruz2005":
         a, p_u, p_cbd, k_m = _CRUZ2005
-        u10 = np.maximum(wind20 * _FT_PER_MIN_TO_KM_PER_H * _U20FT_TO_U10, 0.0)
+        u10 = np.maximum(wind_20ft_to_u10_kmh(wind20), 0.0)
         r_active = np.where(
             cbd > 0.0,
             a * u10 ** p_u * np.maximum(cbd, 1e-12) ** p_cbd
@@ -559,3 +567,83 @@ def crown_fire_potential(
         "crown_fraction_burned": cfb,
         "fireline_intensity": fli,
     }
+
+
+@dataclass
+class CrownAwareField:
+    """A spread field that carries crown-fire behaviour, plus its classification.
+
+    ``field`` is a :class:`pyflam.SpreadField` identical to the surface field in
+    ellipse geometry (``eccentricity``/``heading``) but with ``ros_max`` and
+    ``fireline_intensity`` raised to the **crown** values on cells that crown -- so
+    MTT growth, the pyroconvection plume and ember spotting all see crown behaviour
+    by reading the same two arrays they already use. ``surface`` is the underlying
+    surface field; ``fire_type`` is 0/1/2 (surface/passive/active).
+    """
+
+    field: object                  # pyflam.mtt.SpreadField (crown-aware)
+    surface: object                # pyflam.mtt.SpreadField (surface only)
+    fire_type: np.ndarray          # 0 surface / 1 passive / 2 active
+    crown_fraction_burned: np.ndarray
+
+
+def crown_spread_field(
+    ls,
+    *,
+    m_1h: float,
+    m_10h: float,
+    m_100h: float,
+    m_live_herb: float = 0.0,
+    m_live_woody: float = 0.0,
+    wind_midflame=0.0,
+    wind_direction=0.0,
+    wind_20ft_ft_per_min,
+    foliar_moisture: float,
+    crown_spread: str = "cruz2005",
+    load_factor=1.0,
+    cbh_scale: float = 0.1,
+    cbd_scale: float = 0.01,
+    heat_content: float = 18000.0,
+) -> CrownAwareField:
+    """Build a crown-aware :class:`SpreadField` (coupling-plan step 1).
+
+    Runs the surface spread field and the crown-fire classification on the same
+    landscape/weather, then returns a spread field whose ``ros_max`` and
+    ``fireline_intensity`` are replaced by the **crown** rate of spread and total
+    crown intensity on cells that crown (``fire_type >= 1``); surface cells are
+    unchanged. The ellipse shape (``eccentricity``/``heading``) is kept from the
+    surface field -- crown fire is still wind/slope-driven elliptical, just faster
+    and more intense. ``crown_spread`` selects the active-spread model (default
+    ``"cruz2005"``). The crown ``wind_20ft_ft_per_min`` and surface ``wind_midflame``
+    should come from one wind source via :func:`wind_20ft_to_u10_kmh` and the
+    wind-reduction factor (coupling-plan step 2).
+    """
+    from .mtt import SpreadField, spread_field
+
+    base = spread_field(
+        ls, m_1h=m_1h, m_10h=m_10h, m_100h=m_100h, m_live_herb=m_live_herb,
+        m_live_woody=m_live_woody, wind_midflame=wind_midflame,
+        wind_direction=wind_direction, load_factor=load_factor)
+    crown = crown_fire_potential(
+        ls, foliar_moisture=foliar_moisture,
+        wind_20ft_ft_per_min=wind_20ft_ft_per_min, wind_midflame=wind_midflame,
+        m_1h=m_1h, m_10h=m_10h, m_100h=m_100h, m_live_herb=m_live_herb,
+        m_live_woody=m_live_woody, crown_spread=crown_spread, cbh_scale=cbh_scale,
+        cbd_scale=cbd_scale, heat_content=heat_content)
+
+    crowning = crown["fire_type"] >= 1
+    ros_max = np.array(base.ros_max, dtype=float, copy=True)
+    fli = (np.zeros_like(ros_max) if base.fireline_intensity is None
+           else np.array(base.fireline_intensity, dtype=float, copy=True))
+    ros_max[crowning] = m_per_min_to_ft_per_min(
+        np.asarray(crown["rate_of_spread"]))[crowning]
+    fli[crowning] = kw_per_m_to_btu_per_ft_s(
+        np.asarray(crown["fireline_intensity"]))[crowning]
+
+    field = SpreadField(
+        ros_max=ros_max, eccentricity=base.eccentricity, heading=base.heading,
+        cellsize_x=base.cellsize_x, cellsize_y=base.cellsize_y,
+        fireline_intensity=fli)
+    return CrownAwareField(field=field, surface=base,
+                           fire_type=crown["fire_type"],
+                           crown_fraction_burned=crown["crown_fraction_burned"])

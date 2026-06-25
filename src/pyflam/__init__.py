@@ -53,13 +53,16 @@ from .wind import WindField, read_esri_ascii
 from .windsolver import solve_mass_consistent, wind_field_from_landscape
 from .cfd import solve_rans
 from .crownfire import (
+    CrownAwareField,
     CrownFireBehavior,
     active_crown_ros_cruz,
     crown_fire_behavior,
     crown_fire_potential,
     crown_fire_probability,
+    crown_spread_field,
     crowning_index,
     torching_index,
+    wind_20ft_to_u10_kmh,
 )
 from .mtt import (
     BurnProbabilityResult,
@@ -146,10 +149,13 @@ __all__ = [
     "wind_field_from_landscape",
     "solve_rans",
     "CrownFireBehavior",
+    "CrownAwareField",
     "crown_fire_behavior",
     "crown_fire_potential",
     "crown_fire_probability",
+    "crown_spread_field",
     "active_crown_ros_cruz",
+    "wind_20ft_to_u10_kmh",
     "crowning_index",
     "torching_index",
     "SpreadField",

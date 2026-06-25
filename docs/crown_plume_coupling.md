@@ -143,8 +143,11 @@ res = pyflam.fire_atmosphere_march(
 
 ## 9. Phasing
 
-1. **`crown_spread_field`** (§4.1) + unit tests — pure function, no CFD. *Small.*
-2. **Wind-reconciliation helper** (§4.3) + tests. *Small.*
+1. ✅ **`crown_spread_field`** (§4.1) + unit tests — pure function, no CFD. *Done
+   (`crownfire.crown_spread_field` → `CrownAwareField`; `tests/test_crown_coupling.py`).*
+2. ✅ **Wind-reconciliation helper** (§4.3) + tests. *Done
+   (`crownfire.wind_20ft_to_u10_kmh`, the single 20-ft→U10 conversion used by all
+   the Cruz code).*
 3. **`fire_atmosphere_march(crown=True)`** wiring (§4.2) with the wind solver
    injectable (so it's testable without OpenFOAM, as the march already is). *Medium.*
 4. **Feedback stability** (§5) + synthetic convergence test. *Medium.*
@@ -152,5 +155,6 @@ res = pyflam.fire_atmosphere_march(
    *Small.*
 6. **Quantitative validation** once a canopy landscape + FlamMap crown raster exist.
 
-Steps 1–2 are independently useful (a crown-aware spread field is handy on its own)
-and carry no OpenFOAM dependency, so they are the right place to start.
+Steps 1–2 are done (a crown-aware spread field is independently useful and carries no
+OpenFOAM dependency). The next increment is step 3 — wiring the crown-aware field into
+the march loop, with the wind provider injectable so it runs without OpenFOAM.
