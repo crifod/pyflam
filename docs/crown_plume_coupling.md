@@ -148,13 +148,19 @@ res = pyflam.fire_atmosphere_march(
 2. ✅ **Wind-reconciliation helper** (§4.3) + tests. *Done
    (`crownfire.wind_20ft_to_u10_kmh`, the single 20-ft→U10 conversion used by all
    the Cruz code).*
-3. **`fire_atmosphere_march(crown=True)`** wiring (§4.2) with the wind solver
-   injectable (so it's testable without OpenFOAM, as the march already is). *Medium.*
-4. **Feedback stability** (§5) + synthetic convergence test. *Medium.*
+3. ✅ **`fire_atmosphere_march(crown=True)`** wiring (§4.2) — each increment rebuilds
+   the crown-aware field from the current plume-modified wind (the 20-ft wind →
+   `crown_spread_field`), so crown intensity feeds the plume/spotting and the crown
+   ROS drives growth; output carries the `fire_type` raster. Wind provider injectable
+   → tested without OpenFOAM. *Done (`tests/test_crown_march.py`).*
+4. **Feedback stability** (§5) + synthetic convergence test. *Medium.* (The feedback
+   path now exists; under-relaxation / convergence guards are the remaining work.)
 5. **Spotting-from-crown-intensity** verification + plume-enhancement physics test.
-   *Small.*
+   *Small.* (Spotting already lofts from `field.fireline_intensity`, which is crown
+   intensity under `crown=True`; a dedicated physics test remains.)
 6. **Quantitative validation** once a canopy landscape + FlamMap crown raster exist.
 
-Steps 1–2 are done (a crown-aware spread field is independently useful and carries no
-OpenFOAM dependency). The next increment is step 3 — wiring the crown-aware field into
-the march loop, with the wind provider injectable so it runs without OpenFOAM.
+Steps 1–3 are done: a crown-aware spread field, the single wind reconciliation, and
+the march wiring that closes the crowning → plume → wind → crown feedback. The next
+increment is step 4 — bounding that feedback (under-relaxation + a convergence guard)
+with a synthetic stress test.

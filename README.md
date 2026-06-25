@@ -546,7 +546,13 @@ res = pyflam.burn_probability([(0.5, calm), (0.5, windy)], ign,
   feedback where the fire reshapes the wind that drives it. `couple_fire_wind` is
   the one-shot coupling; `fire_atmosphere_march` time-marches it, re-solving the
   plume wind every `dt` minutes of MTT growth (wind solver injectable, so the loop
-  is usable/testable with or without OpenFOAM). Quasi-steady.
+  is usable/testable with or without OpenFOAM). Quasi-steady. With **`crown=True`**
+  each step rebuilds a *crown-aware* spread field (`crown_spread_field`) from the
+  current plume wind, so crowning raises the fireline intensity that drives the
+  plume and the crown rate of spread drives growth — closing the
+  crowning → stronger plume → faster crown feedback (needs canopy bands +
+  `foliar_moisture`; returns the `fire_type` raster). See
+  `docs/crown_plume_coupling.md`.
 - `pyflam.rothermel.SurfaceKernel` — the wind/slope-independent Rothermel terms,
   computed once per fuel + moisture and applied to scalar or array (wind, slope).
 - `pyflam.crownfire` — crown fire: Van Wagner (1977) initiation, Scott & Reinhardt

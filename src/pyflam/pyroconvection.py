@@ -212,6 +212,12 @@ def fire_atmosphere_march(
     start_time=None,
     spatial: bool = False,
     plume: bool = False,
+    crown: bool = False,
+    crown_spread: str = "cruz2005",
+    foliar_moisture: float | None = None,
+    cbh_scale: float = 0.1,
+    cbd_scale: float = 0.01,
+    crown_heat_content: float = 18000.0,
     return_history: bool = False,
     **cfd_kwargs,
 ):
@@ -245,6 +251,15 @@ def fire_atmosphere_march(
     together. (``spatial=False`` with the default CFD ``wind_provider`` is the
     single-column plume-coupling path.)
 
+    **Crown fire (plan step 3).** With ``crown=True`` each increment builds a
+    *crown-aware* spread field (:func:`pyflam.crown_spread_field`) from the current
+    plume-modified wind: cells that crown spread at the crown rate (``crown_spread``,
+    default Cruz 2005) and carry the much-higher crown fireline intensity -- which
+    feeds straight into the plume and the ember spotting, closing the
+    crowning -> stronger plume -> faster crown feedback. Needs ``foliar_moisture``
+    and canopy base-height / bulk-density bands on ``ls``; the output then also
+    carries the final ``fire_type`` raster.
+
     Returns a dict with ``arrival_time`` (minutes); with ``return_history`` also
     ``winds``/``fields``/``times`` lists, one per increment.
     """
@@ -252,6 +267,12 @@ def fire_atmosphere_march(
         raise ValueError(
             "provide speed/direction/m_1h/m_10h/m_100h, or an `atmosphere` "
             "provider with `location` (and `start_time` for time-varying weather)")
+    if crown:
+        if foliar_moisture is None:
+            raise ValueError("crown=True needs foliar_moisture")
+        if ls.canopy_base_height is None or ls.canopy_bulk_density is None:
+            raise ValueError("crown=True needs canopy_base_height and "
+                             "canopy_bulk_density bands on the landscape")
 
     from datetime import timedelta
 
@@ -272,6 +293,27 @@ def fire_atmosphere_march(
 
     fixed_moist = dict(m_1h=m_1h, m_10h=m_10h, m_100h=m_100h,
                        m_live_herb=m_live_herb, m_live_woody=m_live_woody)
+
+    crown_state = {"fire_type": None, "crown_fraction_burned": None}
+
+    def build_field(wf, moist):
+        """Surface spread field, or a crown-aware one when ``crown=True``."""
+        if not crown:
+            return _field_from_wind(
+                ls, wf, wind_reduction_factor=wind_reduction_factor,
+                moist=moist, load_factor=load_factor)
+        from .crownfire import crown_spread_field
+        wfl = wf if wf.shape == ls.shape else wf.to_landscape(ls)
+        w20 = wfl.speed_ft_per_min()                  # the 20-ft (6.1 m) wind
+        caf = crown_spread_field(
+            ls, wind_midflame=w20 * wind_reduction_factor,
+            wind_direction=wfl.direction, wind_20ft_ft_per_min=w20,
+            foliar_moisture=foliar_moisture, crown_spread=crown_spread,
+            load_factor=load_factor, cbh_scale=cbh_scale, cbd_scale=cbd_scale,
+            heat_content=crown_heat_content, **moist)
+        crown_state["fire_type"] = caf.fire_type
+        crown_state["crown_fraction_burned"] = caf.crown_fraction_burned
+        return caf.field
 
     def resolve(sim_min):
         """(moist, speed, direction, ambient_heat_flux, windfield) for this time.
@@ -304,8 +346,7 @@ def fire_atmosphere_march(
     # Increment 0: ambient wind, no plume.
     moist, spd, dirn, ambient_q[0], wf_atm = resolve(0.0)
     wf = wf_atm if wf_atm is not None else ambient_wind_provider(ls, spd, dirn)
-    field = _field_from_wind(ls, wf, wind_reduction_factor=wind_reduction_factor,
-                             moist=moist, load_factor=load_factor)
+    field = build_field(wf, moist)
     arrival = minimum_travel_time(field, ignitions, max_time=dt, ring=ring)
 
     history = {"winds": [wf], "fields": [field], "times": [dt]}
@@ -325,9 +366,7 @@ def fire_atmosphere_march(
                   if plume else wf_atm)       # merge the plume onto the ambient field
         else:
             wf = wind_provider(ls, field.fireline_intensity, active, spd, dirn)
-        field = _field_from_wind(ls, wf,
-                                 wind_reduction_factor=wind_reduction_factor,
-                                 moist=moist, load_factor=load_factor)
+        field = build_field(wf, moist)
         graph = build_traveltime_graph(field, ring=ring)
         rb, cb = np.where(burned)
         sources = (rb * ncols + cb).tolist()
@@ -342,6 +381,9 @@ def fire_atmosphere_march(
         t = t_next
 
     out = {"arrival_time": arrival}
+    if crown:
+        out["fire_type"] = crown_state["fire_type"]
+        out["crown_fraction_burned"] = crown_state["crown_fraction_burned"]
     if return_history:
         out.update(history)
     return out
