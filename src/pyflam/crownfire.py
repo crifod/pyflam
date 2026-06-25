@@ -539,9 +539,11 @@ def crown_fire_potential(
         a_c = np.where(span > 0.0,
                        -math.log(1.0 - _CFB_AT_ACTIVE) / np.where(span > 0.0, span, 1.0),
                        0.0)
+        # max(..., 0) keeps the exponent <= 0 (no overflow) on the cells that the
+        # outer np.where discards anyway (r_surf <= r_init).
         cfb_cell = np.where(
             initiates & (r_surf > r_init) & np.isfinite(racc),
-            np.clip(1.0 - np.exp(-a_c * (r_surf - r_init)), 0.0, 1.0),
+            np.clip(1.0 - np.exp(-a_c * np.maximum(r_surf - r_init, 0.0)), 0.0, 1.0),
             0.0,
         )
         if crown_spread == "cruz2005":

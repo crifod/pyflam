@@ -737,10 +737,15 @@ active priority is closing the remaining diffs against real FlamMap output:
 
 - **Crown fire** — the harness is **built and self-tested** (`tests/validate_flammap_crown.py`,
   `validate.compare_categories` for the surface/passive/active confusion matrix);
-  run `python tests/validate_flammap_crown.py --synthetic` to exercise it. It needs
-  a landscape with **canopy base height + bulk density** bands and a FlamMap
-  crown-activity raster — the bundled Tuscany dataset has neither (canopy cover only,
-  surface-fire output), so the script reports what's missing on that data.
+  run `python tests/validate_flammap_crown.py --synthetic` to exercise it. The
+  **whole crown pipeline now runs on a file-based landscape** via
+  `tests/make_synthetic_canopy_lcp.py`, which writes a synthetic `.lcp` with the full
+  canopy fuel stack (CBH/CBD/CH) and runs read → crown classification (Cruz 2005 vs
+  Rothermel 1991) → crown-aware spread field → plume-coupled crown march on it. The
+  one thing still missing for a quantitative diff is a **FlamMap crown-activity
+  raster** — the bundled Tuscany dataset has no canopy bands and only surface-fire
+  output, so a real diff awaits either a FlamMap run on a canopy landscape or the
+  synthetic one above paired with a FlamMap export.
 - **Perimeter / time-of-arrival** — a spotting-off single-fire diff
   (`compare_perimeters` / `compare_arrival_times`) needs a FlamMap arrival-time
   export; the current dataset ships only BP / intensity / ROS / spread-direction.
