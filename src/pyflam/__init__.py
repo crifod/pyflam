@@ -21,9 +21,10 @@ from .operative import (
     operative_geojson,
 )
 from .atmosphere import (
-    AtmosphericState, AtmosphereProvider, ConstantAtmosphere,
-    DeadFuelMoistureModel, GriddedAtmosphere, open_atmosphere,
-    spread_inputs_from_state,
+    AtmosphericState, AtmosphericProfile, AtmosphereProvider, ConstantAtmosphere,
+    DeadFuelMoistureModel, GriddedAtmosphere, PyroconvectionPotential,
+    continuous_haines, inverted_v, lcl_height_m, open_atmosphere,
+    pyroconvection_potential, spread_inputs_from_state,
 )
 from .fuel_conditioning import (
     canopy_transmission, condition_dead_fuel_moisture, condition_from_weather,
@@ -95,6 +96,12 @@ __all__ = [
     "ConstantAtmosphere",
     "GriddedAtmosphere",
     "DeadFuelMoistureModel",
+    "AtmosphericProfile",
+    "PyroconvectionPotential",
+    "pyroconvection_potential",
+    "continuous_haines",
+    "inverted_v",
+    "lcl_height_m",
     "open_atmosphere",
     "spread_inputs_from_state",
     "fuel_conditioning",

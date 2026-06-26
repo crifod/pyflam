@@ -282,6 +282,176 @@ def convective_plume_factor(state: AtmosphericState) -> float:
     return float(np.clip(factor, 0.5, 3.0))
 
 
+# --- pyroconvection potential (vertical-profile diagnostics) -------------------
+#
+# High-convective wildfire is a *vertical* problem: whether a fire's plume merely
+# rises or breaks through to pyrocumulus / pyrocumulonimbus (pyroCb) is set by the
+# boundary-layer -> LCL -> free-convection geometry and by mid-level moisture, NOT
+# by surface CAPE (pyroCb often form with little or no surface-based CAPE). The
+# canonical pyroCb environment is a deep, dry, well-mixed boundary layer capped by
+# a moist layer aloft -- the "inverted-V" sounding. These diagnostics distil that
+# into numbers the fire model can act on.
+#
+# References:
+#   Castellnou, M., et al. 2022. Pyroconvection classification based on atmospheric
+#       vertical profiling. J. Geophys. Res. Atmos. 127, e2022JD036920.
+#   Mills, G.A.; McCaw, W.L. 2010. Atmospheric stability environments and fire
+#       weather in Australia -- the Continuous Haines index. CAWCR Tech. Rep. 20.
+#   Peterson, D.A., et al. 2017. PyroCb climatology (mid-troposphere humidity as a
+#       pyroCb discriminator).
+
+def _es_hpa(temp_c):
+    """Saturation vapour pressure (hPa) over water, Magnus form."""
+    t = np.asarray(temp_c, dtype=float)
+    return 6.112 * np.exp(17.67 * t / (t + 243.5))
+
+
+def dewpoint_from_rh(temp_c, relative_humidity):
+    """Dewpoint (C) from temperature (C) and RH (%), inverse Magnus. Scalars/arrays."""
+    rh = np.clip(np.asarray(relative_humidity, dtype=float), 1e-3, 100.0)
+    t = np.asarray(temp_c, dtype=float)
+    gamma = np.log(rh / 100.0) + 17.67 * t / (t + 243.5)
+    dp = 243.5 * gamma / (17.67 - gamma)
+    return float(dp) if dp.ndim == 0 else dp
+
+
+def lcl_height_m(temp_c, relative_humidity):
+    """Lifting condensation level height above ground (m) -- Espy / Lawrence (2005).
+
+    ``LCL ~ 125 * (T - Td)`` metres, with ``T - Td`` the dewpoint depression (C); a
+    hot, dry mixed layer (large depression) pushes the LCL high, the inverted-V
+    setup. Scalars or arrays.
+    """
+    td = dewpoint_from_rh(temp_c, relative_humidity)
+    depression = np.maximum(np.asarray(temp_c, dtype=float) - td, 0.0)
+    h = 125.0 * depression
+    return float(h) if np.ndim(h) == 0 else h
+
+
+@dataclass
+class AtmosphericProfile:
+    """A coarse vertical sounding: temperature + dewpoint at pressure levels.
+
+    ``pressure`` (hPa, descending or ascending), ``temperature`` and ``dewpoint``
+    (C) are equal-length 1-D arrays. This is the minimal profile the pyroconvection
+    diagnostics (Continuous Haines, mid-level moisture) need beyond the surface
+    state; build one from a sounding, a model column, or the standard pressure
+    levels of a reanalysis. ``from_rh`` builds it from RH instead of dewpoint.
+    """
+
+    pressure: np.ndarray            # hPa
+    temperature: np.ndarray         # C
+    dewpoint: np.ndarray            # C
+
+    @classmethod
+    def from_rh(cls, pressure, temperature, relative_humidity):
+        return cls(pressure=np.asarray(pressure, float),
+                   temperature=np.asarray(temperature, float),
+                   dewpoint=dewpoint_from_rh(temperature, relative_humidity))
+
+    def _at(self, level_hpa):
+        """Linear-interpolate (temperature, dewpoint) to a pressure level."""
+        p = np.asarray(self.pressure, float)
+        order = np.argsort(p)
+        t = float(np.interp(level_hpa, p[order], np.asarray(self.temperature)[order]))
+        d = float(np.interp(level_hpa, p[order], np.asarray(self.dewpoint)[order]))
+        return t, d
+
+
+def continuous_haines(profile: AtmosphericProfile, *,
+                      low_hpa: float = 850.0, high_hpa: float = 700.0) -> float:
+    """Continuous Haines index (C-Haines) -- lower-tropospheric stability + dryness.
+
+    ``CA = (T_low - T_high)/2 - 2``  (a stability term: the 850->700 hPa lapse),
+    ``CB = min((T_high - Td_high)/3 - 1, 5)`` capped, plus the >5 reduction
+    (Mills & McCaw 2010). ``C-Haines = CA + CB``; higher = drier & more unstable
+    aloft = greater pyroconvective / blow-up potential (typically 0-13). The level
+    pair defaults to the Australian 850/700 hPa convention.
+    """
+    t_lo, _ = profile._at(low_hpa)
+    t_hi, td_hi = profile._at(high_hpa)
+    ca = (t_lo - t_hi) / 2.0 - 2.0
+    cb = (t_hi - td_hi) / 3.0 - 1.0
+    if cb > 5.0:                      # Mills & McCaw cap on the moisture term
+        cb = 5.0 + (cb - 5.0) / 2.0
+    return float(ca + cb)
+
+
+def inverted_v(profile: AtmosphericProfile, *, mid_hpa: float = 600.0,
+               surface_depression_c: float = 10.0, mid_rh_pct: float = 50.0):
+    """Detect the inverted-V (dry mixed layer, moist aloft) pyroCb-prone sounding.
+
+    Returns ``(is_inverted_v, surface_dewpoint_depression_c, mid_level_rh_pct)``.
+    The signature is a **large near-surface dewpoint depression** (dry, deep mixed
+    layer -> high LCL) together with **moister air aloft** (mid-level RH above
+    ``mid_rh_pct``) -- the environment in which a fire plume that reaches the free
+    convection level taps mid-level moisture and instability, even with little
+    surface CAPE (Castellnou et al. 2022; Peterson et al. 2017).
+    """
+    p = np.asarray(profile.pressure, float)
+    i_sfc = int(np.argmax(p))                       # highest pressure = surface
+    sfc_depr = float(profile.temperature[i_sfc] - profile.dewpoint[i_sfc])
+    t_mid, td_mid = profile._at(mid_hpa)
+    mid_rh = float(np.clip(100.0 * _es_hpa(td_mid) / _es_hpa(t_mid), 0.0, 100.0))
+    flag = (sfc_depr >= surface_depression_c) and (mid_rh >= mid_rh_pct)
+    return bool(flag), sfc_depr, mid_rh
+
+
+@dataclass
+class PyroconvectionPotential:
+    """Vertical-profile pyroconvection diagnostics for a fire-weather column."""
+
+    lcl_height_m: float
+    continuous_haines: float | None      # needs a profile
+    inverted_v: bool | None
+    mid_level_rh_pct: float | None
+    mixed_layer_depth_m: float | None
+    plume_dominated_favorable: bool      # deep dry ABL + (moist aloft | high C-Haines)
+    notes: str
+
+
+def pyroconvection_potential(state: AtmosphericState, *,
+                             profile: AtmosphericProfile | None = None,
+                             chaines_threshold: float = 9.0) -> PyroconvectionPotential:
+    """Assess a column's potential for plume-dominated / pyroconvective fire.
+
+    Combines what the surface ``state`` gives (LCL from T/RH; PBL depth) with the
+    vertical ``profile`` when available (Continuous Haines, the inverted-V test).
+    The headline flag ``plume_dominated_favorable`` fires when the boundary layer is
+    deep and dry (high LCL) **and** there is moisture/instability aloft (inverted-V,
+    or C-Haines past ``chaines_threshold``) -- the geometry, not surface CAPE, that
+    the pyroCb literature identifies. Surface-only (no profile) returns the LCL and
+    a coarser flag from PBL depth + LCL alone.
+    """
+    lcl = lcl_height_m(state.temperature, state.relative_humidity)
+    if np.ndim(lcl) != 0:
+        raise ValueError("pyroconvection_potential takes a single (scalar) state")
+    lcl = float(lcl)
+    pbl = state.boundary_layer_height
+    deep_dry_abl = lcl >= 1500.0 or (pbl is not None and float(pbl) >= 2000.0)
+
+    if profile is None:
+        flag = bool(deep_dry_abl and lcl >= 2000.0)
+        return PyroconvectionPotential(
+            lcl_height_m=lcl, continuous_haines=None, inverted_v=None,
+            mid_level_rh_pct=None,
+            mixed_layer_depth_m=(float(pbl) if pbl is not None else None),
+            plume_dominated_favorable=flag,
+            notes="surface-only: no profile; flag from LCL + PBL depth")
+
+    ch = continuous_haines(profile)
+    iv, sfc_depr, mid_rh = inverted_v(profile)
+    aloft = iv or ch >= chaines_threshold
+    flag = bool(deep_dry_abl and aloft)
+    notes = (f"C-Haines {ch:.1f}; inverted-V {iv}; sfc dewpoint depression "
+             f"{sfc_depr:.1f}C; mid RH {mid_rh:.0f}%")
+    return PyroconvectionPotential(
+        lcl_height_m=lcl, continuous_haines=ch, inverted_v=iv,
+        mid_level_rh_pct=mid_rh,
+        mixed_layer_depth_m=(float(pbl) if pbl is not None else None),
+        plume_dominated_favorable=flag, notes=notes)
+
+
 # --- integration with the fire model ------------------------------------------
 
 def midflame_wind_ft_per_min(state: AtmosphericState, *,

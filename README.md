@@ -640,7 +640,16 @@ res = pyflam.burn_probability([(0.5, calm), (0.5, windy)], ign,
   stability) and the physics to derive pyflam inputs (NFDRS equilibrium fuel
   moisture, midflame wind, Monin-Obukhov stability, ambient buoyant heat flux,
   convective plume/spotting enhancement). Drives `fire_atmosphere_march` for
-  near-real-time or reanalysis runs.
+  near-real-time or reanalysis runs. **Pyroconvection-potential diagnostics**
+  (`pyroconvection_potential`, from a vertical-profile review): high-convective
+  /pyroCb-prone fire weather is a *vertical* problem — a deep, dry, well-mixed
+  boundary layer (high `lcl_height_m`) capped by moisture aloft (the "inverted-V"
+  sounding, `inverted_v`), with elevated lower-tropospheric instability+dryness
+  (`continuous_haines`, the C-Haines index) — **not** high surface CAPE (pyroCb
+  routinely form with near-zero surface CAPE). Pass an `AtmosphericProfile`
+  (pressure-level T/dewpoint) for the full diagnosis, or get a coarse LCL+PBL flag
+  from the surface state alone. (Castellnou et al. 2022; Mills & McCaw 2010;
+  Peterson et al. 2017.)
 - `pyflam.fuel_conditioning` — **per-cell dead fuel moisture conditioning** (the
   analog of FlamMap's "dead fuel moisture conditioning"): turns scalar or gridded
   weather (T, RH) plus the landscape's slope/aspect/elevation/canopy-cover bands
