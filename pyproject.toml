@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pyflam"
 version = "0.1.0"
-description = "Open Python reimplementation of FlamMap's fire-behavior science (step 1: Rothermel surface fire model)"
+description = "Open, multiplatform wildfire-behavior modelling for management, planning and suppression — weather-driven and fire-atmosphere coupled"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

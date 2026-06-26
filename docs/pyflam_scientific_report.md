@@ -1,7 +1,8 @@
 # pyflam — A Scientific, Technical and Operational Report
 
-*An open-source Python reimplementation of wildland-fire behavior science, from
-the Rothermel surface model through coupled fire–atmosphere pyroconvection.*
+*A new, robust, multiplatform open-source tool for wildfire management, planning and
+suppression — coupling wildland-fire behavior science, from the Rothermel surface
+model through fire–atmosphere pyroconvection, into one operational pipeline.*
 
 **Status:** roadmap steps 1–5 implemented; step 6 (validation) ongoing. ~8,600 lines
 of source across 25 modules; ~568 automated tests. Pure-Python core (NumPy + SciPy);
@@ -12,29 +13,33 @@ runtime. MIT-licensed; CI on Python 3.11/3.12/3.13.
 
 ## 0. Executive summary
 
-pyflam began as an open, testable reimplementation of the fire-behavior science
-behind **FlamMap** — the USDA Forest Service / Missoula Fire Sciences Laboratory
-desktop fire-behavior system — built up from the published, peer-reviewed equations
-rather than by decompiling the Windows binary. FlamMap is the operational reference
-point: it defines the canonical product set (surface rate of spread, fireline
+pyflam is a new, robust, multiplatform open-source tool built to aid **wildfire
+management, planning and suppression** — strategic fuel and risk assessment, incident
+planning, and operational decision support. It is built directly from the published,
+peer-reviewed wildland-fire science (Rothermel and its descendants), and is **inspired
+by the operational paradigm that FlamMap** — the USDA Forest Service / Missoula Fire
+Sciences Laboratory desktop system — established and proved valuable to fire agencies
+worldwide: a per-cell landscape product set (surface rate of spread, fireline
 intensity, flame length; crown-fire potential; minimum-travel-time fire growth;
-random-ignition burn probability) and the file conventions (`.lcp` landscapes,
-`.fms` moisture) that pyflam reads and reproduces.
+random-ignition burn probability). pyflam delivers that operational value as **open,
+cross-platform, scriptable software** (any OS, Python, MIT-licensed), interoperating
+with the same community data formats (`.lcp` landscapes, `.fms` moisture, GeoTIFF,
+GeoJSON) so it fits existing workflows.
 
-From that operational baseline pyflam advances in directions FlamMap does not take:
+On that foundation pyflam goes well beyond what the established desktop tools offer:
 (1) a **weather-driven** pipeline that derives fuel moisture and wind from live
-forecast/reanalysis data and conditions them per cell for terrain and canopy;
-(2) a **coupled fire–atmosphere** capability — native terrain-wind solvers, a
+forecast/reanalysis data (GFS/ERA5/WRF) and conditions them per cell for terrain and
+canopy; (2) a **coupled fire–atmosphere** capability — native terrain-wind solvers, a
 buoyant-CFD plume that the fire reshapes, and ember spotting that emerges from the
 energy budget; (3) a **literature-current crown-fire** model (Cruz et al. 2005/2004)
-that corrects the well-documented under-prediction bias of the FlamMap operational
-stack; (4) an **anisotropic-Eikonal** alternative to the lattice-Dijkstra spread
-solver that removes most of its grid bias; and (5) **vertical-profile pyroconvection
-diagnostics** (LCL, Continuous Haines, inverted-V, a Briggs plume and a pyroCb
-firepower threshold) that drive a spatially varying plume feedback. The scientific
-value is twofold: pyflam is a *transparent, reproducible* implementation of the
-established models, and a *research platform* for the fire–atmosphere coupling that
-the operational tools approximate or omit.
+that corrects the well-documented under-prediction bias of the classic Rothermel +
+Van Wagner operational stack; (4) an **anisotropic-Eikonal** alternative to the
+lattice-Dijkstra spread solver that removes most of its grid bias; and (5)
+**vertical-profile pyroconvection diagnostics** (LCL, Continuous Haines, inverted-V, a
+Briggs plume and a pyroCb firepower threshold) that drive a spatially varying plume
+feedback. The value is twofold: pyflam is a *transparent, reproducible, deployable*
+operational tool, and a *research platform* for the fire–atmosphere coupling that the
+established tools approximate or omit.
 
 The body that follows describes each capability and its scientific grounding;
 **Appendix A** gives the full physical and mathematical formulation — the energy and
@@ -45,18 +50,34 @@ physics, and the moisture derivations, including how WRF/GFS/ERA5 data drive the
 
 ---
 
-## 1. Rationale: why reimplement, and FlamMap as the baseline
+## 1. Mission and positioning
 
-FlamMap is closed Windows/C++ software, but the science it runs on is open and
-documented in USDA Forest Service publications. Reimplementing from the equations
-yields clean, cross-platform, unit-tested code; decompilation would yield unreadable
-machine output and reproduce platform quirks. Validation is therefore done by
-**diffing pyflam's outputs against real FlamMap rasters**, not by reading FlamMap's
-code.
+pyflam exists to put rigorous, current fire-behavior science into the hands of fire
+managers and planners as **free, open, cross-platform software**. The established
+desktop systems (FlamMap chief among them) demonstrated the operational value of
+landscape fire-behavior modelling but are closed, Windows-only binaries; pyflam was
+developed independently from the open, peer-reviewed fire science to deliver that
+value — and more — as a scriptable, automatable, deployable library that runs on any
+operating system, in the cloud, or inside a larger decision-support system.
 
-What pyflam inherits from the FlamMap lineage as its operational specification:
+**Operational aims.** Strategic *planning* (fuel-treatment and risk assessment via
+burn probability and crown-fire potential), incident *management* (near-real-time,
+weather-driven spread and perimeter forecasting), and *suppression* support (where the
+fire will go, how intense, where it will spot, and when it may go plume-dominated /
+pyroconvective). The same community data formats are read and written, so pyflam slots
+into existing GIS and fire-planning workflows rather than replacing them.
 
-| Operational product | FlamMap | pyflam |
+**Scientific transparency and cross-validation.** Every model is built from a cited
+publication and is unit-tested against the published equations. As an external sanity
+check, pyflam's deterministic outputs are **cross-validated by diffing against real
+FlamMap rasters** on a shared landscape — a convenient, widely-trusted reference, used
+as a benchmark, not as a specification to reproduce. (Where the established stack is
+known to be biased — e.g. crown-fire spread — pyflam deliberately departs from it and
+validates against the primary literature instead; see §6.)
+
+The capability set pyflam provides for operational use:
+
+| Operational product | Established tools | pyflam |
 |---|---|---|
 | Surface rate of spread / intensity / flame length | ✅ | `rothermel`, `landscape.basic_fire_behavior` |
 | Crown fire potential (surface/passive/active) | ✅ | `crownfire` |
@@ -65,7 +86,8 @@ What pyflam inherits from the FlamMap lineage as its operational specification:
 | Landscape `.lcp` / moisture `.fms` I/O | ✅ | `io_lcp`, `landscape` |
 | Dead-fuel-moisture conditioning | ✅ | `fuel_conditioning` |
 
-Everything beyond that table is where pyflam departs from FlamMap (Sections 5–9).
+Everything beyond that table — Sections 5–9 — is new capability the established
+desktop tools do not provide.
 
 ---
 
@@ -122,7 +144,7 @@ matches FlamMap's `MAX_SPRE_DIR` to ~1° (mean 0.96°) over 1.6M cells.
 
 ## 4. Fire growth: Minimum Travel Time, and a novel Eikonal alternative
 
-### 4.1 Minimum Travel Time (the FlamMap engine)
+### 4.1 Minimum Travel Time (the established growth engine)
 
 Fire arrival time is the **minimum-time path** from the ignition over a lattice of
 travel directions, where the time to cross a segment is its length divided by the
@@ -211,7 +233,7 @@ dry GFS column), instead of a single landscape-wide value.
 
 Real terrain bends the wind; a single uniform value is a poor approximation. pyflam
 computes a gridded `WindField` two ways, both feeding the same midflame interface and
-following the WindNinja science (Forthofer et al.) reimplemented natively:
+following the WindNinja science (Forthofer et al.) implemented natively:
 `windsolver` — a **mass-consistent** solver (fast, no external dependency); and `cfd`
 — a **momentum/RANS** solver via OpenFOAM (atmospheric boundary-layer inlet, stability,
 diurnal slope flows, per-cell roughness from the fuel grid).
@@ -397,7 +419,7 @@ SHA-pinned to Node-24 actions; coverage is reported to Codecov.
 
 ---
 
-## 13. Summary of novel contributions relative to FlamMap
+## 13. Summary of novel contributions beyond the established tools
 
 1. **Weather-driven, per-cell fuel moisture** — live GFS/ERA5 → terrain-insolation +
    canopy-shading conditioning (EMC or VPD), vs FlamMap's typed scalars.
@@ -416,9 +438,11 @@ SHA-pinned to Node-24 actions; coverage is reported to Codecov.
    GeoJSON export, plus a one-call real-time product.
 
 The scientific value is that each of these is grounded in the peer-reviewed
-literature and implemented transparently and reproducibly, with the established
-FlamMap models retained as defaults and the novel methods offered as validated,
-selectable alternatives.
+literature and implemented transparently and reproducibly. Where a well-established
+model is the operational standard (e.g. Rothermel surface spread, the classic crown
+stack) it is retained as a trusted default; the novel methods are offered as
+validated, selectable alternatives — so pyflam is at once a dependable operational
+tool and a platform for advancing the science.
 
 ---
 
@@ -699,7 +723,7 @@ real data, at the native landscape resolution.
 
 This report, and substantial parts of the pyflam implementation it describes, were
 produced with the assistance of an AI coding/research tool (Claude). The underlying
-fire-science models are reimplementations of the cited peer-reviewed publications; the
+fire-science models are independent implementations of the cited peer-reviewed publications; the
 literature reviews that motivated the novel components were conducted with AI-assisted
 search, and every cited source was located in live searches and (where central)
 verified at its primary source. Coefficients of the empirical models were checked

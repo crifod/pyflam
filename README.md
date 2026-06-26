@@ -5,42 +5,50 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 
-An open-source Python reimplementation of the fire-behavior science behind
-[FlamMap](https://www.firelab.org/project/flammap) — built up from the published,
-peer-reviewed models rather than by decompiling the Windows binary.
+A new, robust, **multiplatform open-source tool for wildfire management, planning and
+suppression** — built directly from the published, peer-reviewed wildland-fire science,
+and inspired by the operational paradigm that desktop systems like
+[FlamMap](https://www.firelab.org/project/flammap) proved valuable to fire agencies.
+pyflam delivers that operational value as scriptable, automatable, cross-platform
+software (any OS, MIT-licensed) and goes well beyond it with weather-driven,
+fire–atmosphere-coupled modelling.
 
 > 📄 **For the full scientific, technical and operational write-up** — the models,
-> their references, the novel methods beyond FlamMap, and the validation — see
-> [`docs/pyflam_scientific_report.md`](docs/pyflam_scientific_report.md).
+> their references, the novel methods, the physics formulation, and the validation —
+> see [`docs/pyflam_scientific_report.md`](docs/pyflam_scientific_report.md).
 
 **Status: roadmap steps 1–5 implemented, step 6 (validation) in progress** — the
-Rothermel surface fire spread model (the scientific core of FlamMap's "Basic Fire
-Behavior": rate of spread, reaction intensity, fireline intensity, flame length),
-landscape I/O, two terrain wind solvers, crown fire, ember spotting, and a
-directional Minimum Travel Time spread/perimeter engine. On top of that core:
+Rothermel surface fire spread model (the scientific core of "Basic Fire Behavior":
+rate of spread, reaction intensity, fireline intensity, flame length), landscape I/O,
+two terrain wind solvers, crown fire, ember spotting, and a directional Minimum Travel
+Time spread/perimeter engine. On top of that core:
 
-- **Burn probability + connected metrics** — the full FlamMap MTT random-ignition
-  output set (BP, conditional flame length / fireline intensity, the flame-length
-  probability classes, fire-size distribution), with a fire-to-fire **weather
-  ensemble** and batched multi-source solves.
+- **Burn probability + connected metrics** — the full random-ignition output set
+  (BP, conditional flame length / fireline intensity, the flame-length probability
+  classes, fire-size distribution), with a fire-to-fire **weather ensemble** and
+  batched multi-source solves.
 - **Weather-driven, per-cell dead fuel moisture** — derive moisture from a
-  date/time/location off live **GFS/ERA5** or manual T/RH, then condition it
-  per cell for terrain insolation (slope/aspect) and canopy shading (FlamMap's
-  "dead fuel moisture conditioning"); EMC or VPD submodels.
+  date/time/location off live **GFS/ERA5** or manual T/RH, then condition it per cell
+  for terrain insolation (slope/aspect) and canopy shading; EMC or VPD submodels.
 - **A selectable propagation engine** — the classic MTT Dijkstra *or* an
   anisotropic-Eikonal (Finsler) front solver with lower lattice bias, Numba-JIT
   with `max_time` pruning that beats Dijkstra for bounded single fires.
 
-Validation against real FlamMap output (step 6) is ongoing — surface ROS matches
-to ~3% and max-spread direction to ~1° on a 1.6M-cell landscape so far.
+The deterministic outputs are cross-validated against real FlamMap rasters as an
+external benchmark (step 6 ongoing) — surface ROS matches to ~3% and max-spread
+direction to ~1° on a 1.6M-cell landscape so far.
 
-## Why reimplement instead of decompile
+## Approach: open, cross-platform, science-first
 
-FlamMap is a closed Windows/C++ GUI app, but the science it runs on is open and
-documented in USDA Forest Service publications. Reimplementing from the equations
-gives clean, testable, cross-platform code; decompiling would give unreadable
-machine output and reproduce platform quirks. Validation is done by diffing our
-outputs against real FlamMap/BehavePlus runs, not by reading their code.
+The established desktop fire-behavior systems are closed, Windows-only binaries, but
+the science they run on is open and documented in USDA Forest Service publications.
+pyflam was developed independently from those published equations to give clean,
+testable, **cross-platform** code that runs anywhere — on a laptop, a server, in the
+cloud, or embedded in a larger decision-support system. It interoperates with the same
+community data formats (`.lcp`, `.fms`, GeoTIFF, GeoJSON) so it fits existing
+fire-planning and GIS workflows, and it is cross-validated against established tools
+(FlamMap/BehavePlus) as a benchmark rather than treating any one of them as a
+specification to copy.
 
 ## Install
 
@@ -132,7 +140,7 @@ Real terrain bends the wind (ridge speed-up, valley channeling, lee wakes), so a
 single uniform value is a poor approximation. pyflam computes a gridded
 `WindField` two ways, both feeding the same `wind_midflame` interface. (The
 science follows [WindNinja](https://github.com/firelab/windninja), USFS — but
-pyflam reimplements it natively rather than bridging to that tool.)
+pyflam implements it natively rather than bridging to that tool.)
 
 ### Fast: mass-consistent (`pyflam.windsolver`) — no external deps
 
@@ -874,6 +882,7 @@ Guidelines:
 
 ## License
 
-MIT — see [LICENSE](LICENSE). FlamMap itself is a separate USDA Forest Service
-product; this is an independent reimplementation from published models and
-contains no FlamMap code.
+MIT — see [LICENSE](LICENSE). pyflam is an independent open-source tool built from
+published, peer-reviewed fire science; it contains no FlamMap (or other proprietary
+tool) code, and FlamMap/BehavePlus are used only as external benchmarks for
+cross-validation.
