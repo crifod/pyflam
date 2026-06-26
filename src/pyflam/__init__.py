@@ -23,8 +23,9 @@ from .operative import (
 from .atmosphere import (
     AtmosphericState, AtmosphericProfile, AtmosphereProvider, ConstantAtmosphere,
     DeadFuelMoistureModel, GriddedAtmosphere, PyroconvectionPotential,
-    continuous_haines, inverted_v, lcl_height_m, open_atmosphere,
-    pyroconvection_potential, spread_inputs_from_state,
+    briggs_plume_rise, brunt_vaisala_squared, continuous_haines, inverted_v,
+    lcl_height_m, open_atmosphere, pyroconvection_potential,
+    pyrocb_firepower_threshold, spread_inputs_from_state,
 )
 from .fuel_conditioning import (
     canopy_transmission, condition_dead_fuel_moisture, condition_from_weather,
@@ -99,6 +100,9 @@ __all__ = [
     "AtmosphericProfile",
     "PyroconvectionPotential",
     "pyroconvection_potential",
+    "pyrocb_firepower_threshold",
+    "briggs_plume_rise",
+    "brunt_vaisala_squared",
     "continuous_haines",
     "inverted_v",
     "lcl_height_m",

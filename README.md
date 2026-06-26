@@ -648,8 +648,16 @@ res = pyflam.burn_probability([(0.5, calm), (0.5, windy)], ign,
   (`continuous_haines`, the C-Haines index) — **not** high surface CAPE (pyroCb
   routinely form with near-zero surface CAPE). Pass an `AtmosphericProfile`
   (pressure-level T/dewpoint) for the full diagnosis, or get a coarse LCL+PBL flag
-  from the surface state alone. (Castellnou et al. 2022; Mills & McCaw 2010;
-  Peterson et al. 2017.)
+  from the surface state alone. `convective_plume_factor(state, profile=…)` now
+  re-weights the loft/spotting enhancement toward those vertical predictors when a
+  profile is given (boosting the inverted-V column, not the moist one), instead of
+  surface CAPE alone — backward compatible without a profile. A **Briggs bent-over
+  plume** (`briggs_plume_rise`, the validated wildfire plume form) plus a
+  **PyroCb Firepower Threshold** (`pyrocb_firepower_threshold`, Tory & Kepert 2021
+  — the minimum firepower for the plume to reach condensation against the capping
+  stability, rising with LCL height) give the operational pyroconvection-risk
+  outputs. (Castellnou et al. 2022; Mills & McCaw 2010; Peterson et al. 2017;
+  Briggs 1969; Tory & Kepert 2021.)
 - `pyflam.fuel_conditioning` — **per-cell dead fuel moisture conditioning** (the
   analog of FlamMap's "dead fuel moisture conditioning"): turns scalar or gridded
   weather (T, RH) plus the landscape's slope/aspect/elevation/canopy-cover bands

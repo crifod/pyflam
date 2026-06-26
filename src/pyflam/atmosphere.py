@@ -35,6 +35,7 @@ References:
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 from datetime import datetime
 
@@ -264,13 +265,22 @@ def ambient_surface_heat_flux(state: AtmosphericState) -> float:
     return float(q) if q.ndim == 0 else q
 
 
-def convective_plume_factor(state: AtmosphericState) -> float:
+def convective_plume_factor(state: AtmosphericState, *,
+                            profile: "AtmosphericProfile | None" = None) -> float:
     """Loft enhancement (>= 1) for the fire plume from atmospheric instability.
 
-    An unstable, high-CAPE atmosphere lets a fire plume rise higher and entrain
-    less, strengthening lofting and spotting; a stable one caps it. Factor rises
-    with CAPE toward ~3x and is damped (->~0.7) under a stable surface layer.
-    Heuristic and bounded -- the convective coupling, not a cloud model.
+    An unstable atmosphere lets a fire plume rise higher and entrain less,
+    strengthening lofting and spotting; a stable one caps it. Bounded heuristic --
+    the convective coupling, not a cloud model.
+
+    Without a ``profile`` this uses surface CAPE + Monin-Obukhov stability (the
+    original behaviour). **With a vertical ``profile``** it shifts to the predictors
+    the pyroCb literature favours over surface CAPE: a deep, dry mixed layer (high
+    LCL) capped by moisture aloft (the inverted-V sounding) and elevated lower-
+    tropospheric instability/dryness (Continuous Haines). Surface CAPE is a poor
+    pyroCb predictor -- pyroCb routinely form with near-zero CAPE -- so when the
+    profile shows a pyroconvection-favourable column the factor is boosted toward
+    its cap (Castellnou et al. 2022; Peterson et al. 2017; Mills & McCaw 2010).
     """
     cape = state.cape or 0.0
     factor = 1.0 + cape / _CAPE_REF
@@ -279,6 +289,15 @@ def convective_plume_factor(state: AtmosphericState) -> float:
         factor *= 0.7
     elif cls == "unstable":
         factor *= 1.2
+
+    if profile is not None:
+        ch = continuous_haines(profile)
+        iv, _, _ = inverted_v(profile)
+        # C-Haines ~13 max: ramp a multiplicative boost up to ~1.6x by CH=11,
+        # plus an extra kick for a confirmed inverted-V (the canonical pyroCb set-up).
+        factor *= 1.0 + 0.6 * np.clip((ch - 5.0) / 6.0, 0.0, 1.0)
+        if iv:
+            factor *= 1.25
     return float(np.clip(factor, 0.5, 3.0))
 
 
@@ -450,6 +469,106 @@ def pyroconvection_potential(state: AtmosphericState, *,
         mid_level_rh_pct=mid_rh,
         mixed_layer_depth_m=(float(pbl) if pbl is not None else None),
         plume_dominated_favorable=flag, notes=notes)
+
+
+# --- Briggs bent-over plume rise + pyroCb firepower threshold ------------------
+#
+# How high a fire's plume rises (and whether it reaches the level where free moist
+# convection can develop) follows the Briggs (1969) buoyant-plume framework: the
+# observed wildfire plume is the archetypal bent-over plume in a crosswind (Lareau
+# & Clements 2017). Inverting that plume against a single sounding gives the minimum
+# firepower for pyroCb -- the PyroCb Firepower Threshold (Tory & Kepert 2021). The
+# forms below are the standard analytical Briggs solutions; the PFT here is a
+# simplified, documented version (reach the LCL against the capping stability), not
+# the full Tory & Kepert plume-condensation integration.
+
+# Reference air properties for the buoyancy-flux conversion.
+_T_REF_K = 293.0                 # K
+_PI = math.pi
+
+
+def briggs_buoyancy_flux(heat_flux_w: float, *, temperature_k: float = _T_REF_K) -> float:
+    """Plume buoyancy flux F (m^4 s^-3) from total convective heat flux (W).
+
+    ``F = g * Q_c / (pi * rho * cp * T)`` -- the Briggs buoyancy flux for a heat
+    source of power ``Q_c`` (the convective fraction of the firepower).
+    """
+    return (_G * float(heat_flux_w)) / (_PI * _RHO_AIR * _CP_AIR * float(temperature_k))
+
+
+def brunt_vaisala_squared(profile: AtmosphericProfile,
+                          low_hpa: float = 700.0, high_hpa: float = 500.0) -> float:
+    """Static-stability parameter s = (g/theta) dtheta/dz (s^-2) over a layer.
+
+    Positive in a stable layer (the moist cap a pyroCb plume must punch through),
+    ~0 in a well-mixed layer. Heights come from the hypsometric approximation.
+    """
+    t_lo, _ = profile._at(low_hpa)
+    t_hi, _ = profile._at(high_hpa)
+    th_lo = (t_lo + 273.15) * (1000.0 / low_hpa) ** 0.286
+    th_hi = (t_hi + 273.15) * (1000.0 / high_hpa) ** 0.286
+    # Approx layer thickness (m): hypsometric, mean T.
+    tbar = 0.5 * (t_lo + t_hi) + 273.15
+    dz = 287.0 * tbar / _G * math.log(low_hpa / high_hpa)
+    if dz <= 0.0:
+        return 0.0
+    dtheta_dz = (th_hi - th_lo) / dz
+    return float(max(_G / (0.5 * (th_lo + th_hi)) * dtheta_dz, 0.0))
+
+
+def briggs_plume_rise(heat_flux_w: float, wind_ms: float, *,
+                      stability_s2: float = 0.0, distance_m: float | None = None,
+                      temperature_k: float = _T_REF_K) -> float:
+    """Bent-over plume rise (m) above the source -- Briggs (1969).
+
+    Stable layer (``stability_s2`` > 0): the **final** rise
+    ``dh = 2.6 (F / (U s))^(1/3)``. Neutral (s = 0) with a downwind ``distance_m``:
+    the transitional rise ``dh = 1.6 F^(1/3) x^(2/3) / U`` (a neutral bent-over
+    plume has no final height, so a distance is required). ``wind_ms`` is the
+    cross-plume wind; very light winds are floored to keep the bent-over scaling
+    valid.
+    """
+    f = briggs_buoyancy_flux(heat_flux_w, temperature_k=temperature_k)
+    u = max(float(wind_ms), 0.5)
+    if stability_s2 > 1e-9:
+        return float(2.6 * (f / (u * stability_s2)) ** (1.0 / 3.0))
+    if distance_m is None:
+        raise ValueError("neutral plume rise needs distance_m (no final height)")
+    return float(1.6 * f ** (1.0 / 3.0) * float(distance_m) ** (2.0 / 3.0) / u)
+
+
+def pyrocb_firepower_threshold(state: AtmosphericState, profile: AtmosphericProfile,
+                               *, convective_fraction: float = 0.6,
+                               target_height_m: float | None = None) -> float:
+    """Minimum firepower (W) for the plume to reach free moist convection -- a PFT.
+
+    The PyroCb Firepower Threshold (Tory & Kepert 2021): the least fire power that,
+    in *this* atmosphere, lifts the plume to where free moist convection can begin.
+    Here that target height defaults to the **LCL** (from the surface state) -- the
+    plume must reach it to condense and tap the moist instability aloft -- and the
+    plume must rise against the static stability of the capping layer
+    (:func:`brunt_vaisala_squared`). Inverting the stable bent-over Briggs rise
+    ``dh = 2.6 (F/(U s))^(1/3)`` for the heat flux gives
+    ``Q_c = (dh/2.6)^3 * U * s * pi rho cp T / g`` and ``firepower = Q_c /
+    convective_fraction``. Lower threshold = more easily pyroconvective.
+
+    The threshold **rises with the LCL height and with the cap stability** (a
+    drier surface or a stronger inversion needs a more powerful fire). It is
+    **simplified** vs the full Tory & Kepert plume-condensation integration, and is
+    only meaningful **paired with** :func:`pyroconvection_potential`: a *low*
+    threshold in a moist, stable column does not mean pyroCb -- you also need the
+    dry, unstable, moist-aloft (inverted-V) environment for deep convection to
+    follow. Returns ``inf`` only for a degenerate (non-positive) target height.
+    """
+    h = float(target_height_m if target_height_m is not None
+              else lcl_height_m(state.temperature, state.relative_humidity))
+    s = brunt_vaisala_squared(profile)
+    if h <= 0.0:
+        return math.inf
+    u = max(float(state.wind_speed), 0.5)
+    f_req = (h / 2.6) ** 3 * u * max(s, 0.0)                # required buoyancy flux
+    q_c = f_req * _PI * _RHO_AIR * _CP_AIR * _T_REF_K / _G  # convective heat flux (W)
+    return float(q_c / max(convective_fraction, 1e-6))
 
 
 # --- integration with the fire model ------------------------------------------

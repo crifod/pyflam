@@ -13,8 +13,10 @@ import pytest
 
 import pyflam
 from pyflam.atmosphere import (
-    AtmosphericProfile, AtmosphericState, continuous_haines, dewpoint_from_rh,
-    inverted_v, lcl_height_m, pyroconvection_potential,
+    AtmosphericProfile, AtmosphericState, briggs_buoyancy_flux, briggs_plume_rise,
+    brunt_vaisala_squared, continuous_haines, convective_plume_factor,
+    dewpoint_from_rh, inverted_v, lcl_height_m, pyrocb_firepower_threshold,
+    pyroconvection_potential,
 )
 
 
@@ -120,3 +122,90 @@ def test_potential_rejects_array_state():
                           relative_humidity=np.full((2, 2), 20.0))
     with pytest.raises(ValueError):
         pyroconvection_potential(st)
+
+
+# --- convective_plume_factor re-weighting -------------------------------------
+
+def _iv_profile():
+    return _profile([1000, 850, 700, 600, 500], [36, 22, 12, 4, -6], [15, 12, 20, 75, 60])
+
+
+def _moist_profile():
+    return _profile([1000, 850, 700, 600, 500], [22, 16, 10, 4, -4], [80, 75, 70, 65, 60])
+
+
+def test_plume_factor_backward_compatible_without_profile():
+    """No profile -> unchanged CAPE/stability behaviour."""
+    capey = AtmosphericState(wind_speed=3, wind_direction=270, temperature=30,
+                             relative_humidity=20, cape=3000.0, sensible_heat_flux=300.0)
+    calm = AtmosphericState(wind_speed=3, wind_direction=270, temperature=20,
+                            relative_humidity=40)
+    assert convective_plume_factor(capey) > convective_plume_factor(calm)
+    assert 0.5 <= convective_plume_factor(capey) <= 3.0
+
+
+def test_plume_factor_profile_boosts_inverted_v_not_moist():
+    st = AtmosphericState(wind_speed=3, wind_direction=270, temperature=36,
+                          relative_humidity=15, boundary_layer_height=3200)
+    base = convective_plume_factor(st)
+    boosted = convective_plume_factor(st, profile=_iv_profile())
+    moist = convective_plume_factor(st, profile=_moist_profile())
+    assert boosted > base                       # inverted-V profile raises the factor
+    assert moist == pytest.approx(base, abs=1e-6)   # moist column adds nothing
+    assert boosted <= 3.0                        # still bounded
+
+
+# --- Briggs plume rise + PFT --------------------------------------------------
+
+def test_buoyancy_flux_linear_in_heat():
+    assert briggs_buoyancy_flux(2e8) == pytest.approx(2 * briggs_buoyancy_flux(1e8))
+
+
+def test_briggs_rise_monotonic():
+    Q = 5e8
+    assert briggs_plume_rise(2 * Q, 5, stability_s2=3e-4) > \
+        briggs_plume_rise(Q, 5, stability_s2=3e-4)            # hotter -> higher
+    assert briggs_plume_rise(Q, 5, stability_s2=3e-4) > \
+        briggs_plume_rise(Q, 12, stability_s2=3e-4)          # more wind -> lower
+    assert briggs_plume_rise(Q, 5, stability_s2=1e-4) > \
+        briggs_plume_rise(Q, 5, stability_s2=5e-4)           # less stable -> higher
+
+
+def test_briggs_neutral_needs_distance_and_grows():
+    Q = 5e8
+    with pytest.raises(ValueError):
+        briggs_plume_rise(Q, 5)                              # neutral, no distance
+    assert briggs_plume_rise(Q, 5, distance_m=4000) > \
+        briggs_plume_rise(Q, 5, distance_m=1000)
+
+
+def test_brunt_vaisala_positive_for_stable_layer():
+    assert brunt_vaisala_squared(_iv_profile()) > 0.0
+
+
+def test_pft_higher_when_lcl_higher():
+    """A drier surface (higher LCL) raises the firepower needed to reach condensation."""
+    prof = _iv_profile()
+    dry = AtmosphericState(wind_speed=5, wind_direction=270, temperature=36,
+                           relative_humidity=12)
+    less_dry = AtmosphericState(wind_speed=5, wind_direction=270, temperature=36,
+                                relative_humidity=35)
+    assert pyrocb_firepower_threshold(dry, prof) > \
+        pyrocb_firepower_threshold(less_dry, prof)
+    assert pyrocb_firepower_threshold(dry, prof) > 0.0
+
+
+def test_pft_higher_with_stronger_cap():
+    """A more stable capping layer needs a more powerful fire to punch through."""
+    st = AtmosphericState(wind_speed=5, wind_direction=270, temperature=36,
+                          relative_humidity=15)
+    weak = _profile([1000, 850, 700, 600, 500], [36, 22, 10, 0, -12], [15, 12, 20, 70, 60])
+    strong = _profile([1000, 850, 700, 600, 500], [36, 22, 14, 12, 8], [15, 12, 20, 70, 60])
+    assert brunt_vaisala_squared(strong) > brunt_vaisala_squared(weak)
+    assert pyrocb_firepower_threshold(st, strong) > pyrocb_firepower_threshold(st, weak)
+
+
+def test_pft_degenerate_target_is_inf():
+    st = AtmosphericState(wind_speed=5, wind_direction=270, temperature=20,
+                          relative_humidity=100)            # LCL ~ 0
+    assert pyrocb_firepower_threshold(st, _iv_profile(), target_height_m=0.0) == float("inf")
