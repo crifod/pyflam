@@ -36,6 +36,13 @@ value is twofold: pyflam is a *transparent, reproducible* implementation of the
 established models, and a *research platform* for the fire–atmosphere coupling that
 the operational tools approximate or omit.
 
+The body that follows describes each capability and its scientific grounding;
+**Appendix A** gives the full physical and mathematical formulation — the energy and
+flux balances, the fluid-dynamics of the fire-induced plume and terrain wind, the
+geometric (eikonal/Finsler) propagation, the atmospheric convection and vertical-flux
+physics, and the moisture derivations, including how WRF/GFS/ERA5 data drive the model
+**per cell** and **per timestep**.
+
 ---
 
 ## 1. Rationale: why reimplement, and FlamMap as the baseline
@@ -453,6 +460,238 @@ selectable alternatives.
 - Tolan, J.; et al. (2024). *Very high resolution canopy height maps from RGB imagery (Meta/WRI HRCH).* Remote Sensing of Environment.
 - Tory, K.J.; Kepert, J.D. (2021). *Pyrocumulonimbus Firepower Threshold: Assessing the Atmospheric Potential for pyroCb.* Weather and Forecasting 36(2).
 - Van Wagner, C.E. (1977). *Conditions for the start and spread of crown fire.* Can. J. For. Res. 7(1), 23–34.
+
+---
+
+# Appendix A — Physical and mathematical formulation
+
+*The governing equations behind each layer, in the form pyflam implements them.
+Notation: g gravitational acceleration, ρ density, c_p specific heat, T temperature
+(K unless noted), θ potential temperature, p pressure, U wind speed, u\* friction
+velocity, q'' a flux per unit area (W m⁻²), I a fireline intensity per unit length
+(W m⁻¹), R a rate of spread.*
+
+## A.1 Energy balance and heat fluxes — the surface fire
+
+Rothermel's spread rate is a **steady-state energy balance**: the rate of spread is
+the heat flux received by the unburned fuel divided by the heat required to bring it
+to ignition,
+
+```
+        I_R · ξ · (1 + φ_w + φ_s)
+R  =  ──────────────────────────────         [m s⁻¹ or ft min⁻¹]
+            ρ_b · ε · Q_ig
+```
+
+- **Reaction intensity** I_R (kW m⁻² ; the energy-release rate per unit area of the
+  flaming front) = Γ′ · w_n · h · η_M · η_s, with the optimum reaction velocity Γ′, net
+  fuel load w_n, low heat content h, and the moisture and mineral damping coefficients
+  η_M, η_s. Moisture enters *here*, nonlinearly, through η_M(M/M_x) — which is why
+  pyflam applies per-cell moisture inside the kernel rather than to the output.
+- **Propagating flux ratio** ξ — the fraction of I_R that reaches the fuel ahead, a
+  function of packing ratio β and surface-area-to-volume ratio σ.
+- **Wind and slope factors** φ_w = C(βU)^B·(β/β_op)^(−E), φ_s = 5.275·β^(−0.3)·tan²(slope) —
+  multiplicative enhancements of the no-wind, no-slope rate r₀ = I_R·ξ/(ρ_b·ε·Q_ig).
+- **Heat sink** ρ_b·ε·Q_ig — bulk density × effective heating number ε = exp(−138/σ) ×
+  heat of pre-ignition Q_ig = 250 + 1116·M (kJ kg⁻¹), the term moisture raises.
+
+The fire's **power** is the Byram (1959) fireline intensity, an energy flux per unit
+length of front,
+
+```
+I = H · w · R            [W m⁻¹]              flame length  L = 0.0775 · I^0.46  [m]
+```
+
+with H heat yield and w fuel consumed. **Two heat-transfer pathways** carry I to the
+unburned fuel: radiation (dominant in plume-dominated fire) and convection (dominant
+when wind tilts the flame forward). pyflam tracks I per cell on the `SpreadField`; it
+is the quantity that subsequently drives the plume (§A.3) and ember lofting (§7).
+
+## A.2 Geometric propagation — Huygens, the eikonal, and the Finsler metric
+
+Once each cell has a directional spread rate R(ψ) = R_max(1−e)/(1−e·cosψ) (an ellipse,
+Finney 1998), fire growth is a **wavefront-propagation** problem with two equivalent
+formulations:
+
+**Huygens / Hamilton–Jacobi (continuous front).** Every point of the perimeter is a
+source of an elliptical wavelet; the new front is the envelope. The arrival-time field
+T(**x**) then satisfies a **static, anisotropic Hamilton–Jacobi (eikonal) equation**
+
+```
+F(x, ∇T/|∇T|) · |∇T| = 1 ,     T = 0 on the ignition,
+```
+
+where F is the front normal speed. When F depends on direction (always, under wind and
+slope) the equation is *anisotropic*; for the wind-tilted ellipse it is *asymmetric*
+(downwind ≠ upwind) — i.e. a **Finsler metric** whose indicatrix (unit ball) is the
+cell's fire ellipse. Arrival time is the **geodesic distance** in that metric.
+
+**Minimum Travel Time (discrete graph).** Discretize space as a lattice graph whose
+edge weights are travel times Δx/R(ψ); arrival time is the shortest path (Dijkstra),
+Finney (2002). This is exact *as a graph* but offers only the template's discrete
+directions, so it carries an O(angular-resolution) **metrication error** — the lattice
+bias §4.2 quantifies.
+
+pyflam's `fast_marching` backend solves the eikonal form directly with a
+**semi-Lagrangian** update: the time at a cell is
+
+```
+T(x) = min over directions  [ τ(x, y) + interpolated T on the segment through y ],
+```
+
+minimised over a continuum of arrival directions (not just lattice nodes), with τ the
+Finsler travel time. A causal, heap-ordered single pass (the anisotropic-Eikonal
+analogue of Dijkstra; Sethian & Vladimirsky 2003, Mirebeau 2014) removes most of the
+metrication error and lets a finite horizon prune the front exactly as MTT does.
+
+## A.3 Fire-induced fluid dynamics — buoyant plume and mass-consistent wind
+
+**The plume (momentum + buoyancy, RANS).** The fire injects a **convective ground
+heat flux**, cell-averaged from the fireline intensity over the cell,
+
+```
+q''_fire = χ_c · I[W m⁻¹] / Δx           [W m⁻²]   (pyflam: χ_c ≈ 0.6 convective fraction)
+```
+
+restricted to actively flaming cells. This forces a steady, buoyant
+**Reynolds-averaged Navier–Stokes** system under the Boussinesq approximation
+(OpenFOAM `buoyantBoussinesqSimpleFoam`):
+
+```
+∇·u = 0                                                  (mass)
+∇·(u u) = −∇p_rgh/ρ₀ − g·(ρ−ρ₀)/ρ₀ k̂ + ∇·[(ν+ν_t)∇u]      (momentum + buoyancy)
+∇·(u T) = ∇·[(α+α_t)∇T] + q''_fire/(ρ₀ c_p)               (energy / heat)
+```
+
+with k–ε turbulence closure and an atmospheric-boundary-layer log-law inlet. The
+buoyancy term g·(ρ−ρ₀)/ρ₀ is the plume engine: hot, light air over the fire rises,
+drawing an **indraft** at the surface and a return flow aloft. The solver returns a
+plume-modified `WindField` that feeds back into spread — the coupling FlamMap omits.
+
+**Plume rise (Briggs, bent-over).** For the observed bent-over wildfire plume in a
+crosswind the rise scales with the **buoyancy flux**
+
+```
+F = g·Q_c / (π·ρ·c_p·T)     [m⁴ s⁻³] ;   stable cap:  Δh = 2.6·(F/(U·s))^{1/3}
+```
+
+s = (g/θ)·dθ/dz the static-stability (squared Brunt–Väisälä) parameter. Inverting Δh
+for Q_c gives the **pyroCb firepower threshold** (§8.3): the least fire power that lifts
+the plume to condensation against the cap.
+
+**Mass-consistent terrain wind (diagnostic, no momentum).** Where the full RANS is too
+costly, pyflam uses the Sasaki (1970) variational method: find the wind nearest an
+interpolated first guess u₀ that is divergence-free. With a Lagrange multiplier λ this
+reduces to an **anisotropic Poisson** problem,
+
+```
+∂²λ/∂x² + ∂²λ/∂y² + T_R·∂²λ/∂z² = −2 ∇·u₀ ,    u = u₀ + ½∇_h λ ,  w = w₀ + (T_R/2)·λ_z
+```
+
+(T_R the stability/anisotropy ratio) — ridge speed-up, valley channeling and lee
+deceleration emerge from mass conservation alone (Forthofer et al. 2014).
+
+## A.4 Atmospheric physics — vertical fluxes, convection, and the ABL/LCL geometry
+
+**Surface-layer fluxes (Monin–Obukhov similarity).** The atmosphere's own turbulent
+exchange sets the background into which the plume grows. From the surface sensible heat
+flux q''_H and the friction velocity u\* = κU/ln((z+z₀)/z₀),
+
+```
+L = −u*³ ρ c_p T / (κ g q''_H)        (Obukhov length)
+```
+
+L < 0 unstable (daytime convective, plume grows freely), L > 0 stable (capped). pyflam
+classifies stability from the sign of q''_H (with a CAPE/CIN override) and damps or
+boosts the convective plume factor accordingly.
+
+**Moist convection and the vertical profile.** Whether the plume merely rises or
+deepens into **pyrocumulus/pyrocumulonimbus** is governed by the *vertical thermodynamic
+structure*, not surface buoyancy. Key quantities, all computed from a column profile:
+
+- **Potential temperature** θ = T·(1000/p)^0.286 — conserved in dry adiabatic ascent; a
+  well-mixed boundary layer has θ ≈ const (s ≈ 0), so the plume rises unimpeded to the
+  condensation level.
+- **Lifting condensation level** LCL — the height a surface parcel must be lifted to
+  saturate; pyflam uses LCL ≈ 125·(T − T_d) m (Espy/Lawrence), with the dewpoint T_d from
+  the inverse Magnus relation. A hot, dry mixed layer ⇒ large dewpoint depression ⇒ high
+  LCL.
+- **CAPE / CIN** — the buoyant energy released / the inhibition to overcome. Crucially,
+  **pyroCb routinely form with near-zero surface CAPE**: in the canonical "inverted-V"
+  sounding (deep dry mixed layer capped by moisture aloft) the parcels that matter
+  originate in the hot dry layer and find moisture *above* the LCL. The discriminator is
+  therefore **mid-tropospheric humidity**, not surface CAPE.
+- **Continuous Haines** C-Haines = CA(stability, 850→700 hPa lapse) + CB(dryness, 700-hPa
+  dewpoint depression) — the operational lower-tropospheric instability+dryness index.
+
+pyflam's `pyroconvection_potential` flags a column as plume-favourable when the boundary
+layer is deep and dry (high LCL) **and** there is moisture/instability aloft (inverted-V
+or high C-Haines) — the ABL→LCL→free-convection geometry the pyroCb literature
+identifies (Castellnou 2022; Peterson 2017; Tory & Kepert 2021).
+
+## A.5 Moisture derivations — equilibrium, VPD, time lag, and per-cell conditioning
+
+**Equilibrium moisture content (instantaneous).** The moisture a dead fuel approaches in
+constant air is the NFDRS piecewise EMC m_e(T, RH) (Simard 1968), rising with RH and
+falling weakly with T. The semi-mechanistic alternative ties fine-fuel moisture to
+**vapour-pressure deficit**, M = a + b·exp(−c·VPD) (Resco de Dios 2015 / Nolan 2016 Eq. 8:
+a=7.86, b=140.94, c=3.73; VPD in kPa), with VPD = e_s(T)·(1 − RH/100).
+
+**Time-lag dynamics (temporal memory).** Real fuels lag the air; each size class relaxes
+toward EMC by a first-order ODE
+
+```
+dm/dt = (m_e − m)/τ   ⇒   m(t+Δt) = m_e + (m(t) − m_e)·e^{−Δt/τ}
+```
+
+with τ = 1, 10, 100 h. pyflam's `DeadFuelMoistureModel` integrates this **across march
+timesteps**, so the 1/10/100-h moistures carry memory of recent humidity rather than
+snapping to the latest value — essential for diurnal drying and multi-hour reanalysis
+runs.
+
+**Per-cell terrain/canopy conditioning.** The same air produces very different fuel
+moisture on a sunlit south slope than in a shaded draw. pyflam computes, per cell, a
+**sun-exposure index** S ∈ [0,1] = (direct-beam factor on the slope facet) × (canopy
+openness):
+
+```
+cos(incidence) = cos(slope)cos(zenith) + sin(slope)sin(zenith)cos(sun_az − aspect)
+S = max(cos incidence, 0) · (1 − shade · canopy_cover)
+```
+
+with the solar zenith/azimuth from latitude, day-of-year and (equation-of-time-corrected)
+hour. A near-fuel heating ΔT = ΔT_sun·S is added; holding the surface vapour pressure
+fixed, the warmer fuel sees a lower local RH = 100·e_vap/e_s(T+ΔT), and the EMC (or VPD)
+is evaluated at that warmer, drier microclimate. Sun-exposed cells thus dry below
+ambient, shaded cells stay near it — a ~2× fine-fuel-moisture spread across one landscape
+under identical weather (Holden & Jolly 2011; Rothermel 1983).
+
+## A.6 WRF/GFS/ERA5 forcing — per-cell sampling at temporal scale
+
+pyflam consumes numerical-weather-prediction and reanalysis data through one provider
+interface, with three coupled scales of resolution:
+
+- **Per-cell (spatial).** `field_on(ls, time)` samples the gridded column onto every
+  landscape cell (nearest-neighbour in the source grid, longitudes wrapped to the source
+  convention — GFS 0–360°, ERA5 −180–180°), so wind, temperature, humidity and the
+  derived dead fuel moisture **vary across the domain**. On a geolocated landscape the
+  cell-centre latitudes/longitudes are reprojected from the landscape CRS (e.g. ETRS89-LAEA)
+  to geographic.
+- **Per-timestep (temporal).** `fire_atmosphere_march` re-reads the provider at the
+  advancing clock time every Δt minutes, so spread, plume and moisture **respond to
+  evolving weather** — a forecast (GFS forecast hour fxx) or a reanalysis (ERA5 hourly) —
+  and the time-lag moisture (§A.5) carries state between steps.
+- **Flux unit reconciliation.** ERA5 surface fluxes are *accumulated* (J m⁻² over the
+  product step) and positive *downward*; pyflam converts them to instantaneous W m⁻²
+  positive *upward* (q'' = −J m⁻² / Δt_accum) so the sign and units match the buoyant
+  background of §A.3/A.4. WRF/GFS instantaneous fluxes pass through directly.
+
+Concretely, the end-to-end Tuscany run (§9) pulls a live GFS column for 28 June 2026,
+derives T=36.5 °C / RH=25 % at the site, conditions the dead fuel moisture **per cell** to
+1.4–14 % across 5.35 million cells by terrain insolation, and feeds that — with the GFS
+wind and, optionally, the inverted-V plume boost (§8.3) — into the MTT/Eikonal spread and
+burn-probability solvers. Every physical layer above is exercised in that single run, on
+real data, at the native landscape resolution.
 
 ---
 
