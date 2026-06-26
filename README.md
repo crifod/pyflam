@@ -13,7 +13,7 @@ pyflam delivers that operational value as scriptable, automatable, cross-platfor
 software (any OS, MIT-licensed) and goes well beyond it with weather-driven,
 fire–atmosphere-coupled modelling.
 
-> 📄 **For the full scientific, technical and operational write-up** — the models,
+> **For the full scientific, technical and operational write-up** — the models,
 > their references, the novel methods, the physics formulation, and the validation —
 > see [`docs/pyflam_scientific_report.md`](docs/pyflam_scientific_report.md).
 
@@ -740,15 +740,15 @@ that diff is the true acceptance criterion before trusting the numbers.
 
 | Step | Scope | Status |
 |------|-------|--------|
-| **1** | Rothermel surface fire model + standard 13 fuel models | ✅ |
-| **1b** | Scott & Burgan (2005) 40 fuel models + dynamic herbaceous curing | ✅ |
-| **2** | Landscape I/O (`.lcp` + GeoTIFF) and vectorized whole-landscape surface behavior | ✅ |
-| **2b** | Native mass-consistent wind solver (`pyflam.windsolver`) — fast terrain winds, no binary | ✅ |
-| **2c** | Momentum/RANS CFD wind solver (`pyflam.cfd`) — OpenFOAM ABL, stability + diurnal slope flows | ✅ |
-| **3** | Directional (vector) spread (`pyflam.mtt.spread_field`) + per-fuel/canopy wind adjustment factor (`pyflam.wind_reduction`) | ✅ |
-| **4** | Crown fire: Van Wagner (1977), Rothermel (1991), Scott & Reinhardt (2001) | ✅ |
-| **5** | Spread engine: Minimum Travel Time (Finney 2002), elliptical wavelets (Finney 1998) | ✅ |
-| **6** | Validation vs. real FlamMap rasters (`pyflam.validate`); ROS ~3%, max-spread dir ~1°, conditional fireline intensity ~2% | 🚧 **← next focus** |
+| **1** | Rothermel surface fire model + standard 13 fuel models | Done |
+| **1b** | Scott & Burgan (2005) 40 fuel models + dynamic herbaceous curing | Done |
+| **2** | Landscape I/O (`.lcp` + GeoTIFF) and vectorized whole-landscape surface behavior | Done |
+| **2b** | Native mass-consistent wind solver (`pyflam.windsolver`) — fast terrain winds, no binary | Done |
+| **2c** | Momentum/RANS CFD wind solver (`pyflam.cfd`) — OpenFOAM ABL, stability + diurnal slope flows | Done |
+| **3** | Directional (vector) spread (`pyflam.mtt.spread_field`) + per-fuel/canopy wind adjustment factor (`pyflam.wind_reduction`) | Done |
+| **4** | Crown fire: Van Wagner (1977), Rothermel (1991), Scott & Reinhardt (2001) | Done |
+| **5** | Spread engine: Minimum Travel Time (Finney 2002), elliptical wavelets (Finney 1998) | Done |
+| **6** | Validation vs. real FlamMap rasters (`pyflam.validate`); ROS ~3%, max-spread dir ~1°, conditional fireline intensity ~2% | In progress (next focus) |
 
 Step 5 implements MTT with ember spotting (`pyflam.spotting`) and a fuel-load
 factor; FARSITE-style explicit perimeter looping is an alternative not provided.

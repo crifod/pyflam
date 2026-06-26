@@ -9,6 +9,8 @@ of source across 25 modules; ~568 automated tests. Pure-Python core (NumPy + Sci
 optional geospatial, atmospheric, and JIT extras; OpenFOAM and Herbie discovered at
 runtime. MIT-licensed; CI on Python 3.11/3.12/3.13.
 
+**Rendered versions:** [PDF](report/pyflam_report_EN.pdf) · [DOCX](report/pyflam_report_EN.docx) · Italian: [PDF](report/pyflam_report_IT.pdf) · [DOCX](report/pyflam_report_IT.docx) · [Markdown (IT)](pyflam_scientific_report_IT.md).
+
 ---
 
 ## 0. Executive summary
@@ -79,12 +81,12 @@ The capability set pyflam provides for operational use:
 
 | Operational product | Established tools | pyflam |
 |---|---|---|
-| Surface rate of spread / intensity / flame length | ✅ | `rothermel`, `landscape.basic_fire_behavior` |
-| Crown fire potential (surface/passive/active) | ✅ | `crownfire` |
-| Minimum Travel Time fire growth | ✅ | `mtt.minimum_travel_time` |
-| Random-ignition burn probability | ✅ | `mtt.burn_probability` |
-| Landscape `.lcp` / moisture `.fms` I/O | ✅ | `io_lcp`, `landscape` |
-| Dead-fuel-moisture conditioning | ✅ | `fuel_conditioning` |
+| Surface rate of spread / intensity / flame length | Yes | `rothermel`, `landscape.basic_fire_behavior` |
+| Crown fire potential (surface/passive/active) | Yes | `crownfire` |
+| Minimum Travel Time fire growth | Yes | `mtt.minimum_travel_time` |
+| Random-ignition burn probability | Yes | `mtt.burn_probability` |
+| Landscape `.lcp` / moisture `.fms` I/O | Yes | `io_lcp`, `landscape` |
+| Dead-fuel-moisture conditioning | Yes | `fuel_conditioning` |
 
 Everything beyond that table — Sections 5–9 — is new capability the established
 desktop tools do not provide.
