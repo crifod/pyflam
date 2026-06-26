@@ -247,6 +247,9 @@ def fire_atmosphere_march(
     crown_heat_content: float = 18000.0,
     wind_relax: float = 1.0,
     max_wind_factor: float = math.inf,
+    pyroconvection: bool = False,
+    profile=None,
+    state=None,
     return_history: bool = False,
     **cfd_kwargs,
 ):
@@ -296,8 +299,21 @@ def fire_atmosphere_march(
     mean wind (default ``inf`` = no cap). ``return_history`` adds ``mean_wind`` per
     increment so a run's boundedness can be checked.
 
+    **Pyroconvection.** With ``pyroconvection=True`` the fireline intensity fed to
+    the plume each step is scaled by :func:`pyflam.convective_plume_factor` -- so an
+    unstable, dry, pyroCb-prone atmosphere drives a *stronger* plume (and hence
+    spotting/indraft), a stable one a weaker one. Pass a vertical ``profile``
+    (:class:`pyflam.AtmosphericProfile`) to use the literature's pyroCb predictors
+    (LCL / inverted-V / Continuous Haines) rather than surface CAPE alone. The
+    surface state is the ``atmosphere`` state (scalar/point runs) or a manually
+    supplied ``state`` (:class:`pyflam.AtmosphericState`); the output then also
+    carries the ``pyroconvection`` potential and (with a profile) the
+    ``pyrocb_firepower_threshold``. Only the plume coupling is scaled -- the spread
+    field's own intensity (flame length, etc.) is unchanged.
+
     Returns a dict with ``arrival_time`` (minutes); with ``return_history`` also
-    ``winds``/``fields``/``times``/``mean_wind`` lists, one per increment.
+    ``winds``/``fields``/``times``/``mean_wind``/``plume_factor`` lists, one per
+    increment.
     """
     if atmosphere is None and None in (speed, direction, m_1h, m_10h, m_100h):
         raise ValueError(
@@ -351,11 +367,15 @@ def fire_atmosphere_march(
         crown_state["crown_fraction_burned"] = caf.crown_fraction_burned
         return caf.field
 
+    pyro_state = [state]                  # representative AtmosphericState (updated below)
+
     def resolve(sim_min):
         """(moist, speed, direction, ambient_heat_flux, windfield) for this time.
 
         ``windfield`` is a per-cell WindField in ``spatial`` mode (the atmosphere
         varies across the domain), else ``None`` and scalar speed/direction apply.
+        Also stashes the scalar/point atmospheric state for the pyroconvection
+        plume factor (left as the manual ``state`` in spatial mode).
         """
         if atmosphere is None:
             return fixed_moist, speed, direction, 0.0, None
@@ -372,9 +392,17 @@ def fire_atmosphere_march(
             return m, None, None, aq, wind_field_from_state(fld, ls)
         lat, lon = (location or (None, None))
         st = atmosphere.state_at(lat, lon, clock)
+        pyro_state[0] = st
         m = {**dead_fuel_moisture(st), **m_live}
         return m, st.wind_speed, st.wind_direction, \
             ambient_surface_heat_flux(st), None
+
+    def plume_factor():
+        """Convective plume-intensity multiplier for this step (>=1 pyroconvective)."""
+        if not pyroconvection or pyro_state[0] is None:
+            return 1.0
+        from .atmosphere import convective_plume_factor
+        return float(convective_plume_factor(pyro_state[0], profile=profile))
 
     nrows, ncols = ls.shape
     n = nrows * ncols
@@ -395,7 +423,7 @@ def fire_atmosphere_march(
 
     wf_prev = wf
     history = {"winds": [wf], "fields": [field], "times": [dt],
-               "mean_wind": [_mean_ms(wf)]}
+               "mean_wind": [_mean_ms(wf)], "plume_factor": [plume_factor()]}
     t = dt
     while t < total_time - 1e-9:
         t_next = min(t + dt, total_time)
@@ -404,14 +432,18 @@ def fire_atmosphere_march(
             break
         # Refresh the atmospheric forcing for this increment (evolving weather).
         moist, spd, dirn, ambient_q[0], wf_atm = resolve(t)
-        # Active flaming band drives the plume; re-solve the wind from it.
+        # Active flaming band drives the plume; re-solve the wind from it. A
+        # pyroconvective atmosphere strengthens the plume (scale only the coupling
+        # input, not the spread field's own intensity).
         active = burned & (arrival > t - flame_residence)
+        pf = plume_factor()
+        plume_intensity = pf * np.asarray(field.fireline_intensity, dtype=float)
         if wf_atm is not None:                # spatial atmosphere
-            wf = (merge_plume_wind(ls, wf_atm, field.fireline_intensity,
+            wf = (merge_plume_wind(ls, wf_atm, plume_intensity,
                                    active_mask=active, **cfd_kwargs)
                   if plume else wf_atm)       # merge the plume onto the ambient field
         else:
-            wf = wind_provider(ls, field.fireline_intensity, active, spd, dirn)
+            wf = wind_provider(ls, plume_intensity, active, spd, dirn)
         # Bound the feedback: under-relax against the previous wind and cap the speed.
         wf = _stabilize_wind(wf, wf_prev, ls, relax=wind_relax,
                              max_factor=max_wind_factor,
@@ -430,9 +462,16 @@ def fire_atmosphere_march(
             history["fields"].append(field)
             history["times"].append(t_next)
             history["mean_wind"].append(_mean_ms(wf))
+            history["plume_factor"].append(pf)
         t = t_next
 
     out = {"arrival_time": arrival}
+    if pyroconvection and pyro_state[0] is not None:
+        from .atmosphere import pyroconvection_potential, pyrocb_firepower_threshold
+        out["pyroconvection"] = pyroconvection_potential(pyro_state[0], profile=profile)
+        if profile is not None:
+            out["pyrocb_firepower_threshold"] = pyrocb_firepower_threshold(
+                pyro_state[0], profile)
     if crown:
         out["fire_type"] = crown_state["fire_type"]
         out["crown_fraction_burned"] = crown_state["crown_fraction_burned"]

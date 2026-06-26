@@ -552,7 +552,11 @@ res = pyflam.burn_probability([(0.5, calm), (0.5, windy)], ign,
   plume and the crown rate of spread drives growth — closing the
   crowning → stronger plume → faster crown feedback (needs canopy bands +
   `foliar_moisture`; returns the `fire_type` raster). See
-  `docs/crown_plume_coupling.md`.
+  `docs/crown_plume_coupling.md`. With **`pyroconvection=True`** (+ an
+  `AtmosphericProfile`/`state`) each step scales the plume-coupling intensity by the
+  profile-aware `convective_plume_factor`, so a dry/unstable inverted-V atmosphere
+  drives a stronger plume (and a stable one damps it); the output carries the
+  `pyroconvection` potential and the `pyrocb_firepower_threshold`.
 - `pyflam.rothermel.SurfaceKernel` — the wind/slope-independent Rothermel terms,
   computed once per fuel + moisture and applied to scalar or array (wind, slope).
 - `pyflam.crownfire` — crown fire: Van Wagner (1977) initiation, Scott & Reinhardt
