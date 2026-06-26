@@ -9,6 +9,10 @@ An open-source Python reimplementation of the fire-behavior science behind
 [FlamMap](https://www.firelab.org/project/flammap) — built up from the published,
 peer-reviewed models rather than by decompiling the Windows binary.
 
+> 📄 **For the full scientific, technical and operational write-up** — the models,
+> their references, the novel methods beyond FlamMap, and the validation — see
+> [`docs/pyflam_scientific_report.md`](docs/pyflam_scientific_report.md).
+
 **Status: roadmap steps 1–5 implemented, step 6 (validation) in progress** — the
 Rothermel surface fire spread model (the scientific core of FlamMap's "Basic Fire
 Behavior": rate of spread, reaction intensity, fireline intensity, flame length),
