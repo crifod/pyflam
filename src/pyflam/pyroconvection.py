@@ -387,6 +387,7 @@ def fire_atmosphere_march(
         m_live = {"m_live_herb": m_live_herb, "m_live_woody": m_live_woody}
         if spatial:
             fld = atmosphere.field_on(ls, clock)
+            pyro_state[0] = fld                # per-cell state for the plume factor
             m = {**dead_fuel_moisture(fld), **m_live}
             aq = float(np.mean(ambient_surface_heat_flux(fld)))
             return m, None, None, aq, wind_field_from_state(fld, ls)
@@ -398,11 +399,12 @@ def fire_atmosphere_march(
             ambient_surface_heat_flux(st), None
 
     def plume_factor():
-        """Convective plume-intensity multiplier for this step (>=1 pyroconvective)."""
+        """Convective plume-intensity multiplier for this step -- a scalar, or a
+        per-cell array in ``spatial`` mode (>=1 where pyroconvective)."""
         if not pyroconvection or pyro_state[0] is None:
             return 1.0
         from .atmosphere import convective_plume_factor
-        return float(convective_plume_factor(pyro_state[0], profile=profile))
+        return convective_plume_factor(pyro_state[0], profile=profile)
 
     nrows, ncols = ls.shape
     n = nrows * ncols
@@ -423,7 +425,7 @@ def fire_atmosphere_march(
 
     wf_prev = wf
     history = {"winds": [wf], "fields": [field], "times": [dt],
-               "mean_wind": [_mean_ms(wf)], "plume_factor": [plume_factor()]}
+               "mean_wind": [_mean_ms(wf)], "plume_factor": [float(np.mean(plume_factor()))]}
     t = dt
     while t < total_time - 1e-9:
         t_next = min(t + dt, total_time)
@@ -436,8 +438,8 @@ def fire_atmosphere_march(
         # pyroconvective atmosphere strengthens the plume (scale only the coupling
         # input, not the spread field's own intensity).
         active = burned & (arrival > t - flame_residence)
-        pf = plume_factor()
-        plume_intensity = pf * np.asarray(field.fireline_intensity, dtype=float)
+        pf = plume_factor()                   # scalar, or a per-cell array (spatial)
+        plume_intensity = np.asarray(pf) * np.asarray(field.fireline_intensity, dtype=float)
         if wf_atm is not None:                # spatial atmosphere
             wf = (merge_plume_wind(ls, wf_atm, plume_intensity,
                                    active_mask=active, **cfd_kwargs)
@@ -462,11 +464,14 @@ def fire_atmosphere_march(
             history["fields"].append(field)
             history["times"].append(t_next)
             history["mean_wind"].append(_mean_ms(wf))
-            history["plume_factor"].append(pf)
+            history["plume_factor"].append(float(np.mean(pf)))
         t = t_next
 
     out = {"arrival_time": arrival}
-    if pyroconvection and pyro_state[0] is not None:
+    # Scalar-state diagnostics in the output (a per-cell spatial state is summarised
+    # by its plume_factor history instead).
+    if (pyroconvection and pyro_state[0] is not None
+            and np.ndim(pyro_state[0].temperature) == 0):
         from .atmosphere import pyroconvection_potential, pyrocb_firepower_threshold
         out["pyroconvection"] = pyroconvection_potential(pyro_state[0], profile=profile)
         if profile is not None:

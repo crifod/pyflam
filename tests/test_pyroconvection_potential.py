@@ -145,14 +145,32 @@ def test_plume_factor_backward_compatible_without_profile():
 
 
 def test_plume_factor_profile_boosts_inverted_v_not_moist():
-    st = AtmosphericState(wind_speed=3, wind_direction=270, temperature=36,
-                          relative_humidity=15, boundary_layer_height=3200)
-    base = convective_plume_factor(st)
-    boosted = convective_plume_factor(st, profile=_iv_profile())
-    moist = convective_plume_factor(st, profile=_moist_profile())
-    assert boosted > base                       # inverted-V profile raises the factor
-    assert moist == pytest.approx(base, abs=1e-6)   # moist column adds nothing
+    # inverted-V = dry surface (high LCL) under a moist-aloft column -> boost
+    dry = AtmosphericState(wind_speed=3, wind_direction=270, temperature=36,
+                           relative_humidity=15, boundary_layer_height=3200)
+    # a uniformly moist column with a moist surface -> no boost (not inverted-V)
+    moist_st = AtmosphericState(wind_speed=3, wind_direction=270, temperature=22,
+                                relative_humidity=80)
+    base = convective_plume_factor(dry)
+    boosted = convective_plume_factor(dry, profile=_iv_profile())
+    moist = convective_plume_factor(moist_st, profile=_moist_profile())
+    assert boosted > base                       # inverted-V column raises the factor
+    assert moist == pytest.approx(convective_plume_factor(moist_st), abs=1e-6)
     assert boosted <= 3.0                        # still bounded
+
+
+def test_plume_factor_per_cell_varies_with_surface_dryness():
+    """Array-valued state -> array factor; dry cells boosted, moist cells not,
+    under one moist-aloft column."""
+    T = np.array([[36.0, 22.0], [36.0, 22.0]])
+    RH = np.array([[15.0, 85.0], [12.0, 80.0]])      # dry left column, moist right
+    st = AtmosphericState(wind_speed=np.full((2, 2), 4.0),
+                          wind_direction=np.full((2, 2), 270.0),
+                          temperature=T, relative_humidity=RH)
+    f = convective_plume_factor(st, profile=_iv_profile())
+    assert f.shape == (2, 2)
+    assert (f[:, 0] > f[:, 1]).all()             # dry cells get the inverted-V boost
+    assert (f >= 0.5).all() and (f <= 3.0).all()  # bounded per cell
 
 
 # --- Briggs plume rise + PFT --------------------------------------------------

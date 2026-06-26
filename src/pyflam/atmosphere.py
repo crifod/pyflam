@@ -275,30 +275,46 @@ def convective_plume_factor(state: AtmosphericState, *,
 
     Without a ``profile`` this uses surface CAPE + Monin-Obukhov stability (the
     original behaviour). **With a vertical ``profile``** it shifts to the predictors
-    the pyroCb literature favours over surface CAPE: a deep, dry mixed layer (high
-    LCL) capped by moisture aloft (the inverted-V sounding) and elevated lower-
-    tropospheric instability/dryness (Continuous Haines). Surface CAPE is a poor
-    pyroCb predictor -- pyroCb routinely form with near-zero CAPE -- so when the
-    profile shows a pyroconvection-favourable column the factor is boosted toward
-    its cap (Castellnou et al. 2022; Peterson et al. 2017; Mills & McCaw 2010).
+    the pyroCb literature favours over surface CAPE: a dry mixed layer (high LCL /
+    large near-surface dewpoint depression) capped by moisture aloft (the inverted-V
+    sounding) and elevated lower-tropospheric instability/dryness (Continuous
+    Haines). Surface CAPE is a poor pyroCb predictor -- pyroCb routinely form with
+    near-zero CAPE (Castellnou et al. 2022; Peterson et al. 2017; Mills & McCaw 2010).
+
+    **Per cell.** The ``state`` fields may be scalars or 2D arrays (a gridded
+    ``field_on`` state); the factor is then an array. The aloft terms (C-Haines,
+    mid-level moisture) come from the single column ``profile`` and apply uniformly,
+    but the inverted-V boost is realised **per cell via that cell's own surface
+    dryness** -- so under a moist-aloft sounding, locally dry (high-LCL) cells get
+    the pyroconvective boost and locally moist cells do not.
     """
-    cape = state.cape or 0.0
+    cape = np.asarray(state.cape if state.cape is not None else 0.0, dtype=float)
     factor = 1.0 + cape / _CAPE_REF
-    cls = stability_class(state)
-    if cls == "stable":
-        factor *= 0.7
-    elif cls == "unstable":
-        factor *= 1.2
+
+    # Vectorized stability multiplier (heat-flux sign, with a CAPE/CIN override).
+    cin = np.asarray(state.cin if state.cin is not None else 0.0, dtype=float)
+    unstable = (cape > 500.0) & (cin < 50.0)
+    if state.sensible_heat_flux is not None:
+        q = np.asarray(state.sensible_heat_flux, dtype=float)
+        unstable = unstable | (q > 10.0)
+        stable = (q < -10.0) & ~unstable
+    else:
+        stable = np.zeros_like(factor, dtype=bool)
+    factor = factor * np.where(unstable, 1.2, np.where(stable, 0.7, 1.0))
 
     if profile is not None:
-        ch = continuous_haines(profile)
-        iv, _, _ = inverted_v(profile)
-        # C-Haines ~13 max: ramp a multiplicative boost up to ~1.6x by CH=11,
-        # plus an extra kick for a confirmed inverted-V (the canonical pyroCb set-up).
-        factor *= 1.0 + 0.6 * np.clip((ch - 5.0) / 6.0, 0.0, 1.0)
-        if iv:
-            factor *= 1.25
-    return float(np.clip(factor, 0.5, 3.0))
+        ch = continuous_haines(profile)                  # column scalar
+        factor = factor * (1.0 + 0.6 * np.clip((ch - 5.0) / 6.0, 0.0, 1.0))
+        _, _, mid_rh = inverted_v(profile)               # moisture aloft (column)
+        if mid_rh >= 50.0:
+            # inverted-V realised per cell: dry surface (large dewpoint depression)
+            # under the moist-aloft column. Ramps 1 -> 1.25 over a 10->30 C depression.
+            depr = (np.asarray(state.temperature, dtype=float)
+                    - dewpoint_from_rh(state.temperature, state.relative_humidity))
+            factor = factor * (1.0 + 0.25 * np.clip((depr - 10.0) / 20.0, 0.0, 1.0))
+
+    factor = np.clip(factor, 0.5, 3.0)
+    return float(factor) if np.ndim(factor) == 0 else factor
 
 
 # --- pyroconvection potential (vertical-profile diagnostics) -------------------

@@ -556,7 +556,9 @@ res = pyflam.burn_probability([(0.5, calm), (0.5, windy)], ign,
   `AtmosphericProfile`/`state`) each step scales the plume-coupling intensity by the
   profile-aware `convective_plume_factor`, so a dry/unstable inverted-V atmosphere
   drives a stronger plume (and a stable one damps it); the output carries the
-  `pyroconvection` potential and the `pyrocb_firepower_threshold`.
+  `pyroconvection` potential and the `pyrocb_firepower_threshold`. In `spatial=True`
+  mode the factor is **per cell** — under one moist-aloft column the locally dry
+  (high-LCL) cells get the pyroconvective boost while moist cells don't.
 - `pyflam.rothermel.SurfaceKernel` — the wind/slope-independent Rothermel terms,
   computed once per fuel + moisture and applied to scalar or array (wind, slope).
 - `pyflam.crownfire` — crown fire: Van Wagner (1977) initiation, Scott & Reinhardt

@@ -111,6 +111,41 @@ def test_no_pft_without_profile():
     assert "pyrocb_firepower_threshold" not in res
 
 
+def test_spatial_per_cell_pyroconvection():
+    """A gridded (half dry / half moist) atmosphere drives a per-cell plume factor:
+    the dry half (high LCL) is boosted more than the moist half under one column."""
+    from pyflam.atmosphere import AtmosphereProvider
+
+    class _HalfDry(AtmosphereProvider):
+        def state_at(self, lat, lon, time=None):
+            return AtmosphericState(wind_speed=8, wind_direction=270,
+                                    temperature=32, relative_humidity=20)
+
+        def field_on(self, ls, time=None, *, latlon=None):
+            T = np.full(ls.shape, 32.0)
+            RH = np.full(ls.shape, 85.0)
+            RH[:, :ls.shape[1] // 2] = 15.0           # dry left half
+            return AtmosphericState(
+                wind_speed=np.full(ls.shape, 8.0),
+                wind_direction=np.full(ls.shape, 270.0),
+                temperature=T, relative_humidity=RH)
+
+    ls = _ls()
+    prof = AtmosphericProfile.from_rh([1000, 850, 700, 600, 500],
+                                      [32, 22, 12, 4, -6], [20, 12, 20, 75, 60])
+    res = pyflam.fire_atmosphere_march(
+        ls, [(20, 10)], total_time=40, dt=10, atmosphere=_HalfDry(), spatial=True,
+        plume=False, wind_provider=_intensity_plume(0.02), pyroconvection=True,
+        profile=prof, return_history=True, m_live_herb=0.6, m_live_woody=0.9)
+    assert res["arrival_time"][20, 10] == 0.0
+    # the per-cell factor itself: dry cells boosted above moist cells
+    n = ls.shape[1]
+    fld = _HalfDry().field_on(ls)
+    pf = pyflam.convective_plume_factor(fld, profile=prof)
+    assert pf.shape == ls.shape
+    assert pf[:, :n // 2].mean() > pf[:, n // 2:].mean()
+
+
 def test_off_is_backward_compatible():
     """pyroconvection=False must reproduce the un-scaled run exactly."""
     a = _march(state=_iv_state(), profile=_iv_profile(), pyro=False)
