@@ -11,7 +11,7 @@ righe di codice sorgente su 25 moduli; ~568 test automatici. Nucleo in puro Pyth
 compilazione JIT; OpenFOAM e Herbie individuati a runtime. Licenza MIT; integrazione
 continua (CI) su Python 3.11/3.12/3.13.
 
-**Versioni impaginate:** [PDF](report/pyflam_report_IT.pdf) · [DOCX](report/pyflam_report_IT.docx) · English: [PDF](report/pyflam_report_EN.pdf) · [DOCX](report/pyflam_report_EN.docx) · [Markdown (EN)](pyflam_scientific_report.md).
+**Altri formati:** la versione inglese è in [`pyflam_scientific_report.md`](pyflam_scientific_report.md). I PDF e i DOCX (inglese e italiano) sono generati su richiesta — eseguire `sh docs/report/build.sh`, oppure scaricarli dall'ultima esecuzione del workflow **Docs** su GitHub Actions (artifact `pyflam-report`).
 
 ---
 

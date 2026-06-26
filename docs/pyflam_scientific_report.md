@@ -9,7 +9,7 @@ of source across 25 modules; ~568 automated tests. Pure-Python core (NumPy + Sci
 optional geospatial, atmospheric, and JIT extras; OpenFOAM and Herbie discovered at
 runtime. MIT-licensed; CI on Python 3.11/3.12/3.13.
 
-**Rendered versions:** [PDF](report/pyflam_report_EN.pdf) · [DOCX](report/pyflam_report_EN.docx) · Italian: [PDF](report/pyflam_report_IT.pdf) · [DOCX](report/pyflam_report_IT.docx) · [Markdown (IT)](pyflam_scientific_report_IT.md).
+**Other formats:** an Italian translation is at [`pyflam_scientific_report_IT.md`](pyflam_scientific_report_IT.md). PDF and DOCX (English and Italian) are produced on demand — run `sh docs/report/build.sh`, or download them from the latest **Docs** workflow run on GitHub Actions (artifact `pyflam-report`).
 
 ---
 

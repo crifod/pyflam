@@ -1,0 +1,46 @@
+name: Docs
+
+# Build the scientific report (PDF + DOCX, English + Italian) and publish them as a
+# downloadable artifact. The rendered files are NOT committed to the repo; this job
+# regenerates them on demand.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/pyflam_scientific_report*.md"
+      - "docs/report/**"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1
+
+      - name: Install pandoc, XeLaTeX and Unicode fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pandoc texlive-xetex texlive-fonts-recommended \
+            fonts-dejavu fontconfig
+          fc-cache -f
+
+      - name: Build the report (PDF + DOCX, EN + IT)
+        env:
+          PDF_ENGINE: xelatex
+          MAINFONT: "DejaVu Serif"
+          MONOFONT: "DejaVu Sans Mono"
+        run: sh docs/report/build.sh
+
+      - name: Upload rendered report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: pyflam-report
+          path: |
+            docs/report/pyflam_report_EN.pdf
+            docs/report/pyflam_report_EN.docx
+            docs/report/pyflam_report_IT.pdf
+            docs/report/pyflam_report_IT.docx
+          if-no-files-found: error

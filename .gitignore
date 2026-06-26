@@ -11,3 +11,7 @@ venv/
 .coverage
 coverage.xml
 htmlcov/
+
+# Generated report renders (rebuild with docs/report/build.sh or the docs CI)
+docs/report/*.pdf
+docs/report/*.docx
