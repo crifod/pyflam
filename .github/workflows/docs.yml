@@ -23,8 +23,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            pandoc texlive-xetex texlive-fonts-recommended \
-            fonts-dejavu fontconfig
+            pandoc texlive-xetex texlive-latex-recommended \
+            texlive-fonts-recommended lmodern fonts-dejavu fontconfig
           fc-cache -f
 
       - name: Build the report (PDF + DOCX, EN + IT)
