@@ -2,11 +2,70 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import numpy as np
 import pytest
 
 import pyflam
 from pyflam import atmosphere as atm
+
+
+# --- timezone normalisation for gridded providers -----------------------------
+
+def test_naive_utc():
+    aware = datetime(2021, 7, 25, 12, tzinfo=timezone(__import__("datetime").timedelta(hours=2)))
+    naive = atm._naive_utc(aware)
+    assert naive.tzinfo is None and naive.hour == 10        # 12:00+02:00 -> 10:00 UTC
+    plain = datetime(2021, 7, 25, 12)
+    assert atm._naive_utc(plain) is plain                    # already naive: untouched
+    assert atm._naive_utc(None) is None
+
+
+# --- ERA5 zip (new CDS) reading + merge + valid_time + flux transform ----------
+
+def test_open_atmosphere_era5_zip(tmp_path):
+    """The new CDS returns ERA5 as a zip of instant+accum NetCDFs on 'valid_time'."""
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("netCDF4")
+    import zipfile
+
+    lat = np.array([42.5, 43.5, 44.5])
+    lon = np.array([10.0, 11.0, 12.0])
+    vt = np.array(["2021-07-25T12:00:00"], dtype="datetime64[ns]")
+    dims = ("valid_time", "latitude", "longitude")
+    shape = (1, lat.size, lon.size)
+
+    def da(val):
+        return (dims, np.full(shape, val, dtype="float32"))
+
+    instant = xr.Dataset(
+        {"u10": da(3.0), "v10": da(-4.0), "t2m": da(300.0), "d2m": da(285.0),
+         "sp": da(99000.0), "cape": da(500.0), "blh": da(1200.0)},
+        coords={"valid_time": vt, "latitude": lat, "longitude": lon})
+    # ERA5 surface fluxes: accumulated J/m^2 over 1 h, positive downward.
+    accum = xr.Dataset(
+        {"sshf": da(-3600.0 * 150.0), "slhf": da(-3600.0 * 80.0)},
+        coords={"valid_time": vt, "latitude": lat, "longitude": lon})
+
+    f_inst = tmp_path / "data_stream-oper_stepType-instant.nc"
+    f_acc = tmp_path / "data_stream-oper_stepType-accum.nc"
+    instant.to_netcdf(f_inst)
+    accum.to_netcdf(f_acc)
+    zpath = tmp_path / "era5.zip"
+    with zipfile.ZipFile(zpath, "w") as z:
+        z.write(f_inst, f_inst.name)
+        z.write(f_acc, f_acc.name)
+
+    prov = atm.open_atmosphere(str(zpath), source="era5")
+    assert prov.time_name == "valid_time"
+    st = prov.state_at(43.5, 11.0, datetime(2021, 7, 25, 12, tzinfo=timezone.utc))
+    assert st.temperature == pytest.approx(300.0 - 273.15, abs=1e-3)
+    assert st.cape == pytest.approx(500.0)
+    assert st.boundary_layer_height == pytest.approx(1200.0)
+    # accumulated J/m^2 down -> W/m^2 up: -(-3600*150)/3600 = +150
+    assert st.sensible_heat_flux == pytest.approx(150.0, abs=1e-3)
+    assert st.latent_heat_flux == pytest.approx(80.0, abs=1e-3)
 
 
 # --- humidity & equilibrium moisture content ----------------------------------
@@ -318,6 +377,20 @@ def test_fetch_gfs_live():
     # the derived fire inputs are usable
     si = atm.spread_inputs_from_state(st)
     assert si["wind_midflame"] >= 0.0 and 0.0 < si["m_1h"] < 0.6
+    # convection fields available in the analysis: HPBL (decoded despite the
+    # 'unknown' short name), CIN and surface pressure.
+    assert st.boundary_layer_height is not None and st.boundary_layer_height > 0.0
+    assert st.cin is not None
+
+    # Heat fluxes are time-mean forecast fields (only fxx >= 3). Fetch a forecast
+    # hour and check they come through (positive upward, no transform needed).
+    try:
+        fc = atm.fetch_gfs(run=run, fxx=6).state_at(43.0, 11.0)
+    except Exception as exc:                          # network / run not posted
+        pytest.skip(f"GFS forecast hour unavailable: {exc}")
+    assert fc.sensible_heat_flux is not None and fc.latent_heat_flux is not None
+    assert -200.0 < fc.sensible_heat_flux < 1200.0
+    assert fc.boundary_layer_height is not None and fc.boundary_layer_height > 0.0
 
 
 @pytest.mark.skipif(
