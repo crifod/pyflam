@@ -23,6 +23,16 @@ atmos = ["xarray>=2023.1", "cfgrib>=0.9", "netcdf4>=1.6", "cdsapi>=0.6"]
 # Acceleration: Numba JIT for the Gauss-Seidel anisotropic-Eikonal sweep
 # (minimum_travel_time method="fast_marching"); falls back to NumPy if absent.
 accel = ["numba>=0.58"]
+# GUI: the Streamlit multipage app in pyflam_gui/ (interactive AOI map via
+# streamlit-folium, charts via matplotlib/pandas). Pair with [geo] and [atmos]
+# for real landscapes and weather: pip install -e ".[gui,geo,atmos]".
+gui = [
+    "streamlit>=1.30",
+    "streamlit-folium>=0.18",
+    "folium>=0.15",
+    "matplotlib>=3.6",
+    "pandas>=1.5",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
