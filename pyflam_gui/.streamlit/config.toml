@@ -1,0 +1,9 @@
+[server]
+# Larger uploads for GeoTIFF bands / ERA5 files.
+maxUploadSize = 1024
+
+[theme]
+base = "light"
+
+[browser]
+gatherUsageStats = false

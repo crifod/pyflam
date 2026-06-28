@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timezone
 
 import numpy as np
 
@@ -587,6 +587,154 @@ def pyrocb_firepower_threshold(state: AtmosphericState, profile: AtmosphericProf
     return float(q_c / max(convective_fraction, 1e-6))
 
 
+# --- pyroconvection TYPE classification (Castellnou et al. 2022) ---------------
+#
+# Beyond a binary "pyroCb-favourable" flag, Castellnou et al. (2022, JGR-Atmos
+# 127, e2022JD036920) classify pyroconvection into an ordered ladder of prototypes
+# (their Fig. 7) set by vertical-profile diagnostics. This reproduces that ladder
+# so a column (or a grid of columns) can be labelled by *type*, the basis of the
+# operational "tipus de piroconvecció" forecast product. The conditioning
+# variables and thresholds are taken directly from the paper:
+#
+#   * mixed-layer (ABL) stability via the potential-temperature gradient dtheta/dz:
+#       unstable < 1.0e-4 K/m ; neutral 1.0e-4..1.1e-3 ; stable > 1.1e-3 K/m
+#       (after Liu & Liang 2010). Stable ML -> non-pyroCu plume only.
+#   * the LCL/ABL height ratio: > 1 -> overshooting (brief) ; < 1 -> resilient.
+#   * the upper-layer stability gamma-theta (free-troposphere dtheta/dz): a weak
+#       cap (low gamma-theta) lets a resilient/overshooting pyroCu deepen to
+#       pyroCb. The paper's cases bracket the boundary: M11 gamma-theta=4.2e-3
+#       (resilient, not deep) vs SCQ51 gamma-theta=3.9e-3 (deep pyroCb).
+#   * a fire-power gate: pyroCu coincided with fireline intensity > 1e4 kW/m
+#       (Tedim et al. 2018) -- below that the column only supports a surface plume.
+
+# Ordered low -> high pyroconvective activity, with an ordinal level and a
+# fire-weather colour ramp (white -> green -> yellow -> orange -> dark red).
+PYROCONVECTION_TYPES = (
+    "surface_plume", "convection_plume", "overshooting_pyrocu",
+    "resilient_pyrocu", "deep_pyrocu_pyrocb",
+)
+PYROCONVECTION_TYPE_LEVEL = {t: i for i, t in enumerate(PYROCONVECTION_TYPES)}
+PYROCONVECTION_TYPE_COLOR = {
+    "surface_plume": "#ffffff", "convection_plume": "#a6d96a",
+    "overshooting_pyrocu": "#fee08b", "resilient_pyrocu": "#f46d43",
+    "deep_pyrocu_pyrocb": "#7f0000",
+}
+# Human-readable English labels for plots/reports (keys = PYROCONVECTION_TYPES).
+PYROCONVECTION_TYPE_LABEL = {
+    "surface_plume": "Surface plume",
+    "convection_plume": "Convection plume",
+    "overshooting_pyrocu": "Overshooting pyroCu",
+    "resilient_pyrocu": "Resilient pyroCu",
+    "deep_pyrocu_pyrocb": "Deep pyroCu / pyroCb",
+}
+
+# Thresholds (K/m) from Castellnou et al. 2022, §2.4.1 / §3.3 / Table 1.
+_ML_UNSTABLE = 1.0e-4
+_ML_STABLE = 1.1e-3
+_GAMMA_DEEP = 4.0e-3            # gamma-theta below this -> deep pyroCu/pyroCb
+_FLI_PYROCU_KW = 1.0e4         # fireline intensity gate for pyroCu (Tedim 2018)
+
+
+def theta_kelvin(temp_c, pressure_hpa):
+    """Potential temperature (K) from temperature (C) and pressure (hPa)."""
+    return (np.asarray(temp_c, float) + 273.15) * (1000.0 / np.asarray(pressure_hpa, float)) ** 0.286
+
+
+def theta_gradient(profile: "AtmosphericProfile", low_hpa: float, high_hpa: float) -> float:
+    """Potential-temperature gradient dtheta/dz (K/m) across a pressure layer.
+
+    Positive = stable. Heights from the hypsometric approximation. Used for both
+    the mixed-layer stability (e.g. surface->850 hPa) and the upper-layer cap
+    gamma-theta (e.g. 700->500 hPa) in the pyroconvection classification.
+    """
+    t_lo, _ = profile._at(low_hpa)
+    t_hi, _ = profile._at(high_hpa)
+    th_lo = theta_kelvin(t_lo, low_hpa)
+    th_hi = theta_kelvin(t_hi, high_hpa)
+    tbar = 0.5 * (t_lo + t_hi) + 273.15
+    dz = 287.0 * tbar / _G * math.log(low_hpa / high_hpa)
+    return float((th_hi - th_lo) / dz) if dz > 0 else 0.0
+
+
+def bulk_richardson_abl_height(height_m, temperature_c, wind_u, wind_v, *,
+                               pressure_hpa=None, surface_start_m: float = 400.0,
+                               rib_crit: float = 0.25) -> float:
+    """ABL (mixing-layer) height (m) from the bulk Richardson number profile.
+
+    Implements the Castellnou et al. (2022) procedure: compute the bulk Richardson
+    number ``Rib(z) = (g/theta_s)(theta(z)-theta_s)(z-z_s) / (u^2+v^2)`` starting
+    from ``surface_start_m`` (~400 m AGL, to avoid the fire-indraft / surface
+    layer that contaminates the estimate; cf. Zhang et al. 2014) and return the
+    height where ``Rib`` first reaches ``rib_crit`` (~0.25), linearly interpolated.
+
+    ``height_m`` (AGL), ``temperature_c`` and the wind components are 1-D arrays at
+    the same levels; pass ``pressure_hpa`` to use exact potential temperature,
+    otherwise theta is approximated by temperature. Falls back to the top height if
+    the criterion is never reached.
+    """
+    z = np.asarray(height_m, float)
+    order = np.argsort(z)
+    z = z[order]
+    if pressure_hpa is not None:
+        th = theta_kelvin(np.asarray(temperature_c, float)[order],
+                          np.asarray(pressure_hpa, float)[order])
+    else:
+        th = np.asarray(temperature_c, float)[order] + 273.15
+    u = np.asarray(wind_u, float)[order]
+    v = np.asarray(wind_v, float)[order]
+
+    th_s = float(np.interp(surface_start_m, z, th))
+    u_s = float(np.interp(surface_start_m, z, u))
+    v_s = float(np.interp(surface_start_m, z, v))
+    above = z > surface_start_m
+    z2, th2, u2, v2 = z[above], th[above], u[above], v[above]
+    if z2.size == 0:
+        return float(z[-1])
+    shear2 = np.maximum((u2 - u_s) ** 2 + (v2 - v_s) ** 2, 1e-6)
+    rib = (_G / th_s) * (th2 - th_s) * (z2 - surface_start_m) / shear2
+
+    prev_z, prev_r = surface_start_m, 0.0
+    for zi, ri in zip(z2, rib):
+        if ri >= rib_crit:
+            if ri == prev_r:
+                return float(zi)
+            frac = (rib_crit - prev_r) / (ri - prev_r)
+            return float(prev_z + frac * (zi - prev_z))
+        prev_z, prev_r = zi, ri
+    return float(z2[-1])
+
+
+def pyroconvection_type(*, lcl_abl_ratio: float, ml_theta_gradient: float,
+                        gamma_theta: float, fireline_intensity_kw: float | None = None,
+                        fli_threshold_kw: float = _FLI_PYROCU_KW) -> str:
+    """Classify a column into a Castellnou et al. (2022) pyroconvection prototype.
+
+    Returns one of :data:`PYROCONVECTION_TYPES`. The decision follows the paper's
+    Fig. 7 ladder and §3.3 thresholds:
+
+    1. **Fire-power gate.** If a per-cell ``fireline_intensity_kw`` is given and it
+       is below ``fli_threshold_kw`` (default 1e4 kW/m), the column only supports a
+       ``surface_plume`` (no pyroCu, regardless of the atmosphere). Pass ``None`` to
+       report the *potential* type assuming a pyroCu-capable fire.
+    2. **Mixed-layer stability.** A stable ML (``ml_theta_gradient`` > 1.1e-3 K/m)
+       gives a non-pyroCu ``convection_plume`` (penetrating only; cf. T21).
+    3. **LCL/ABL ratio.** In a pyroCu-capable (neutral/unstable) ML, ratio > 1 ->
+       ``overshooting_pyrocu`` (brief, slightly-stable; SCQ32); ratio < 1 ->
+       ``resilient_pyrocu`` (persistent, unstable; M11).
+    4. **Cap stability.** A weak cap (``gamma_theta`` < 4.0e-3 K/m) lets the pyroCu
+       deepen to ``deep_pyrocu_pyrocb`` (SCQ51 gamma-theta=3.9e-3 deep vs M11
+       gamma-theta=4.2e-3 resilient). A strong cap (e.g. SCQ41 5.1e-3) inhibits it.
+    """
+    if fireline_intensity_kw is not None and fireline_intensity_kw < fli_threshold_kw:
+        return "surface_plume"
+    if ml_theta_gradient > _ML_STABLE:
+        return "convection_plume"
+    base = "overshooting_pyrocu" if lcl_abl_ratio > 1.0 else "resilient_pyrocu"
+    if gamma_theta < _GAMMA_DEEP:
+        return "deep_pyrocu_pyrocb"
+    return base
+
+
 # --- integration with the fire model ------------------------------------------
 
 def midflame_wind_ft_per_min(state: AtmosphericState, *,
@@ -722,7 +870,13 @@ ERA5_VARS = {
 GFS_VARS = {
     "wind_u": "u10", "wind_v": "v10", "temperature_K": "t2m",
     "relative_humidity": "r2", "pressure": "sp", "cape": "cape", "cin": "cin",
-    "boundary_layer_height": "hpbl", "sensible_heat_flux": "shtfl",
+    # HPBL is undecodable by some eccodes builds (shortName 'unknown'); fetch_gfs
+    # fetches it alone and renames the sole field to 'hpbl' (see fetch_gfs).
+    "boundary_layer_height": "hpbl",
+    # GFS surface heat fluxes decode as time-mean fields and are positive upward
+    # (surface heating the air) -- pyflam's convention -- so no transform is needed.
+    # Only present in forecast files (fxx >= 3); absent from the f000 analysis.
+    "sensible_heat_flux": "avg_ishf", "latent_heat_flux": "avg_slhtf",
 }
 
 # ERA5 surface heat fluxes are *accumulated* (J/m^2) over the product step and
@@ -742,6 +896,18 @@ ERA5_TRANSFORMS = {
     "sensible_heat_flux": era5_flux_to_watts,
     "latent_heat_flux": era5_flux_to_watts,
 }
+
+
+def _naive_utc(time):
+    """A tz-aware datetime -> naive UTC, so it compares with naive ``datetime64``.
+
+    Gridded datasets (ERA5/GFS/ICON NetCDF) carry tz-naive time coordinates;
+    xarray's ``.sel`` cannot compare those with a tz-aware label. Callers may pass
+    tz-aware datetimes, so normalise to naive UTC before selecting.
+    """
+    if time is not None and getattr(time, "tzinfo", None) is not None:
+        return time.astimezone(timezone.utc).replace(tzinfo=None)
+    return time
 
 
 class GriddedAtmosphere(AtmosphereProvider):
@@ -777,7 +943,7 @@ class GriddedAtmosphere(AtmosphereProvider):
         # Only select on time when it is an indexable dimension; a single-time
         # field carries time as a scalar coordinate that cannot be `.sel`-ed.
         if time is not None and self.time_name in self.ds.dims:
-            point = point.sel({self.time_name: time}, method="nearest")
+            point = point.sel({self.time_name: _naive_utc(time)}, method="nearest")
         kw = {}
         for canon, var in self.var_map.items():
             if var in point:
@@ -799,7 +965,7 @@ class GriddedAtmosphere(AtmosphereProvider):
         pts = self.ds.sel({self.lat_name: lat_da, self.lon_name: lon_da},
                           method="nearest")
         if time is not None and self.time_name in self.ds.dims:
-            pts = pts.sel({self.time_name: time}, method="nearest")
+            pts = pts.sel({self.time_name: _naive_utc(time)}, method="nearest")
         shape = ls.shape
         kw = {}
         for canon, var in self.var_map.items():
@@ -809,16 +975,53 @@ class GriddedAtmosphere(AtmosphereProvider):
         return AtmosphericState.from_si(time=time, **kw)
 
 
+def _read_atmosphere_dataset(path, **kwargs):
+    """Open a forecast/reanalysis file as a single xarray ``Dataset``.
+
+    Handles the **zip** the new Copernicus CDS returns for ERA5 (instantaneous and
+    accumulated variables in separate NetCDFs): extracts the members, merges them
+    and loads the result into memory so the archive can be cleaned up.
+    """
+    import xarray as xr
+    import zipfile
+
+    if not zipfile.is_zipfile(path):
+        return xr.open_dataset(path, **kwargs)
+
+    import glob
+    import os
+    import shutil
+    import tempfile
+
+    tmp = tempfile.mkdtemp(prefix="pyflam_era5_")
+    try:
+        with zipfile.ZipFile(path) as z:
+            z.extractall(tmp)
+        members = sorted(glob.glob(os.path.join(tmp, "*.nc")))
+        if not members:
+            raise ValueError(f"no NetCDF member found inside archive {path!r}")
+        parts = [xr.open_dataset(m, **kwargs) for m in members]
+        try:
+            ds = xr.merge(parts, compat="override", combine_attrs="override").load()
+        finally:
+            for p in parts:
+                p.close()
+        return ds
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def open_atmosphere(path: str, source: str = "era5", **kwargs) -> GriddedAtmosphere:
     """Open a downloaded forecast/reanalysis file as a provider (needs xarray).
 
     ``source`` selects the variable map (``"era5"``, ``"gfs"``, or pass
     ``var_map=`` for WRF/other). GRIB needs the ``cfgrib`` engine. This is the
     offline path -- download once (ERA5 via the Copernicus CDS, GFS via NOMADS)
-    and point pyflam at the file.
+    and point pyflam at the file. The new CDS returns ERA5 as a **zip** of
+    NetCDFs; that is detected and the members are merged transparently.
     """
     try:
-        import xarray as xr
+        import xarray as xr  # noqa: F401 -- ensures a clear error if xarray is absent
     except ImportError as exc:  # pragma: no cover - exercised only without xarray
         raise ImportError(
             "Atmospheric file reading needs xarray (and cfgrib for GRIB): "
@@ -829,8 +1032,13 @@ def open_atmosphere(path: str, source: str = "era5", **kwargs) -> GriddedAtmosph
     transforms = kwargs.pop("transforms", None)
     if transforms is None and source == "era5":
         transforms = ERA5_TRANSFORMS          # accumulated J/m^2 down -> W/m^2 up
-    ds = xr.open_dataset(path, **kwargs)
-    return GriddedAtmosphere(ds, var_map, transforms=transforms)
+    ds = _read_atmosphere_dataset(path, **kwargs)
+    # The new CDS ERA5 NetCDFs use 'valid_time' as the time coordinate; older
+    # files use 'time'. Point the provider at whichever is present.
+    gkw = {}
+    if "time" not in ds.coords and "time" not in ds.dims and "valid_time" in ds.coords:
+        gkw["time_name"] = "valid_time"
+    return GriddedAtmosphere(ds, var_map, transforms=transforms, **gkw)
 
 
 # Default ERA5 single-level variables for fire + convection (CDS long names).
@@ -892,6 +1100,14 @@ def fetch_gfs(*, run, fxx: int = 0, cache_dir: str | None = None,
     ``run`` is the model run time (datetime or ``"YYYY-MM-DD HH:MM"``), ``fxx``
     the forecast hour. Uses Herbie (which caches downloads under ``cache_dir``).
     Needs ``herbie-data`` (and ``cfgrib``). Returns a :class:`GriddedAtmosphere`.
+
+    Retrieves the surface + 2 m + 10 m fire-weather and convection / energy-flux
+    fields: 10 m wind, 2 m T/RH, surface pressure, CAPE, CIN, boundary-layer
+    height and the surface sensible/latent heat fluxes. The **heat fluxes are
+    time-mean forecast fields and only exist for ``fxx >= 3``** (not in the f000
+    analysis); request a forecast hour to drive the plume / energy-flux diagnostics.
+    Boundary-layer height (HPBL) is fetched separately because some eccodes builds
+    cannot decode its short name from a merged request.
     """
     try:
         from herbie import Herbie
@@ -903,17 +1119,86 @@ def fetch_gfs(*, run, fxx: int = 0, cache_dir: str | None = None,
     import xarray as xr
     herbie_kw = {} if cache_dir is None else {"save_dir": cache_dir}
     h = Herbie(run, model="gfs", product=product, fxx=fxx, **herbie_kw)
-    # Surface + 2 m + 10 m + convective fields relevant to fire behaviour.
-    search = (r":(UGRD|VGRD):10 m above ground:|:(TMP|RH):2 m above ground:"
-              r"|:CAPE:surface:|:HPBL:")
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")            # cfgrib / Herbie merge chatter
-        ds = h.xarray(search, remove_grib=False)
+
+    def _merge(ds):
         if isinstance(ds, list):   # cfgrib returns one dataset per "hypercube"
             merged = ds[0]
             for d in ds[1:]:
                 merged = xr.merge([merged, d], compat="override",
                                   combine_attrs="override")
-            ds = merged
+            return merged
+        return ds
+
+    # Surface + 2 m + 10 m + convective / energy-flux fields. Heat fluxes
+    # (SHTFL/LHTFL) and CIN/PRES are at the surface; the f000 analysis omits the
+    # (time-mean) fluxes -- they simply won't be present and read back as None.
+    search = (r":(UGRD|VGRD):10 m above ground:|:(TMP|RH):2 m above ground:"
+              r"|:(CAPE|CIN|PRES):surface:|:(SHTFL|LHTFL):surface:")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")            # cfgrib / Herbie merge chatter
+        ds = _merge(h.xarray(search, remove_grib=False))
+        # HPBL alone -> the sole field is the boundary-layer height; rename it to
+        # the canonical 'hpbl' even when eccodes leaves it as 'unknown'.
+        try:
+            hpbl = _merge(h.xarray(r":HPBL:surface:", remove_grib=False))
+            name = list(hpbl.data_vars)[0]
+            ds = xr.merge([ds, hpbl[name].rename("hpbl")],
+                          compat="override", combine_attrs="override")
+        except Exception:                          # HPBL optional -- keep going
+            pass
     return GriddedAtmosphere(ds, GFS_VARS, lat_name="latitude",
                              lon_name="longitude")
+
+
+# --- ICON-2I 2.2 km (Italy) from the MISTRAL / AgenziaItaliaMeteo open archive ---
+#
+# The Italian convection-permitting model ICON-2I (2.2 km, full national domain) is
+# published as open data (CC-BY) on MISTRAL / AgenziaItaliaMeteo MeteoHub, one GRIB2
+# file per variable and per level. This is the convection-permitting source for fire
+# weather over Italy (ICON-D2 does not cover Italy; GFS/ICON-EU are coarser). The
+# files carry the full forecast (out to ~72 h) on a 0.025 deg (~2.2 km) lat/lon grid.
+
+ICON2I_MISTRAL_BASE = ("https://meteohub.agenziaitaliameteo.it/nwp/"
+                       "ICON-2I_SURFACE_PRESSURE_LEVELS")
+
+# (local_name, variable_subdir, typeOfLevel, level) -- the fields the pyroconvection
+# classifier + fuel gate need: pressure-level T, 2 m T/dewpoint, 10 m wind.
+ICON2I_FIRE_FIELDS = [
+    ("T850", "T", "isobaricInhPa", 850), ("T700", "T", "isobaricInhPa", 700),
+    ("T500", "T", "isobaricInhPa", 500),
+    ("T2M", "T_2M", "heightAboveGround", 2), ("TD2M", "TD_2M", "heightAboveGround", 2),
+    ("U10", "U_10M", "heightAboveGround", 10), ("V10", "V_10M", "heightAboveGround", 10),
+]
+
+
+def fetch_icon2i_mistral(date, run: int = 0, *, cache_dir: str = ".",
+                         fields=None, base_url: str = ICON2I_MISTRAL_BASE,
+                         force: bool = False, timeout: int = 600) -> dict:
+    """Download ICON-2I 2.2 km GRIB files from the MISTRAL/AgenziaItaliaMeteo archive.
+
+    ``date`` is a ``datetime``/``date`` (the run day); ``run`` the run hour (0 or 12).
+    Downloads one GRIB per field in ``fields`` (default :data:`ICON2I_FIRE_FIELDS` --
+    the fields the pyroconvection map needs) into ``cache_dir``, skipping any already
+    present unless ``force``. Returns ``{local_name: path}``; open each with
+    ``xarray.open_dataset(path, engine="cfgrib")`` (one variable per file).
+
+    The archive directory is open (no token) for this NWP product; the broader
+    MeteoHub extraction API is separate. File naming follows
+    ``ICON_2I_SURFACE_PRESSURE_LEVELS_{YYYYMMDDHH}_{typeOfLevel}-{level}.grib`` under
+    a per-variable subdirectory and a ``{YYYYMMDDHH}`` run directory.
+    """
+    import os
+    import urllib.request
+
+    stamp = f"{date:%Y%m%d}{int(run):02d}"
+    fields = fields or ICON2I_FIRE_FIELDS
+    os.makedirs(cache_dir, exist_ok=True)
+    out = {}
+    for name, subdir, leveltype, level in fields:
+        fn = f"ICON_2I_SURFACE_PRESSURE_LEVELS_{stamp}_{leveltype}-{level}.grib"
+        url = f"{base_url}/{stamp}/{subdir}/{fn}"
+        dst = os.path.join(cache_dir, f"{name}.grib")
+        if force or not os.path.exists(dst) or os.path.getsize(dst) == 0:
+            urllib.request.urlretrieve(url, dst)            # raises on HTTP error
+        out[name] = dst
+    return out
