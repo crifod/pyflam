@@ -9,7 +9,7 @@ description = "Open, multiplatform wildfire-behavior modelling for management, p
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "pyflam contributors" }]
+authors = [{ name = "Cristiano Foderi", email = "cristiano.foderi@gmail.com" }]
 dependencies = ["numpy>=1.23", "scipy>=1.9"]
 
 [project.optional-dependencies]
