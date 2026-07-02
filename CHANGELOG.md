@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-07-02
+
+Submission-ready release — no library/behavior changes.
+
+### Changed
+
+- **Paper title sharpened** to lead with the distinctive contribution (coupled
+  fire–atmosphere pyroconvection and fire-danger assessment), and a suggested
+  JOSS subject/editor-track note added to `paper/SUBMISSION.md`.
+  ([#17](https://github.com/crifod/pyflam/pull/17))
+
+### Fixed
+
+- **Citation now uses the Zenodo *concept* DOI** `10.5281/zenodo.21129258`
+  (all-versions) instead of the v0.1.0 version DOI, in `CITATION.cff` and the
+  README badge/citation. ([#16](https://github.com/crifod/pyflam/pull/16))
+
 ## [0.1.2] - 2026-07-02
 
 Publication release — no library/behavior changes.
@@ -56,7 +73,8 @@ First tagged release.
   - `pyproject.toml`, `README.md`, and the scientific-report docs updated to
     reflect the new license.
 
-[Unreleased]: https://github.com/crifod/pyflam/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/crifod/pyflam/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/crifod/pyflam/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/crifod/pyflam/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/crifod/pyflam/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/crifod/pyflam/releases/tag/v0.1.0
