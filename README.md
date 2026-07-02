@@ -4,6 +4,7 @@
 [![codecov](https://img.shields.io/codecov/c/github/crifod/pyflam/main?logo=codecov)](https://codecov.io/gh/crifod/pyflam)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21129259.svg)](https://doi.org/10.5281/zenodo.21129259)
 
 A new, robust, **multiplatform open-source tool for wildfire management, planning and
 suppression** — built directly from the published, peer-reviewed wildland-fire science,
@@ -884,14 +885,11 @@ Guidelines:
 
 If you use pyflam in your work, please cite it. Machine-readable metadata is in
 [CITATION.cff](CITATION.cff). Each tagged release is archived on Zenodo with a DOI;
-cite the **concept DOI** (resolves to all versions) or a specific version DOI.
-
-<!-- After the first Zenodo archive, add the badge and fill in the DOI:
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.XXXXXXX.svg)](https://doi.org/10.5281/zenodo.XXXXXXX)
+the **concept DOI** [10.5281/zenodo.21129259](https://doi.org/10.5281/zenodo.21129259)
+always resolves to the latest version (Zenodo also mints a per-version DOI).
 
 > Foderi, C. (2026). *pyflam: open, multiplatform wildfire-behavior modelling*
-> (v0.1.0). Zenodo. https://doi.org/10.5281/zenodo.XXXXXXX
--->
+> (v0.1.0). Zenodo. https://doi.org/10.5281/zenodo.21129259
 
 ## License
 
