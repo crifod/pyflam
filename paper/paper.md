@@ -1,5 +1,5 @@
 ---
-title: 'pyflam: open, multiplatform wildfire-behavior modelling with weather-driven and coupled fire–atmosphere capabilities'
+title: 'pyflam: open, multiplatform wildfire-behavior modelling with coupled fire–atmosphere pyroconvection and fire-danger assessment'
 tags:
   - Python
   - wildfire
