@@ -1,0 +1,28 @@
+{
+  "title": "pyflam: open, multiplatform wildfire-behavior modelling (weather-driven and fire-atmosphere coupled)",
+  "description": "pyflam is an open-source, cross-platform Python toolkit for wildfire-behavior modelling for management, planning and suppression. It implements the Rothermel (1972) surface fire-spread model and the standard fuel models, minimum-travel-time fire growth with a selectable anisotropic-Eikonal (Finsler) alternative, random-ignition burn probability, a literature-current crown-fire model, physics-based ember spotting, weather-driven per-cell fuel-moisture conditioning (GFS/ERA5), native terrain-wind solvers and a buoyant-CFD plume for coupled fire-atmosphere pyroconvection, and FlamMap/FARSITE .lcp I/O. pyflam is an independent implementation built from published, peer-reviewed fire science and contains no FlamMap code.",
+  "upload_type": "software",
+  "license": "AGPL-3.0-or-later",
+  "access_right": "open",
+  "creators": [
+    {
+      "name": "Foderi, Cristiano"
+    }
+  ],
+  "keywords": [
+    "wildfire",
+    "fire behavior",
+    "Rothermel",
+    "crown fire",
+    "fire-atmosphere coupling",
+    "pyroconvection",
+    "pyroCb",
+    "fire spread",
+    "burn probability",
+    "eikonal",
+    "Finsler metric",
+    "FlamMap",
+    "fire management",
+    "Python"
+  ]
+}

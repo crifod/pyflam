@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use pyflam, please cite it using the metadata in this file."
+title: "pyflam: open, multiplatform wildfire-behavior modelling (weather-driven and fire-atmosphere coupled)"
+type: software
+authors:
+  - family-names: Foderi
+    given-names: Cristiano
+    email: cristiano.foderi@gmail.com
+    # orcid: "https://orcid.org/0000-0000-0000-0000"  # TODO: add your ORCID
+repository-code: "https://github.com/crifod/pyflam"
+url: "https://github.com/crifod/pyflam"
+license: AGPL-3.0-or-later
+version: 0.1.0
+date-released: "2026-07-02"
+# TODO: after the first Zenodo archive, add the concept DOI (all-versions) here, e.g.:
+# doi: "10.5281/zenodo.XXXXXXX"
+keywords:
+  - wildfire
+  - fire behavior
+  - Rothermel
+  - crown fire
+  - fire-atmosphere coupling
+  - pyroconvection
+  - fire spread
+  - burn probability
+  - eikonal
+  - Python

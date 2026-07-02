@@ -880,6 +880,19 @@ Guidelines:
   output beats any golden-master number — `pyflam.validate` and the
   `tests/validate_flammap_*.py` scripts are the harness.
 
+## Citation
+
+If you use pyflam in your work, please cite it. Machine-readable metadata is in
+[CITATION.cff](CITATION.cff). Each tagged release is archived on Zenodo with a DOI;
+cite the **concept DOI** (resolves to all versions) or a specific version DOI.
+
+<!-- After the first Zenodo archive, add the badge and fill in the DOI:
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.XXXXXXX.svg)](https://doi.org/10.5281/zenodo.XXXXXXX)
+
+> Foderi, C. (2026). *pyflam: open, multiplatform wildfire-behavior modelling*
+> (v0.1.0). Zenodo. https://doi.org/10.5281/zenodo.XXXXXXX
+-->
+
 ## License
 
 **GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)** — see
