@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-02
+
+Publication release — no library/behavior changes.
+
+### Changed
+
+- **JOSS paper restructured to the current JOSS mandatory sections** — adds
+  *State of the field* (with an explicit build-vs-contribute justification),
+  *Software design*, *Research impact statement*, and an *AI usage disclosure*
+  section; trims *Statement of need* to the need itself.
+  ([#13](https://github.com/crifod/pyflam/pull/13))
+
 ## [0.1.1] - 2026-07-02
 
 Packaging and publication release — no library/behavior changes.
@@ -44,6 +56,7 @@ First tagged release.
   - `pyproject.toml`, `README.md`, and the scientific-report docs updated to
     reflect the new license.
 
-[Unreleased]: https://github.com/crifod/pyflam/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/crifod/pyflam/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/crifod/pyflam/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/crifod/pyflam/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/crifod/pyflam/releases/tag/v0.1.0
