@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Page 2 — Real-time fire propagation (present-date GFS / ICON-2I).
 
 Declare the run-duration scenario up front, place ignitions on the map, and spread

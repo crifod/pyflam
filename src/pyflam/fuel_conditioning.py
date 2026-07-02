@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Per-cell dead fuel moisture conditioning (terrain insolation + canopy shading).
 
 Turns gridded *or* scalar weather (air temperature, relative humidity) plus a

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Shared building blocks for the pyflam Streamlit GUI suite.
 
 This package is the orchestration + presentation layer over the ``pyflam``

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Interactive Folium maps: click-to-place ignitions and result overlays.
 
 Built on ``streamlit-folium``. Imports of folium are lazy so the rest of the GUI

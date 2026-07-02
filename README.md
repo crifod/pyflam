@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/crifod/pyflam/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/crifod/pyflam/actions/workflows/ci.yml?query=branch%3Amain)
 [![codecov](https://img.shields.io/codecov/c/github/crifod/pyflam/main?logo=codecov)](https://codecov.io/gh/crifod/pyflam)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 
 A new, robust, **multiplatform open-source tool for wildfire management, planning and
@@ -10,7 +10,7 @@ suppression** — built directly from the published, peer-reviewed wildland-fire
 and inspired by the operational paradigm that desktop systems like
 [FlamMap](https://www.firelab.org/project/flammap) proved valuable to fire agencies.
 pyflam delivers that operational value as scriptable, automatable, cross-platform
-software (any OS, MIT-licensed) and goes well beyond it with weather-driven,
+software (any OS, AGPL-3.0-licensed) and goes well beyond it with weather-driven,
 fire–atmosphere-coupled modelling.
 
 > **For the full scientific, technical and operational write-up** — the models,
@@ -882,7 +882,13 @@ Guidelines:
 
 ## License
 
-MIT — see [LICENSE](LICENSE). pyflam is an independent open-source tool built from
-published, peer-reviewed fire science; it contains no FlamMap (or other proprietary
-tool) code, and FlamMap/BehavePlus are used only as external benchmarks for
-cross-validation.
+**GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)** — see
+[LICENSE](LICENSE) for the full text and [NOTICE](NOTICE) for the copyright and
+attribution. The AGPL is a strong copyleft license: anyone who distributes a
+modified version, **or offers it to users over a network** (e.g. hosting the
+Streamlit GUI as a service), must make the complete corresponding source of their
+modified version available under the same terms.
+
+pyflam is an independent open-source tool built from published, peer-reviewed fire
+science; it contains no FlamMap (or other proprietary tool) code, and
+FlamMap/BehavePlus are used only as external benchmarks for cross-validation.

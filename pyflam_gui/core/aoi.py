@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Area-of-interest selection: an interactive draw map + pure bbox helpers.
 
 The pure helpers (``bbox_from_geojson``, ``clip_bbox``, ``valid_bbox``) carry no

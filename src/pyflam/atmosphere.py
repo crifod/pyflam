@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Atmospheric forcing for fire simulations: weather/reanalysis -> fire inputs.
 
 This module lets a pyflam run be driven by real atmospheric data instead of fixed

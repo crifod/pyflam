@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Native mass-consistent (diagnostic) wind model.
 
 A pure-Python reimplementation of the physics behind WindNinja's *default*

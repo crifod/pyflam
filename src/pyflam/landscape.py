@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Gridded landscapes and whole-landscape surface fire behavior.
 
 A :class:`Landscape` is the in-memory band stack (fuel model, slope, and the

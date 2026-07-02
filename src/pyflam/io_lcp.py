@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Read and write FlamMap/FARSITE landscape (``.lcp``) files.
 
 An LCP is a flat binary raster stack: a fixed 7316-byte header followed by the

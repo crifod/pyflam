@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Operational analysis of a fire perimeter: what is driving spread, and where.
 
 After a first MTT run, an analyst wants the *operational* picture: split the

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Locate OpenFOAM and orchestrate the solver pipeline.
 
 OpenFOAM is invoked through the ``openfoam`` wrapper (the native macOS app and

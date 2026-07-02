@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Generate an OpenFOAM ABL case (fields, constant, system) for a terrain mesh.
 
 Two regimes, selected by ``CaseConfig.buoyant``:

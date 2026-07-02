@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Session-state keys and typed accessors shared across the GUI pages.
 
 ``Home.py`` writes the user's choices (area of interest, landscape, atmosphere

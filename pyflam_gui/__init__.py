@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """pyflam_gui: a Streamlit GUI suite over the pyflam fire-behavior pipelines.
 
 Four pages drive the existing pyflam pipelines from a map-driven UI:
