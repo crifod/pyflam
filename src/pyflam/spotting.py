@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Ember (firebrand) spotting: lofting by the fire plume, transport by the wind.
 
 Spotting is the mechanism by which a fire throws burning embers ahead of its

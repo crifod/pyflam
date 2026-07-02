@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Read an OpenFOAM result field back into a pyflam :class:`WindField`.
 
 The case is built without ``renumberMesh``, so the solved ``U`` ``internalField``

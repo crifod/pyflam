@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Output-folder convention + writers shared by every page.
 
 Each run gets a timestamped directory ``<base>/<kind>_<stamp>/`` into which the

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Fire -> atmosphere coupling: the fire's energy drives a buoyant plume that
 re-shapes the local wind (pyroconvection), which in turn drives the fire.
 

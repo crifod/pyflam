@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Wind reduction / adjustment factor: 20-ft wind -> midflame wind.
 
 The Rothermel surface model wants the *midflame* wind, but weather and FlamMap's

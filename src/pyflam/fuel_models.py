@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Standard fire-behavior fuel models.
 
 Implements the original 13 fuel models of Anderson (1982) / Albini (1976),

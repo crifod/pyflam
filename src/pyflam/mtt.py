@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Fire growth: directional elliptical spread + Minimum Travel Time (steps 3 & 5).
 
 This is the spread/perimeter engine — the piece that turns per-cell spread

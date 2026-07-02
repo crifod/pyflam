@@ -7,7 +7,7 @@ model through fire–atmosphere pyroconvection, into one operational pipeline.*
 **Status:** roadmap steps 1–5 implemented; step 6 (validation) ongoing. ~8,600 lines
 of source across 25 modules; ~568 automated tests. Pure-Python core (NumPy + SciPy);
 optional geospatial, atmospheric, and JIT extras; OpenFOAM and Herbie discovered at
-runtime. MIT-licensed; CI on Python 3.11/3.12/3.13.
+runtime. AGPL-3.0-licensed; CI on Python 3.11/3.12/3.13.
 
 **Other formats:** an Italian translation is at [`pyflam_scientific_report_IT.md`](pyflam_scientific_report_IT.md). PDF and DOCX (English and Italian) are produced on demand — run `sh docs/report/build.sh`, or download them from the latest **Docs** workflow run on GitHub Actions (artifact `pyflam-report`).
 
@@ -24,7 +24,7 @@ Sciences Laboratory desktop system — established and proved valuable to fire a
 worldwide: a per-cell landscape product set (surface rate of spread, fireline
 intensity, flame length; crown-fire potential; minimum-travel-time fire growth;
 random-ignition burn probability). pyflam delivers that operational value as **open,
-cross-platform, scriptable software** (any OS, Python, MIT-licensed), interoperating
+cross-platform, scriptable software** (any OS, Python, AGPL-3.0-licensed), interoperating
 with the same community data formats (`.lcp` landscapes, `.fms` moisture, GeoTIFF,
 GeoJSON) so it fits existing workflows.
 

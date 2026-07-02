@@ -8,7 +8,7 @@ Rothermel fino alla piroconvezione fuoco–atmosfera.*
 **Stato:** passi 1–5 della roadmap implementati; passo 6 (validazione) in corso. ~8.600
 righe di codice sorgente su 25 moduli; ~568 test automatici. Nucleo in puro Python
 (NumPy + SciPy); estensioni opzionali per dati geospaziali, atmosferici e per la
-compilazione JIT; OpenFOAM e Herbie individuati a runtime. Licenza MIT; integrazione
+compilazione JIT; OpenFOAM e Herbie individuati a runtime. Licenza AGPL-3.0; integrazione
 continua (CI) su Python 3.11/3.12/3.13.
 
 **Altri formati:** la versione inglese è in [`pyflam_scientific_report.md`](pyflam_scientific_report.md). I PDF e i DOCX (inglese e italiano) sono generati su richiesta — eseguire `sh docs/report/build.sh`, oppure scaricarli dall'ultima esecuzione del workflow **Docs** su GitHub Actions (artifact `pyflam-report`).
@@ -29,7 +29,7 @@ agenzie antincendio di tutto il mondo: un insieme di prodotti per cella sul terr
 fiamma; potenziale di incendio di chioma; crescita del fuoco con il metodo del tempo
 minimo di percorrenza; probabilità di incendio da ignizioni casuali). pyflam offre quel
 valore operativo come **software aperto, multipiattaforma e programmabile** (qualsiasi
-sistema operativo, Python, licenza MIT), interoperabile con gli stessi formati di dati
+sistema operativo, Python, licenza AGPL-3.0), interoperabile con gli stessi formati di dati
 della comunità (paesaggi `.lcp`, umidità `.fms`, GeoTIFF, GeoJSON) per inserirsi nei
 flussi di lavoro esistenti.
 

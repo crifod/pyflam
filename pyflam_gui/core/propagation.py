@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Shared run + results panel for the propagation pages (real-time & reanalysis).
 
 Pages 2 and 3 differ only in which weather sources they offer and their default

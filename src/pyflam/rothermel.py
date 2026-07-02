@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Rothermel (1972) surface fire spread model.
 
 This is the scientific core of FlamMap's "Basic Fire Behavior" outputs. Given a

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Near-real-time meteorological variation report for a fire run.
 
 Samples an :mod:`pyflam.atmosphere` provider across the run window and tracks how

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Crown fire initiation and spread (roadmap step 4).
 
 Surface fire is only half the story in forested fuels: once the surface

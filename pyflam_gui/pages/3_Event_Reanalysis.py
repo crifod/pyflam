@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Page 3 — Reanalysis of a past fire event (ERA5).
 
 Re-runs the propagation engine against ERA5 reanalysis at the event's historical

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
+
 """Atmosphere-source picker: turn GUI selections into a pyflam provider.
 
 ``build_provider`` is the pure mapping from a *choice dict* to a
