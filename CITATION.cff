@@ -13,7 +13,7 @@ license: AGPL-3.0-or-later
 version: 0.1.2
 date-released: "2026-07-02"
 # Concept DOI (Zenodo) — resolves to all versions.
-doi: "10.5281/zenodo.21129259"
+doi: "10.5281/zenodo.21129258"
 keywords:
   - wildfire
   - fire behavior
