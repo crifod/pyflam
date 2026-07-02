@@ -69,46 +69,98 @@ trusted defaults; the additions are exposed as options so users can compare them
 # Statement of need
 
 Landscape fire-behavior modelling is central to fuel-treatment planning, risk
-assessment, and incident decision support, but the most widely used desktop tools
-(FlamMap, FARSITE [@finney1998]) are closed-source, Windows-only binaries that are
+assessment, and incident decision support. In practice this work is dominated by
+closed-source, Windows-only desktop tools (FlamMap, FARSITE [@finney1998]) that are
 difficult to script, automate, embed in larger systems, or run in the cloud or on
-non-Windows platforms. This limits reproducible research and operational automation.
+non-Windows platforms, which limits reproducible research and operational automation.
+There is a need for an open, cross-platform, scriptable implementation of the established
+operational product set that also connects fire behavior to live weather and to the
+fire–atmosphere coupling the desktop tools omit — in particular the pyroconvection and
+fire-danger assessment that governs the most dangerous fires. `pyflam` addresses this
+need: it reproduces the FlamMap-style per-cell products through a Python API, drives them
+from forecast and reanalysis data per cell, and adds coupled-atmosphere pyroconvection
+diagnostics as selectable, literature-grounded components. Its intended users are
+fire-behavior researchers and operational analysts in planning, incident management, and
+suppression support.
 
-Open-source alternatives exist and target parts of this space — for example Cell2Fire
-[@pais2021] and ELMFIRE [@lautenberger2013] for landscape spread, ForeFire
-[@filippi2018; @filippi2025] for spread and coupling, WindNinja [@forthofer2014] for diagnostic
-wind, and WRF-SFIRE [@mandel2011] for research-grade coupled fire–atmosphere
-simulation. `pyflam`'s contribution is to package the *operational FlamMap-style product
-set* and a *weather-to-fire pipeline* together in one permissively installable Python
-API, and to make the newer science available as transparent, selectable options next to
-the classical defaults. Its most distinctive capability is **pyroconvection and
-fire-danger assessment**: the operational tools listed above do not diagnose the
-plume-driven, potentially pyroCb-forming behavior that governs the most dangerous fires,
-and the research-grade coupled models that do (e.g. WRF-SFIRE) are heavy to run and not
-oriented toward routine danger mapping. `pyflam` fills that gap with vertical-profile
-pyroconvection diagnostics grounded in the current literature [@peterson2017;
-@castellnou2022; @tory2021] and driven per cell by high-resolution regional forecasts —
-notably the convection-permitting ICON-2I model over Italy — so an analyst can produce
-spatial pyroconvection-potential and fire-danger maps and couple them into fire spread
-within one reproducible pipeline. Together with the Finsler-Eikonal spread solver,
-per-cell weather-driven moisture, and a literature-current crown-fire model, this lowers
-the barrier to reproducible fire-behavior analysis and provides a research platform for
-the fire–atmosphere coupling that operational tools approximate or omit.
+# State of the field
 
-The deterministic surface core is cross-validated cell-by-cell against a FlamMap run on
-a real 1.6-million-cell landscape (surface rate of spread within ~3%, maximum-spread
-direction within ~1°, conditional fireline intensity within ~2%). The added components
-are implemented and verified against their published equations and, where applicable,
-analytic benchmarks; broader validation of these components against field observations
-and independent coupled models is ongoing and is the subject of future work. `pyflam`
-is tested with a large automated suite run in continuous integration across Python
-3.11–3.13.
+Several open-source tools address parts of this space. For landscape spread, Cell2Fire
+[@pais2021] and ELMFIRE [@lautenberger2013] provide fast fire-growth models; ForeFire
+[@filippi2018; @filippi2025] offers front-tracking spread and, coupled to Meso-NH,
+research-grade fire–atmosphere simulation; WindNinja [@forthofer2014] provides diagnostic
+terrain winds; and WRF-SFIRE [@mandel2011] embeds a spread model in a full mesoscale
+atmospheric model. Each is strong in its niche, but none packages the *operational
+FlamMap product set* (surface behavior, crown-fire potential, minimum-travel-time growth,
+and random-ignition burn probability, on community `.lcp`/`.fms` inputs) together with a
+*weather-to-fire pipeline* and *routine pyroconvection/fire-danger mapping* in one
+permissively licensed, scriptable Python library.
+
+pyflam's build-versus-contribute rationale is therefore twofold. Where a trusted
+operational standard exists (Rothermel surface spread, the classical crown-fire stack,
+minimum-travel-time growth), pyflam re-implements it faithfully and cross-validates it
+against the reference tool, rather than asking users to change paradigms. Where the
+operational tools stop — weather-driven per-cell moisture, native terrain winds, a
+Finsler-Eikonal spread alternative, a literature-current crown-fire model, physics-based
+spotting, and vertically resolved pyroconvection — it contributes new, selectable
+components built directly from the peer-reviewed literature. The distinctive contribution
+is pyroconvection and fire-danger assessment: the operational desktop tools do not
+diagnose plume-driven, potentially pyroCb-forming behavior, and the research-grade coupled
+models that can (e.g. WRF-SFIRE) are heavy to run and not oriented toward routine danger
+mapping. pyflam fills that gap with vertical-profile diagnostics [@peterson2017;
+@castellnou2022; @tory2021] driven per cell by high-resolution regional forecasts such as
+the convection-permitting ICON-2I model over Italy.
+
+# Software design
+
+`pyflam` is a pure-Python core on NumPy and SciPy, with heavier capabilities gated behind
+optional extras (geospatial I/O, atmospheric forcing, and Numba JIT) and external engines
+(OpenFOAM, Herbie) discovered at runtime and self-skipped when absent, so the core
+installs and runs anywhere. A central design choice is a vectorized `SurfaceKernel`: the
+wind- and slope-independent Rothermel terms are computed once per fuel and moisture state
+and then applied to per-cell array inputs, which makes whole-landscape moisture
+conditioning, weather forcing, and crown classification tractable at multi-million-cell
+scale. Interchangeable back-ends are exposed as options rather than replacements — the
+fire-growth engine (lattice minimum-travel-time Dijkstra, or a semi-Lagrangian
+anisotropic-Eikonal solver), the wind model (mass-consistent diagnostic vs. buoyant RANS),
+and the crown-spread model are all selectable. Two trade-offs are worth noting. First, the
+fire–atmosphere coupling uses a *quasi-steady* buoyant-RANS plume re-solved on a march
+interval rather than a transient large-eddy simulation; this trades some fidelity for
+tractability and keeps the plume feedback usable operationally (and testable without
+OpenFOAM through an injectable solver). Second, established models remain trusted defaults
+while the novel methods are opt-in, so users can reproduce the reference tools exactly and
+adopt the newer science by choice.
+
+# Research impact statement
+
+`pyflam` is a young project; its near-term significance rests on three points. First, it
+lowers the barrier to reproducible fire-behavior analysis by making the operational
+product set scriptable and cross-platform, with a validated surface core: cell-by-cell
+agreement with a real FlamMap run reaches ~3% on surface rate of spread, ~1° on
+maximum-spread direction, and ~2% on conditional fireline intensity over a 1.6-million-cell
+landscape. Second, it provides a research platform for the fire–atmosphere coupling and
+pyroconvection that the operational desktop tools omit, with each component traceable to
+the peer-reviewed literature. Third, it is already deployed as an operational product: an
+unattended daily pipeline produces pyroconvection and fire-danger maps over Italy from the
+convection-permitting ICON-2I forecast, and an interactive graphical interface exposes the
+same pipelines to non-programmer analysts. Broader validation of the novel components
+against field observations and independent coupled models is ongoing and is the subject of
+planned work. `pyflam` is developed openly with a substantial automated test suite run in
+continuous integration across Python 3.11–3.13.
 
 # Acknowledgements
 
-We acknowledge the USDA Forest Service / Missoula Fire Sciences Laboratory, whose
-FlamMap system established the operational paradigm that inspired this work; `pyflam` is
-an independent implementation built from published, peer-reviewed models and contains no
+We acknowledge the USDA Forest Service / Missoula Fire Sciences Laboratory, whose FlamMap
+system established the operational paradigm that inspired this work; `pyflam` is an
+independent implementation built from published, peer-reviewed models and contains no
 FlamMap code. This work received no specific funding.
+
+# AI usage disclosure
+
+Parts of the `pyflam` implementation, and this paper, were produced with the assistance of
+a generative-AI coding and research assistant (Claude, Anthropic). The fire-science models
+are independent implementations of the cited peer-reviewed publications; the empirical
+coefficients were checked against the original papers before implementation, and every
+cited reference was verified against its authoritative record.
 
 # References
