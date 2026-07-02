@@ -76,7 +76,7 @@ non-Windows platforms. This limits reproducible research and operational automat
 
 Open-source alternatives exist and target parts of this space — for example Cell2Fire
 [@pais2021] and ELMFIRE [@lautenberger2013] for landscape spread, ForeFire
-[@filippi2018] for spread and coupling, WindNinja [@forthofer2014] for diagnostic
+[@filippi2018; @filippi2025] for spread and coupling, WindNinja [@forthofer2014] for diagnostic
 wind, and WRF-SFIRE [@mandel2011] for research-grade coupled fire–atmosphere
 simulation. `pyflam`'s contribution is to package the *operational FlamMap-style product
 set* and a *weather-to-fire pipeline* together in one permissively installable Python
