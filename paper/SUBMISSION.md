@@ -84,14 +84,20 @@ Not part of the paper; a private aid for the submitting author.
 - [x] **Tagged release + archive with DOI** — `v0.1.0`, Zenodo `10.5281/zenodo.21129259`.
       ⚠️ Re-archive at acceptance to include the paper (see mechanics note).
 
-### The paper (`paper/paper.md`)
+### The paper (`paper/paper.md`) — current JOSS mandatory sections
 - [x] **Summary** for a non-specialist audience.
 - [x] **Statement of need** — who the audience is and what gap it fills.
-- [x] **State of the field** — compares to related tools (FlamMap, FARSITE, Cell2Fire,
-      ELMFIRE, ForeFire, WindNinja, WRF-SFIRE).
+- [x] **State of the field** — own section with the explicit build-vs-contribute
+      justification, comparing to FlamMap, FARSITE, Cell2Fire, ELMFIRE, ForeFire,
+      WindNinja, WRF-SFIRE.
+- [x] **Software design** — trade-offs and architecture (SurfaceKernel, selectable
+      back-ends, quasi-steady RANS coupling).
+- [x] **Research impact statement** — near-term significance + realized use (daily
+      ICON-2I operational mapping, the GUI, validated surface core).
+- [x] **AI usage disclosure** — generative-AI assistance disclosed in the paper.
 - [x] **Quality references** — `paper/paper.bib`, all entries verified (Crossref / FS
-      Treesearch); DOIs where they exist.
-- [x] **Length** — ~850 words (JOSS target 250–1000).
+      Treesearch), full venue names, DOIs where they exist; includes related software.
+- [x] **Length** — ~1,300 words (JOSS target 750–1750).
 - [x] **Authors + affiliations + ORCID** present.
 - [ ] **Final proofread** of the built PDF (Draft PDF workflow artifact).
 
