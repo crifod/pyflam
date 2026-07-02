@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyflam"
-version = "0.1.3"
+version = "0.2.0.dev0"
 description = "Open, multiplatform wildfire-behavior modelling for management, planning and suppression — weather-driven and fire-atmosphere coupled"
 readme = "README.md"
 requires-python = ">=3.10"
