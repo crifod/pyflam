@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-02
+
+First tagged release.
+
 ### Changed
 
 - **License: relicensed from MIT to AGPL-3.0-or-later.** pyflam is now
@@ -23,3 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `AGPL-3.0-or-later`.
   - `pyproject.toml`, `README.md`, and the scientific-report docs updated to
     reflect the new license.
+
+[Unreleased]: https://github.com/crifod/pyflam/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/crifod/pyflam/releases/tag/v0.1.0
