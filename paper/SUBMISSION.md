@@ -5,6 +5,23 @@ Not part of the paper; a private aid for the submitting author.
 
 ---
 
+## Suggested subject / editor track
+
+- **Primary subject (domain / editor track):** computational wildland-fire-behavior
+  modelling — **Earth & Environmental Sciences** (fire science / geoscientific
+  modelling); scientific-computing / geospatial as secondary.
+- **Lead theme to foreground:** an open, cross-platform operational wildfire-behavior
+  toolkit whose distinctive contribution is **coupled fire–atmosphere pyroconvection and
+  fire-danger assessment** — the defensible gap no operational open tool fills (routine,
+  per-cell, forecast-driven danger mapping, incl. ICON-2I over Italy). The FlamMap-style
+  product set is the validated credibility base, not the novelty.
+- **Frontmatter tags already signal this:** `wildfire`, `fire behavior`,
+  `fire–atmosphere coupling`, `pyroconvection`.
+- **Suggested-reviewer expertise:** wildland-fire behavior; coupled fire–atmosphere /
+  pyroconvection; scientific-Python / geospatial software.
+
+---
+
 ## How JOSS submission works (mechanics)
 
 1. Go to <https://joss.theoj.org> → **Submit a paper**.
