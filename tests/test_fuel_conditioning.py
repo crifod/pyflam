@@ -270,3 +270,38 @@ def test_conditioned_moisture_feeds_spread_field():
     assert field.ros_max.shape == ls.shape
     # Drier south fuel spreads at least as fast as the moister north fuel.
     assert field.ros_max[:, n // 2:].mean() >= field.ros_max[:, :n // 2].mean()
+
+
+# --- live fuel moisture (seasonal greenness + drought curing) -----------------
+
+def test_greenness_seasonal_shape():
+    # green in spring (default Mediterranean season), cured by late summer/winter
+    assert fc.growing_season_greenness(105) == pytest.approx(1.0)     # mid-April peak
+    assert fc.growing_season_greenness(185) < 0.3                     # early July, curing
+    assert fc.growing_season_greenness(300) == 0.0                    # dormant
+    # southern hemisphere is offset half a year
+    assert fc.growing_season_greenness(105, hemisphere="south") == 0.0
+
+
+def test_live_fuel_moisture_bounds_and_curing():
+    doy = 184                              # 3 July
+    dry = fc.live_fuel_moisture(doy, aridity=0.7)
+    humid = fc.live_fuel_moisture(doy, aridity=0.0)
+    # fractions, in the LANDFIRE live-moisture range, never the bare 0.0 default
+    assert 0.30 <= dry["m_live_herb"] < humid["m_live_herb"]
+    assert dry["m_live_herb"] >= fc.LIVE_HERB_RANGE[0] / 100.0
+    # a dry burn day cures the fast herbaceous class; woody (slow) is unchanged
+    assert dry["m_live_woody"] == pytest.approx(humid["m_live_woody"])
+    assert dry["m_live_woody"] > 0.70
+
+
+def test_live_fuel_aridity_monotone_in_vpd():
+    arid_dry = fc.live_fuel_aridity(32.0, 20.0)
+    arid_humid = fc.live_fuel_aridity(18.0, 80.0)
+    assert 0.0 <= arid_humid < arid_dry <= 1.0
+
+
+def test_dormant_season_hits_floor():
+    m = fc.live_fuel_moisture(300, aridity=0.9)          # winter dormancy
+    assert m["m_live_herb"] == pytest.approx(fc.LIVE_HERB_RANGE[0] / 100.0)
+    assert m["m_live_woody"] == pytest.approx(fc.LIVE_WOODY_RANGE[0] / 100.0)

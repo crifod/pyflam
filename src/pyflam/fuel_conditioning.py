@@ -414,3 +414,101 @@ def condition_from_weather(
         ls, temperature=temperature, relative_humidity=relative_humidity,
         latitude=latitude, day_of_year=when.timetuple().tm_yday, hour=hour,
         longitude=longitude, timezone=timezone, **conditioning_kwargs)
+
+
+# --- live fuel moisture (seasonal greenness + drought curing) -----------------
+#
+# Unlike dead fuel moisture, live herbaceous / woody moisture is NOT recoverable
+# from a single day's surface weather -- it is a phenological (vegetation) state
+# set by the growing season and multi-week drought, so the honest estimator is a
+# seasonal greenness curve, not the ICON snapshot. (The gold standard is satellite
+# live-fuel-moisture / NDVI or field sampling; use those when available.) What the
+# day's weather *does* drive is the fast curing of the herbaceous class, captured
+# here through a vapour-pressure-deficit aridity term.
+#
+# Range bounds follow the LANDFIRE / Scott & Burgan (2005) live fuel-moisture
+# scenarios (%): fully dormant/cured vs. fully green (turgid). Herbaceous swings
+# far wider than woody. The season thresholds default to a temperate/Mediterranean
+# northern-hemisphere grass-shrub year -- override them (or drive greenness from
+# satellite LFMC) for other vegetation.
+LIVE_HERB_RANGE = (30.0, 250.0)          # % dormant/cured -> fully green
+LIVE_WOODY_RANGE = (70.0, 200.0)
+
+
+def growing_season_greenness(day_of_year, *, hemisphere="north",
+                             greenup=45.0, peak=105.0, senescence=120.0,
+                             dormant=200.0):
+    """Seasonal greenness fraction ``G in [0, 1]`` (0 dormant/cured, 1 fully green).
+
+    A trapezoidal growing-season curve: linear greenup ``greenup->peak``, a green
+    plateau ``peak->senescence``, linear cure-off ``senescence->dormant``, then
+    dormant through winter. The day-of-year thresholds default to a Mediterranean
+    grass-shrub season (green late winter/spring, cured by mid-summer); pass
+    ``hemisphere="south"`` to shift them by half a year, or set them explicitly for
+    your vegetation. Coarse climatology -- prefer satellite LFMC/NDVI when you have
+    it. Scalar or array ``day_of_year``.
+    """
+    d = np.asarray(day_of_year, dtype=float) % 365.0
+    if hemisphere == "south":
+        d = (d + 182.5) % 365.0
+    g = np.where(
+        d < greenup, 0.0,
+        np.where(d < peak, (d - greenup) / (peak - greenup),
+                 np.where(d < senescence, 1.0,
+                          np.where(d < dormant,
+                                   (dormant - d) / (dormant - senescence), 0.0))))
+    g = np.clip(g, 0.0, 1.0)
+    return float(g) if g.ndim == 0 else g
+
+
+def live_fuel_aridity(temp_c, relative_humidity, *, vpd_full=4.0):
+    """Herbaceous-curing driver ``a in [0, 1]`` from vapour pressure deficit.
+
+    ``a = clip(VPD_kPa / vpd_full, 0, 1)`` -- 0 in humid air, 1 once the burn-period
+    VPD reaches ``vpd_full`` (~4 kPa, a hot dry afternoon). Feeds ``aridity`` in
+    :func:`live_fuel_moisture` so the fast herbaceous class cures on a dry day.
+    Averages over array inputs (a representative scalar for the period).
+    """
+    vpd = vapour_pressure_deficit(temp_c, relative_humidity)
+    return float(np.clip(np.mean(vpd) / float(vpd_full), 0.0, 1.0))
+
+
+def drought_curing(bui, *, bui_full=80.0):
+    """Live-fuel curing driver ``a in [0, 1]`` from the FWI Buildup Index.
+
+    ``a = clip(BUI / bui_full, 0, 1)``. Unlike :func:`live_fuel_aridity` (a single
+    day's vapour pressure deficit), the BUI integrates *weeks* of drought (DMC+DC),
+    so it cures the live herbaceous class for a sustained dry spell -- the
+    multi-week signal the FWI spin-up provides. Feed it as ``aridity`` to
+    :func:`live_fuel_moisture`. ``bui_full`` (~80, the high end of the BUI danger
+    scale) is where curing saturates. Scalar or array.
+    """
+    return _scalarish(np.clip(np.asarray(bui, dtype=float) / float(bui_full), 0.0, 1.0))
+
+
+def _scalarish(x):
+    a = np.asarray(x, dtype=float)
+    return float(a) if a.ndim == 0 else a
+
+
+def live_fuel_moisture(day_of_year, *, hemisphere="north", aridity=0.0,
+                       herb_range=LIVE_HERB_RANGE, woody_range=LIVE_WOODY_RANGE,
+                       **season):
+    """Estimate live herbaceous + woody fuel moisture (fractions) for a date.
+
+    Seasonal greenness (:func:`growing_season_greenness`) interpolates each class
+    between its dormant and green bounds; the fast herbaceous class is additionally
+    pulled toward its dormant floor by ``aridity in [0, 1]`` (the burn-day curing,
+    e.g. from :func:`live_fuel_aridity`), while the slower woody class follows
+    greenness alone. Returns the ``m_live_herb`` / ``m_live_woody`` fractions that
+    :func:`pyflam.spread` and :func:`pyflam.fire_atmosphere_march` expect. Extra
+    keyword args pass through to :func:`growing_season_greenness` (season
+    thresholds). This is a climatological estimate -- see the module note above.
+    """
+    g = growing_season_greenness(day_of_year, hemisphere=hemisphere, **season)
+    a = np.clip(aridity, 0.0, 1.0)
+    hlo, hhi = herb_range
+    wlo, whi = woody_range
+    herb = hlo + g * (1.0 - a) * (hhi - hlo)
+    woody = wlo + g * (whi - wlo)
+    return {"m_live_herb": herb / 100.0, "m_live_woody": woody / 100.0}

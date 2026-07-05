@@ -219,6 +219,30 @@ def test_dead_fuel_moisture_model_equilibrium_init():
     assert model.m_1h == model.m_10h == model.m_100h
 
 
+def test_dead_fuel_moisture_model_per_cell_arrays():
+    """A gridded state steps the model per cell (arrays), matching scalar cells."""
+    T = np.array([[35.0, 20.0], [35.0, 20.0]])
+    RH = np.array([[15.0, 60.0], [15.0, 60.0]])
+    st = atm.AtmosphericState(wind_speed=np.full((2, 2), 4.0),
+                              wind_direction=np.full((2, 2), 270.0),
+                              temperature=T, relative_humidity=RH)
+    model = atm.DeadFuelMoistureModel(
+        m_1h=np.full((2, 2), 0.12), m_10h=np.full((2, 2), 0.12),
+        m_100h=np.full((2, 2), 0.12))
+    for _ in range(3):
+        out = model.update(st, dt_minutes=60)
+    assert out["m_1h"].shape == (2, 2)
+    # the dry column dries below the humid column across every lag class
+    assert np.all(out["m_1h"][:, 0] < out["m_1h"][:, 1])
+    # per-cell result equals the equivalent scalar run
+    scalar = atm.DeadFuelMoistureModel(m_1h=0.12, m_10h=0.12, m_100h=0.12)
+    dry = atm.AtmosphericState(wind_speed=4, wind_direction=270,
+                               temperature=35, relative_humidity=15)
+    for _ in range(3):
+        sc = scalar.update(dry, dt_minutes=60)
+    assert out["m_100h"][0, 0] == pytest.approx(sc["m_100h"], abs=1e-9)
+
+
 # --- per-cell atmospheric fields ----------------------------------------------
 
 def test_constant_field_broadcasts():

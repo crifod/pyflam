@@ -186,13 +186,24 @@ class DeadFuelMoistureModel:
         return cls(m_1h=emc, m_10h=emc, m_100h=emc)
 
     def update(self, state: "AtmosphericState", dt_minutes: float) -> dict:
-        """Step the three classes toward the state's EMC and return the moistures."""
+        """Step the three classes toward the state's EMC and return the moistures.
+
+        Scalars stay Python floats; a per-cell ``state`` (array temperature /
+        relative humidity, e.g. from :meth:`GriddedAtmosphere.field_on`) steps the
+        three classes per cell and returns arrays -- so a spatial march can carry
+        gridded fuel-moisture memory.
+        """
         emc = equilibrium_moisture_content(
             state.temperature, state.relative_humidity) / 100.0
         dt_h = dt_minutes / 60.0
-        self.m_1h = float(time_lag_step(self.m_1h, emc, dt_h, FUEL_TIME_LAGS["m_1h"]))
-        self.m_10h = float(time_lag_step(self.m_10h, emc, dt_h, FUEL_TIME_LAGS["m_10h"]))
-        self.m_100h = float(time_lag_step(self.m_100h, emc, dt_h,
+
+        def _keep(x):                       # 0-d -> float, arrays stay arrays
+            a = np.asarray(x)
+            return float(a) if a.ndim == 0 else a
+
+        self.m_1h = _keep(time_lag_step(self.m_1h, emc, dt_h, FUEL_TIME_LAGS["m_1h"]))
+        self.m_10h = _keep(time_lag_step(self.m_10h, emc, dt_h, FUEL_TIME_LAGS["m_10h"]))
+        self.m_100h = _keep(time_lag_step(self.m_100h, emc, dt_h,
                                           FUEL_TIME_LAGS["m_100h"]))
         return {"m_1h": self.m_1h, "m_10h": self.m_10h, "m_100h": self.m_100h}
 

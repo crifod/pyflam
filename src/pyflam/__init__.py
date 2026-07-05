@@ -13,9 +13,10 @@ README.md for the roadmap.
 from __future__ import annotations
 
 from . import (
-    atmosphere, cfd, crownfire, fuel_conditioning, fuel_models, io_lcp,
-    landscape, meteo_report, mtt, nrt, operative, pyroconvection, rothermel,
-    spotting, units, validate, wind, wind_reduction, windsolver,
+    atmosphere, cfd, crownfire, fire_weather_history, fuel_conditioning,
+    fuel_models, fwi, io_lcp, landscape, meteo_report, mtt, nrt, operative,
+    pyroconvection, rothermel, sir_toscana, spotting, units, validate, wind,
+    wind_reduction, windsolver,
 )
 from .nrt import RunProduct, run_realtime
 from .meteo_report import MeteoReport, meteo_report as build_meteo_report
@@ -36,8 +37,17 @@ from .atmosphere import (
 )
 from .fuel_conditioning import (
     canopy_transmission, condition_dead_fuel_moisture, condition_from_weather,
-    dead_fuel_moisture_vpd, equation_of_time, solar_position, sun_exposure,
-    terrain_insolation_factor, vapour_pressure_deficit,
+    dead_fuel_moisture_vpd, drought_curing, equation_of_time,
+    growing_season_greenness, live_fuel_aridity, live_fuel_moisture,
+    solar_position, sun_exposure, terrain_insolation_factor,
+    vapour_pressure_deficit,
+)
+from .fwi import (
+    FWIIndices, FWIState, FWISystem, fwi_from_provider, fwi_from_records,
+    gridded_fwi, gridded_fwi_on, spinup_state,
+)
+from .fire_weather_history import (
+    blend_records, era5_daily_noon_history, fire_weather_spinup,
 )
 from .pyroconvection import (
     couple_fire_wind, fire_atmosphere_march, fire_heat_flux, merge_plume_wind,
@@ -135,6 +145,24 @@ __all__ = [
     "canopy_transmission",
     "vapour_pressure_deficit",
     "dead_fuel_moisture_vpd",
+    "growing_season_greenness",
+    "live_fuel_aridity",
+    "live_fuel_moisture",
+    "drought_curing",
+    "fwi",
+    "FWISystem",
+    "FWIState",
+    "FWIIndices",
+    "fwi_from_records",
+    "fwi_from_provider",
+    "spinup_state",
+    "gridded_fwi",
+    "gridded_fwi_on",
+    "fire_weather_history",
+    "fire_weather_spinup",
+    "blend_records",
+    "era5_daily_noon_history",
+    "sir_toscana",
     "fuel_models",
     "io_lcp",
     "landscape",
