@@ -1,25 +1,30 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Cristiano Foderi <cristiano.foderi@gmail.com>
 
-"""Best-effort client for SIR Toscana (Servizio Idrologico Regionale) rain gauges.
+"""Client for SIR Toscana (Servizio Idrologico Regionale) rain gauges.
 
-Pulls **daily cumulative rainfall** (mm/24 h) from the Tuscany regional hydrological
-network for a point + date window -- the observed precipitation that drives the
-FWI System's DMC/DC (which ERA5 captures poorly over complex Tuscan terrain).
+Pulls **observed cumulative rainfall** from the Tuscany regional hydrological
+network -- the precipitation that drives the FWI System's DMC/DC, which ERA5
+captures poorly over complex Tuscan terrain.
 
     from pyflam import sir_toscana as sir
-    rain = sir.daily_rainfall(43.936, 11.096, date(2026, 6, 5), date(2026, 7, 3))
-    # -> {date(2026, 6, 5): 0.0, ..., date(2026, 7, 3): 0.0}
+    obs = sir.recent_cumulative(43.936, 11.096)     # nearest gauge to the point
+    obs.cumulative[30], obs.dry_days                # e.g. (9.9 mm, 6 days)
 
-**Endpoint caveat.** SIR does not publish a documented time-series API; the
-historical archive (``ricerca-dati``) is a session-based form and the monitoring
-pages (``stazioni.php``) are HTML tables. This module targets those observed
-structures on a best-effort basis -- the exact endpoint/markup may change, so
-:func:`daily_rainfall` raises :class:`SIRError` on any deviation rather than
-returning wrong data, and callers should fall back (e.g. to ERA5 precipitation).
-The parsing (:func:`parse_rain_table`) and station selection
-(:func:`nearest_station`) are pure and unit-tested; for a guaranteed path, export
-the series from the SIR site and load it with :func:`read_sir_csv`.
+**Confirmed endpoint (2026-07).** The near-real-time monitoring page
+``/monitoraggio/stazioni.php?type=pluvio_men`` returns HTTP 200 with an inline
+JavaScript ``VALUES`` array -- one row per gauge with the rainfall accumulated over
+the **1/2/5/7/10/15/30 days ending "now"**, plus a dry-day count. That is what
+:func:`fetch_recent_cumulative` / :func:`recent_cumulative` parse (schema in
+:func:`parse_pluvio_men`). It is *near-real-time* (anchored to today), not an
+arbitrary historical daily series.
+
+**Still open (TODO).** An arbitrary past **daily** series (needed to spin the FWI
+up before a fire that is not recent) lives only in the session-based archive
+(``ricerca-dati``), which has no clean API -- so for a historical run export the
+series from the SIR site and load it with :func:`read_sir_csv` (the guaranteed
+path), or use ERA5 precipitation. The pure parsers and station selection are
+unit-tested; the HTTP calls are not.
 
 Data © Servizio Idrologico Regionale della Toscana; see
 https://www.sir.toscana.it and https://dati.toscana.it/dataset/pluviometri.
@@ -31,18 +36,23 @@ import csv as _csv
 import datetime as _dt
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-# Public monitoring host (mirrors www.sir.toscana.it). Overridable for testing.
+# Public monitoring host and the confirmed near-real-time endpoint.
 SIR_MONITOR_BASE = "https://www.sir.toscana.it"
-# A small built-in catalogue of gauges near the Calvana / Prato area, used when the
-# online pluviometer catalogue cannot be fetched. (name, code, lat, lon) -- approx.
+PLUVIO_MEN_PATH = "/monitoraggio/stazioni.php?type=pluvio_men"
+# Cumulative windows (days) the pluvio_men table reports, in VALUES column order.
+CUMULATIVE_WINDOWS = (1, 2, 5, 7, 10, 15, 30)
+# Real gauges near the Calvana / Prato ignition, with the confirmed SIR codes (from
+# the live pluvio_men table) and approximate coordinates -- used to pick the nearest
+# station by lat/lon (the pluvio_men table itself carries no coordinates).
 FALLBACK_STATIONS = (
-    ("Prato (Galceti)", "TOS11000108", 43.9075, 11.0906),
-    ("Vaiano", "TOS11000110", 43.9600, 11.1200),
-    ("Vernio", "TOS11000112", 44.0430, 11.1490),
-    ("Cantagallo", "TOS11000114", 44.0130, 11.0700),
-    ("Calenzano", "TOS11000116", 43.8580, 11.1630),
+    ("Vaiano acquedotto", "TOS11000503", 43.962, 11.121),
+    ("Prato Università", "TOS01001205", 43.880, 11.098),
+    ("Fattoria Iavello", "TOS01001273", 43.948, 11.033),
+    ("Cantagallo", "TOS01001151", 44.013, 11.065),
+    ("Gamberame", "TOS01004779", 44.001, 11.118),
+    ("Vernio", "TOS01001171", 44.043, 11.149),
 )
 
 
@@ -56,6 +66,25 @@ class SIRStation:
     code: str
     latitude: float
     longitude: float
+
+
+@dataclass(frozen=True)
+class SIRObservation:
+    """One gauge's near-real-time rainfall from the pluvio_men table.
+
+    ``cumulative`` maps each window (days in :data:`CUMULATIVE_WINDOWS`) to the mm
+    accumulated over that window ending ``as_of``; ``dry_days`` is the reported
+    consecutive dry-day count; ``today_mm`` the accumulation since local midnight.
+    """
+    code: str
+    name: str
+    comune: str
+    province: str
+    elevation_m: float | None
+    today_mm: float | None
+    as_of: str
+    dry_days: int | None
+    cumulative: dict = field(default_factory=dict)
 
 
 def _haversine_km(lat1, lon1, lat2, lon2):
@@ -77,6 +106,46 @@ def nearest_station(stations, latitude, longitude):
 
 
 # --- pure parsers (unit-tested) ----------------------------------------------
+
+# One VALUES row: ("code","name","comune","prov","zone","today","asof",
+#                  1g,2g,5g,7g,10g,15g,30g,"dry","elev","flag")  -- 17 fields.
+_VALUES_RE = re.compile(r"VALUES\[\d+\]\s*=\s*new\s+Array\((.*?)\);", re.S)
+_FIELD_RE = re.compile(r'"((?:[^"\\]|\\.)*)"')
+
+
+def _num(token):
+    if token is None:
+        return None
+    t = re.sub(r"<[^>]+>", "", str(token)).replace("\xa0", " ").strip()
+    t = t.replace(",", ".")
+    m = re.search(r"[-+]?\d+(?:\.\d+)?", t)
+    return float(m.group(0)) if m else None
+
+
+def parse_pluvio_men(html):
+    """Parse the SIR ``pluvio_men`` page -> ``{code: SIRObservation}``.
+
+    Extracts the inline ``VALUES[i] = new Array( … )`` rows (the near-real-time
+    rain-gauge table) into per-gauge cumulative rainfall over
+    :data:`CUMULATIVE_WINDOWS` plus the dry-day count. Raises :class:`SIRError` if
+    no rows are found. Pure -- the confirmed schema is unit-tested against a fixture.
+    """
+    out = {}
+    for row in _VALUES_RE.findall(html):
+        f = [m.group(1) for m in _FIELD_RE.finditer(row)]
+        if len(f) < 16:
+            continue
+        code = f[0].strip()
+        cum = {w: _num(f[7 + i]) for i, w in enumerate(CUMULATIVE_WINDOWS)}
+        dry = _num(f[14])
+        out[code] = SIRObservation(
+            code=code, name=f[1].strip(), comune=f[2].strip(), province=f[3].strip(),
+            elevation_m=_num(f[15]) if len(f) > 15 else None,
+            today_mm=_num(f[5]), as_of=f[6].strip(),
+            dry_days=int(dry) if dry is not None else None, cumulative=cum)
+    if not out:
+        raise SIRError("no VALUES rows found in pluvio_men page")
+    return out
 
 _NUM = re.compile(r"[-+]?\d+(?:[.,]\d+)?")
 _DATE_FORMATS = ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d/%m/%y")
@@ -176,58 +245,61 @@ def read_sir_csv(path, *, date_column=0, rain_column=1, delimiter=None):
     return out
 
 
-# --- best-effort HTTP (network; not exercised in unit tests) ------------------
+def station_catalog():
+    """The built-in Calvana/Prato gauge catalogue (real SIR codes + approx coords).
 
-def station_catalog(*, timeout=30):
-    """Best-effort pluviometer catalogue; falls back to a built-in local list."""
-    try:                                            # pragma: no cover - network
-        import requests
-        url = f"{SIR_MONITOR_BASE}/archivio/dati.php?D=json_stations"
-        r = requests.get(url, timeout=timeout)
-        r.raise_for_status()
-        data = r.json()
-        stations = [SIRStation(name=s.get("nome") or s.get("name") or s["codice"],
-                               code=str(s.get("codice") or s.get("code")),
-                               latitude=float(s["lat"]), longitude=float(s["lon"]))
-                    for s in (data.get("stazioni") or data.get("stations") or data)]
-        if stations:
-            return stations
-    except Exception:                               # pragma: no cover - network
-        pass
+    The pluvio_men table carries no coordinates, so this small list is what
+    :func:`recent_cumulative` uses to pick the nearest gauge by lat/lon. Extend it
+    (or match on ``comune``) for other areas; the geo catalogue with full
+    coordinates is at https://dati.toscana.it/dataset/pluviometri.
+    """
     return [SIRStation(n, c, la, lo) for (n, c, la, lo) in FALLBACK_STATIONS]
 
 
-def daily_rainfall(latitude, longitude, start, end, *, station=None,
-                   base=SIR_MONITOR_BASE, timeout=30):
-    """Daily cumulative rainfall ``{date: mm}`` at the nearest gauge (best-effort).
+# --- confirmed HTTP: near-real-time pluvio_men (network; not unit-tested) ------
 
-    Selects the nearest catalogue station (or the given ``station``) and requests
-    its daily series for ``[start, end]`` from the SIR monitoring endpoint, parsing
-    with :func:`parse_rain_table`. Raises :class:`SIRError` on any network/parse
-    problem so the caller can fall back to ERA5 precipitation. ``start``/``end`` are
-    :class:`datetime.date`. **Unverified endpoint -- see the module docstring.**
+def fetch_recent_cumulative(*, base=SIR_MONITOR_BASE, timeout=30):
+    """Fetch + parse the SIR ``pluvio_men`` table -> ``{code: SIRObservation}``.
+
+    Hits the **confirmed** endpoint ``/monitoraggio/stazioni.php?type=pluvio_men``
+    (HTTP 200, verified 2026-07) and parses the near-real-time cumulative rainfall
+    for every gauge (:func:`parse_pluvio_men`). Raises :class:`SIRError` on any
+    network/parse problem so callers can fall back to ERA5.
     """
     try:                                            # pragma: no cover - network
         import requests
     except ImportError as exc:                      # pragma: no cover
         raise SIRError("SIR fetch needs `requests`") from exc
-    if station is None:                             # pragma: no cover - network
-        station = nearest_station(station_catalog(timeout=timeout),
-                                  latitude, longitude)
     try:                                            # pragma: no cover - network
-        # TODO(confirm): this endpoint + parameter names are a best-effort guess and
-        # have so far only returned HTTP 429 (reachable but rate-limited), never a
-        # verified 200. Confirm `stazioni.php?type=pluvio_day` (cod/from/to) against a
-        # live response and adjust parse_rain_table if the markup differs; until then
-        # read_sir_csv is the guaranteed path.
-        params = {"type": "pluvio_day", "cod": station.code,
-                  "from": start.strftime("%d/%m/%Y"), "to": end.strftime("%d/%m/%Y")}
-        r = requests.get(f"{base}/monitoraggio/stazioni.php", params=params,
-                         timeout=timeout)
+        r = requests.get(f"{base}{PLUVIO_MEN_PATH}", timeout=timeout,
+                         headers={"User-Agent": "pyflam/0.2 (fire-weather)"})
         r.raise_for_status()
-        series = parse_rain_table(r.text)
+        return parse_pluvio_men(r.text)
     except SIRError:                                # pragma: no cover - network
         raise
     except Exception as exc:                        # pragma: no cover - network
-        raise SIRError(f"SIR request/parse failed: {exc}") from exc
-    return {d: v for d, v in series.items() if start <= d <= end}
+        raise SIRError(f"SIR pluvio_men request/parse failed: {exc}") from exc
+
+
+def recent_cumulative(latitude, longitude, *, station=None, catalog=None,
+                      base=SIR_MONITOR_BASE, timeout=30):
+    """Nearest gauge's near-real-time cumulative rainfall as a :class:`SIRObservation`.
+
+    Picks the nearest catalogue gauge to the point (or the given ``station`` code),
+    fetches :func:`fetch_recent_cumulative`, and returns that gauge's observation
+    (windowed cumulatives ending "now" + dry-day count). Raises :class:`SIRError`
+    if the gauge is absent from the live table. **Near-real-time (anchored to
+    today)** -- for an arbitrary past daily series use :func:`read_sir_csv`.
+    """
+    obs = fetch_recent_cumulative(base=base, timeout=timeout)   # pragma: no cover
+    code = station                                              # pragma: no cover
+    if code is None:                                            # pragma: no cover
+        code = nearest_station(catalog or station_catalog(),
+                               latitude, longitude).code
+    if code not in obs:                                         # pragma: no cover
+        # fall back to the geographically nearest gauge actually present
+        present = [s for s in (catalog or station_catalog()) if s.code in obs]
+        if not present:
+            raise SIRError(f"gauge {code} (and fallbacks) absent from pluvio_men")
+        code = nearest_station(present, latitude, longitude).code
+    return obs[code]                                            # pragma: no cover

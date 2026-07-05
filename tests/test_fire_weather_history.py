@@ -57,6 +57,39 @@ def test_observed_rain_lowers_drought_vs_era5_zero():
     assert wet.dmc < dry.dmc
 
 
+def test_scale_rain_to_observed_matches_total():
+    weather = _weather(30, rain_mm=1.0)          # ERA5: 1 mm/day = 30 mm over window
+    out = fwh.scale_rain_to_observed(weather, 9.9, over_days=30)
+    assert sum(r["rain_mm"] for r in out) == pytest.approx(9.9)   # scaled to gauge
+    # relative day-to-day structure preserved (all equal here) and inputs untouched
+    assert all(r["rain_mm"] == pytest.approx(9.9 / 30) for r in out)
+    assert sum(r["rain_mm"] for r in weather) == pytest.approx(30.0)
+
+
+def test_scale_rain_spreads_when_era5_dry():
+    weather = _weather(10, rain_mm=0.0)          # ERA5 bone dry but gauge saw rain
+    out = fwh.scale_rain_to_observed(weather, 20.0, over_days=10)
+    assert sum(r["rain_mm"] for r in out) == pytest.approx(20.0)
+    assert all(r["rain_mm"] == pytest.approx(2.0) for r in out)
+
+
+def test_scale_rain_none_is_noop():
+    weather = _weather(5, rain_mm=3.0)
+    out = fwh.scale_rain_to_observed(weather, None)
+    assert [r["rain_mm"] for r in out] == [3.0] * 5
+
+
+def test_observed_scaling_lowers_drought_vs_dry_era5():
+    weather = _weather(30, rain_mm=0.0)          # ERA5 dry -> severe drought
+    dry = fwh.spinup_state(weather)
+    scaled = fwh.spinup_state(fwh.scale_rain_to_observed(weather, 60.0, over_days=30))
+    # observed rain relaxes the duff moisture code (DMC, 1.5 mm/day threshold); the
+    # deep Drought Code needs >2.8 mm/day so light spread rain leaves it unchanged --
+    # correct FWI behaviour.
+    assert scaled.dmc < dry.dmc
+    assert scaled.dc <= dry.dc
+
+
 def test_spinup_feeds_gridded_fire_day():
     prev = fwh.spinup_state(_weather(28, rain_mm=0.0))
     import numpy as np

@@ -64,6 +64,32 @@ def spinup_state(weather, rain_by_date=None, *, state=None, hemisphere="north"):
     return fwi.spinup_state(records, state=state, hemisphere=hemisphere)
 
 
+def scale_rain_to_observed(records, observed_total_mm, *, over_days=30):
+    """Bias-correct the last ``over_days`` of rainfall to an observed cumulative.
+
+    The SIR ``pluvio_men`` table gives an *observed N-day cumulative* ending "now"
+    (not a per-day series), so this rescales the reanalysis rain over that trailing
+    window so its total matches the gauge -- correcting ERA5's precipitation bias
+    over complex terrain while keeping ERA5's day-to-day timing. If ERA5 is dry over
+    the window but the gauge saw rain, the observed total is spread evenly across it.
+    ``records`` are ascending by date; earlier days are untouched. Pure.
+    """
+    if observed_total_mm is None:
+        return [dict(r) for r in records]
+    recs = [dict(r) for r in records]
+    tail = recs[-over_days:] if 0 < over_days < len(recs) else recs
+    era5_total = sum(float(r.get("rain_mm", 0.0) or 0.0) for r in tail)
+    if era5_total > 1e-6:
+        f = observed_total_mm / era5_total
+        for r in tail:
+            r["rain_mm"] = float(r.get("rain_mm", 0.0) or 0.0) * f
+    elif tail:
+        per = observed_total_mm / len(tail)
+        for r in tail:
+            r["rain_mm"] = per
+    return recs
+
+
 # --- ERA5 daily-noon history (network / CDS; not run offline) -----------------
 
 ERA5_HISTORY_VARIABLES = [
@@ -164,17 +190,26 @@ def fire_weather_spinup(ignition_date, latitude, longitude, *, days=28,
         log(f"ERA5 history unavailable ({exc}); using spring-startup FWI state")
         return fwi.FWIState()
 
-    rain_by_date = None
+    # SIR gives an observed cumulative anchored to "now" (the pluvio_men windows),
+    # so it can bias-correct the ERA5 spin-up rain only when the window ends near
+    # today. For an older fire it does not apply -> ERA5 precipitation stands.
     if use_sir:
         try:
             from . import sir_toscana as sir
-            rain_by_date = sir.daily_rainfall(latitude, longitude, start, end)
-            log(f"SIR Toscana rain: {len(rain_by_date)} gauge-days "
-                f"({sum(rain_by_date.values()):.0f} mm total over the spin-up)")
+            obs = sir.recent_cumulative(latitude, longitude)
+            obs30 = obs.cumulative.get(30)
+            lag = (_dt.date.today() - end).days
+            if lag <= 3 and obs30 is not None:
+                weather = scale_rain_to_observed(weather, obs30, over_days=30)
+                log(f"SIR gauge {obs.name!r}: observed 30-day {obs30:.1f} mm, "
+                    f"dry {obs.dry_days} d -> scaled ERA5 spin-up rain to match")
+            else:
+                log(f"SIR gauge {obs.name!r} 30-day {obs30} mm is near-real-time; "
+                    f"spin-up ends {end} (lag {lag} d) -> keeping ERA5 precipitation")
         except Exception as exc:
             log(f"SIR Toscana unavailable ({exc}); using ERA5 precipitation")
 
-    st = spinup_state(weather, rain_by_date, hemisphere=hemisphere)
+    st = spinup_state(weather, hemisphere=hemisphere)
     log(f"FWI spin-up ({days} d -> {end}): FFMC {st.ffmc:.1f}  DMC {st.dmc:.1f}  "
         f"DC {st.dc:.1f}")
     return st

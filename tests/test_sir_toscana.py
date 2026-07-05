@@ -66,3 +66,40 @@ def test_nearest_station_picks_closest():
 def test_nearest_station_empty_raises():
     with pytest.raises(sir.SIRError):
         sir.nearest_station([], 43.0, 11.0)
+
+
+# --- confirmed pluvio_men schema (real rows from the live 200) -----------------
+
+PLUVIO_MEN_FIXTURE = (
+    "var VALUES = new Array();\n"
+    'VALUES[0] = new Array("TOS11000503","Vaiano acquedotto","Vaiano","PO","B",'
+    '"0.0","05/07 10.15","0","0","<b>2.4</b>","<b>9.9</b>","<b>9.9</b>",'
+    '"<b>9.9</b>","<b>9.9</b>","<b>6</b>","322","1");\n'
+    'VALUES[1] = new Array("TOS01001205","Prato Università","Prato","PO","B",'
+    '"0.0","05/07 10.15","0","0","<b>2</b>","<b>29.3</b>","<b>29.3</b>",'
+    '"<b>29.3</b>","<b>29.9</b>","<b>6</b>","65","1");\n'
+)
+
+
+def test_parse_pluvio_men_schema():
+    obs = sir.parse_pluvio_men(PLUVIO_MEN_FIXTURE)
+    assert set(obs) == {"TOS11000503", "TOS01001205"}
+    v = obs["TOS11000503"]
+    assert v.name == "Vaiano acquedotto" and v.comune == "Vaiano" and v.province == "PO"
+    assert v.elevation_m == 322.0 and v.dry_days == 6 and v.today_mm == 0.0
+    # cumulative windows in day order, <b> stripped, Italian-safe
+    assert v.cumulative == {1: 0.0, 2: 0.0, 5: 2.4, 7: 9.9, 10: 9.9, 15: 9.9, 30: 9.9}
+    assert obs["TOS01001205"].cumulative[30] == 29.9
+
+
+def test_parse_pluvio_men_raises_when_empty():
+    with pytest.raises(sir.SIRError):
+        sir.parse_pluvio_men("<html>no VALUES array here</html>")
+
+
+def test_station_catalog_has_real_codes_near_calvana():
+    cat = sir.station_catalog()
+    codes = {s.code for s in cat}
+    assert "TOS11000503" in codes            # Vaiano acquedotto (real SIR code)
+    near = sir.nearest_station(cat, 43.936, 11.096)
+    assert near.code in codes and near.latitude and near.longitude

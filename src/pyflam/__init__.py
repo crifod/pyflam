@@ -48,6 +48,7 @@ from .fwi import (
 )
 from .fire_weather_history import (
     blend_records, era5_daily_noon_history, fire_weather_spinup,
+    scale_rain_to_observed,
 )
 from .pyroconvection import (
     couple_fire_wind, fire_atmosphere_march, fire_heat_flux, merge_plume_wind,
@@ -161,6 +162,7 @@ __all__ = [
     "fire_weather_history",
     "fire_weather_spinup",
     "blend_records",
+    "scale_rain_to_observed",
     "era5_daily_noon_history",
     "sir_toscana",
     "fuel_models",

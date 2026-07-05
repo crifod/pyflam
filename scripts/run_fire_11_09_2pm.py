@@ -16,8 +16,10 @@ fuel moisture (FFMC) and cures the live herb (BUI). See pyflam.fwi /
 pyflam.fire_weather_history / pyflam.sir_toscana.
 
 Known caveats (marked ``TODO`` in the code, to confirm/solve):
-  * SIR Toscana endpoint is a best-effort guess (only a 429 seen so far, never a
-    verified 200) -- confirm it, or use pyflam.sir_toscana.read_sir_csv meanwhile.
+  * SIR Toscana: the near-real-time ``pluvio_men`` endpoint is CONFIRMED (HTTP 200)
+    and gives observed cumulative rain anchored to *now*, used here to bias-correct
+    the ERA5 spin-up rain. An arbitrary past *daily* series (for a non-recent fire)
+    still needs the session-based archive -- use pyflam.sir_toscana.read_sir_csv.
   * ERA5 has ~5-day latency: days near the present repeat the last available step.
   * The default LCP is a user-specific absolute path -- override with PYFLAM_LCP.
 """
