@@ -123,6 +123,10 @@ def era5_daily_noon_history(latitude, longitude, start, end, *,
     wind = np.hypot(u10, v10)
     rh = np.asarray(relative_humidity_from_dewpoint(t2m, d2m), dtype=float)
 
+    # TODO(solve): ERA5 has a ~5-day latency, so for days near the present the
+    # nearest-time selection below reuses the last available timestamp (the final few
+    # days repeat). For near-real-time use, detect days beyond ERA5's availability and
+    # drop/flag them (or fall back to GFS analysis) rather than repeating.
     hours = t.astype("datetime64[h]")
     records = []
     day = start

@@ -215,6 +215,11 @@ def daily_rainfall(latitude, longitude, start, end, *, station=None,
         station = nearest_station(station_catalog(timeout=timeout),
                                   latitude, longitude)
     try:                                            # pragma: no cover - network
+        # TODO(confirm): this endpoint + parameter names are a best-effort guess and
+        # have so far only returned HTTP 429 (reachable but rate-limited), never a
+        # verified 200. Confirm `stazioni.php?type=pluvio_day` (cod/from/to) against a
+        # live response and adjust parse_rain_table if the markup differs; until then
+        # read_sir_csv is the guaranteed path.
         params = {"type": "pluvio_day", "cod": station.code,
                   "from": start.strftime("%d/%m/%Y"), "to": end.strftime("%d/%m/%Y")}
         r = requests.get(f"{base}/monitoraggio/stazioni.php", params=params,
