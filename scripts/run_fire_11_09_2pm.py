@@ -88,6 +88,78 @@ def _write_raster(ls, data, path, *, dtype="float32", nodata=-9999.0):
         dst.write(a, 1)
 
 
+# The full Canadian FWI System: fuel-layer moisture *codes* (fast -> deep) and the
+# fire-behaviour *indexes* built from them, plus the FFMC fine fuel moisture (%).
+FWI_LAYERS = (
+    ("ffmc", "FFMC — Fine Fuel Moisture Code"),
+    ("dmc", "DMC — Duff Moisture Code"),
+    ("dc", "DC — Drought Code"),
+    ("isi", "ISI — Initial Spread Index"),
+    ("bui", "BUI — Buildup Index"),
+    ("fwi", "FWI — Fire Weather Index"),
+    ("fine_fuel_moisture", "FFMC fine fuel moisture (%)"),
+)
+
+
+def _fwi_danger_class(fwi_value):
+    for lim, name in ((5, "very low"), (10, "low"), (20, "moderate"),
+                      (30, "high"), (50, "very high")):
+        if fwi_value < lim:
+            return name
+    return "extreme"
+
+
+def _fwi_map(grid, path):
+    """A 2x3 map of the six FWI codes/indexes over the AOI."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    fig, axes = plt.subplots(2, 3, figsize=(13.5, 8.2))
+    for ax, (k, title) in zip(axes.ravel(), FWI_LAYERS[:6]):
+        a = np.asarray(grid[k], dtype=float)
+        im = ax.imshow(a, cmap="YlOrRd", origin="upper")
+        ax.set_title(title, fontsize=10.5, weight="bold")
+        ax.set_xticks([]); ax.set_yticks([])
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    fig.suptitle("Canadian Forest Fire Weather Index System — Calvana ridge, "
+                 "2026-07-03 fire-day grid", fontsize=13, weight="bold")
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    fig.savefig(path, dpi=140, bbox_inches="tight")
+    plt.close(fig)
+
+
+def write_fwi_outputs(ls, grid, prev, out_dir):
+    """Write the complete gridded FWI: every code/index GeoTIFF + summary + map."""
+    import json as _json
+    os.makedirs(out_dir, exist_ok=True)
+
+    def stats(k):
+        a = np.asarray(grid[k], dtype=float); v = a[np.isfinite(a)]
+        return dict(mean=round(float(v.mean()), 2), min=round(float(v.min()), 2),
+                    max=round(float(v.max()), 2))
+
+    for k, _title in FWI_LAYERS:
+        _write_raster(ls, np.asarray(grid[k], dtype=float),
+                      os.path.join(out_dir, f"{k}.tif"))
+    fwi_mean = stats("fwi")["mean"]
+    summary = {
+        "system": "Canadian Forest Fire Weather Index System (Van Wagner 1987)",
+        "spinup_state": {"ffmc": round(prev.ffmc, 1), "dmc": round(prev.dmc, 1),
+                         "dc": round(prev.dc, 1)},
+        "fire_day_grid": {k: stats(k) for k, _t in FWI_LAYERS},
+        "fwi_danger_class": _fwi_danger_class(fwi_mean),
+        "note": "Codes FFMC/DMC/DC are fuel-layer moisture (fast->deep drought); "
+                "indexes ISI/BUI/FWI are behaviour. DMC/DC are near-uniform (broadcast "
+                "from the spun-up point state); FFMC/ISI/FWI vary with the per-cell "
+                "ICON-2I weather.",
+    }
+    with open(os.path.join(out_dir, "fwi_summary.json"), "w") as fh:
+        _json.dump(summary, fh, indent=2)
+    _fwi_map(grid, os.path.join(out_dir, "fwi_map.png"))
+    log(f"wrote complete FWI ({len(FWI_LAYERS)} layers) + summary + map -> "
+        f"{os.path.relpath(out_dir, OUT)}/  (FWI danger: {summary['fwi_danger_class']})")
+
+
 def r_mmin(a): return np.asarray(a) * FT_M                        # ft/min -> m/min
 def fli_kwm(a): return units.btu_per_ft_s_to_kw_per_m(np.asarray(a))
 def fl_m(a): return np.asarray(a) * FT_M
@@ -169,13 +241,10 @@ def main():
         bui_mean = float(np.nanmean(np.asarray(fwi_grid["bui"])))
         log(f"FWI fire-day (AOI mean): FFMC fine-fuel {ffmc_fm*100:.1f}%  "
             f"BUI {bui_mean:.0f}  FWI {float(np.nanmean(np.asarray(fwi_grid['fwi']))):.1f}")
-        try:                                  # gridded FWI GeoTIFFs over the AOI
-            for k in ("fwi", "bui", "isi", "ffmc"):
-                _write_raster(ls, np.asarray(fwi_grid[k], float),
-                              os.path.join(OUT, f"fwi_{k}.tif"))
-            log("wrote gridded FWI GeoTIFFs (fwi/bui/isi/ffmc)")
+        try:                                  # complete gridded FWI into fwi/ subfolder
+            write_fwi_outputs(ls, fwi_grid, fwi_prev, os.path.join(OUT, "fwi"))
         except Exception as e:
-            log("FWI geotiff export skipped:", e)
+            log("FWI export skipped:", e)
     except Exception as e:
         log("FWI spin-up/grid skipped:", e)
 
@@ -336,6 +405,20 @@ def main():
     # -------- write rasters + isochrones + map --------
     write_outputs(ls, arrival, ft, cfb, times)
 
+    # Fire Weather Index summary (spun-up codes + fire-day AOI-mean grid values).
+    fire_weather = None
+    if fwi_grid is not None:
+        def _m(k): return round(float(np.nanmean(np.asarray(fwi_grid[k], float))), 1)
+        fire_weather = {
+            "spinup_state": {"ffmc": round(fwi_prev.ffmc, 1), "dmc": round(fwi_prev.dmc, 1),
+                             "dc": round(fwi_prev.dc, 1)},
+            "fire_day_aoi_mean": {"ffmc": _m("ffmc"), "dmc": _m("dmc"), "dc": _m("dc"),
+                                  "isi": _m("isi"), "bui": _m("bui"), "fwi": _m("fwi"),
+                                  "fine_fuel_moisture_pct": _m("fine_fuel_moisture")},
+            "fwi_danger_class": _fwi_danger_class(_m("fwi")),
+            "rasters": "fwi/  (ffmc/dmc/dc/isi/bui/fwi/fine_fuel_moisture .tif + fwi_map.png)",
+        }
+
     result = {
         "meta": {"lat": LAT, "lon": LON, "start_utc": START.isoformat(),
                  "start_local": "2026-07-03 14:00 CEST", "total_min": TOTAL, "dt_min": DT,
@@ -343,7 +426,7 @@ def main():
                  "fuel_model_at_ignition": int(np.asarray(ls.fuel_model)[ign]),
                  "physics": "ICON-2I + Cruz2005 crown + OpenFOAM RANS plume + pyroconvection + spotting"},
         "intervals": rows, "fire_type_cells": ft_summary, "crown_area_ha": crown_ha,
-        "convection": conv, "operative": op_summary,
+        "convection": conv, "fire_weather": fire_weather, "operative": op_summary,
         "total_burned_ha": round(float(burned.sum()) * cell_ha, 1),
     }
     with open(os.path.join(OUT, "metrics.json"), "w") as fh:
@@ -432,6 +515,22 @@ def write_report(r):
               f"{c['mid_rh_pct']:.0f}%, LCL {c['lcl_m']:.0f} m",
               f"- Plume loft factor (max) **{c['plume_factor_max']}**",
               f"- Fire-type cell counts: {r['fire_type_cells']}"]
+    fw = r.get("fire_weather")
+    if fw:
+        s = fw["spinup_state"]; g = fw["fire_day_aoi_mean"]
+        lines += ["", "## Fire Weather Index (Canadian FWI System)", "",
+                  f"Multi-week spin-up (SIR Toscana rain + ERA5) → fire-day gridded FWI. "
+                  f"**Danger class: {fw['fwi_danger_class']}.**", "",
+                  "| | FFMC | DMC | DC | ISI | BUI | FWI |",
+                  "|:--|--:|--:|--:|--:|--:|--:|",
+                  f"| spin-up codes | {s['ffmc']} | {s['dmc']} | {s['dc']} | – | – | – |",
+                  f"| fire-day AOI mean | {g['ffmc']} | {g['dmc']} | {g['dc']} | {g['isi']} "
+                  f"| {g['bui']} | {g['fwi']} |", "",
+                  f"- Codes are fuel-layer moisture (FFMC fast litter → DMC duff → DC deep "
+                  f"drought); indexes ISI/BUI/FWI are behaviour.",
+                  f"- FFMC fine fuel moisture {g['fine_fuel_moisture_pct']}% seeds the dead-fuel "
+                  f"model; BUI {g['bui']} cures the live herb.",
+                  f"- Rasters + 6-panel map: `{fw['rasters']}`"]
     if r.get("operative"):
         lines += ["", "## Operative sector analysis (final)", "", "```", r["operative"], "```"]
     with open(os.path.join(OUT, "report.md"), "w") as fh:
