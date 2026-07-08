@@ -15,3 +15,6 @@ htmlcov/
 # Generated report renders (rebuild with docs/report/build.sh or the docs CI)
 docs/report/*.pdf
 docs/report/*.docx
+
+# Internal Tuscany-scale test data (licensed inputs + derived rasters) — NOT for public release
+TEST_DATA/
