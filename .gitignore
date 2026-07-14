@@ -18,3 +18,7 @@ docs/report/*.docx
 
 # Internal Tuscany-scale test data (licensed inputs + derived rasters) — NOT for public release
 TEST_DATA/
+
+# Daily pyroconvection GeoTIFF stacks: regenerable from tests/pyroconv_daily.py and
+# ~3.5 MB per run day. The PNG panels + PDF brief are committed; the rasters are not.
+docs/daily/rasters_*/
