@@ -8,9 +8,20 @@ intensity grid used by the daily Tuscany product (``tests/pyroconv_daily.py``) a
 by the GUI's preview page, factored out as parameter-driven functions (no module
 globals, no plotting) so both callers share exactly the same science.
 
-The numbers follow Castellnou et al. (2022): standard-pressure-level heights,
-the 10 MW/m (=1e4 kW/m) fire-power gate, and the LCL/ABL + mixed-layer + cap
-thresholds inside :func:`pyflam.atmosphere.pyroconvection_type`.
+Two classification paths live here:
+
+* :func:`classify` -- the original three-diagnostic path. Standard-atmosphere level
+  heights, a theta-excess ABL, and the published Castellnou ladder. Needs only
+  temperature on 3 pressure levels, so it works on any T-only source (GFS, the old
+  ICON-2I field set) and is what the reference cases are validated against.
+* :func:`classify_profile` -- the profile path. Real per-cell heights from
+  geopotential, a bulk-Richardson ABL, an exact (Bolton) LCL, moisture at the ABL
+  top and, where the levels resolve it, the shear-maximum height. Needs the full
+  :data:`pyflam.atmosphere.ICON2I_PROFILE_FIELDS` download. This is what the daily
+  product now runs.
+
+Both share the 10 MW/m (=1e4 kW/m) fire-power gate on the .lcp fuels, which is what
+separates the *expected* map from the *potential* upper bound.
 """
 
 from __future__ import annotations
@@ -18,10 +29,24 @@ from __future__ import annotations
 import numpy as np
 
 # Standard geopotential heights (m) of the pressure levels used (ICON/GFS levels).
+# Only the legacy :func:`classify` path uses these; :func:`classify_profile` takes
+# real heights from the model's geopotential instead.
 STD_LEVEL_HEIGHT_M = {1000: 110.0, 850: 1457.0, 700: 3012.0, 500: 5574.0}
 DEFAULT_LEVELS = (850, 700, 500)
 FLI_GATE_KW = 1.0e4              # 10 MW/m minimum fire power for any pyroCu
 ABL_MIN_M = 600.0               # below this ABL depth, held at surface plume
+
+# Profile path: the levels the ICON-2I open-data archive publishes below 500 hPa.
+PROFILE_LEVELS = (1000, 925, 850, 700, 500)
+
+# Minimum usable levels for a classification. The reference implementation demands 4,
+# but it is written for ERA5's 19 levels, where losing the underground ones is free.
+# Here the archive gives 5: above ~750 m of terrain the 1000 *and* 925 hPa levels are
+# below ground, leaving 850/700/500 -- so a threshold of 4 would silently blank the
+# whole Apennine ridge, i.e. the highest-relief ground in the domain. Three levels plus
+# the 2 m / 10 m surface state still bracket the ABL and the cap layer; the profile is
+# coarser there, and the exported ABL raster is the place to see it.
+MIN_PROFILE_LEVELS = 3
 
 
 def _open_grib_subset(path, bbox):
@@ -113,6 +138,345 @@ def classify(T2m, RH, Tl, *, levels=DEFAULT_LEVELS, Z=None, fli=None,
                 gamma_theta=float(gamma[a, b]),
                 fireline_intensity_kw=fkw, fli_threshold_kw=fli_gate_kw)]
     return out
+
+
+# --- profile path -------------------------------------------------------------
+
+def _as_height_m(da):
+    """Geometric height (m) from a DataArray that may hold a geopotential (m2/s2).
+
+    Decided from the GRIB's declared units / standard name -- ``m**2 s**-2`` or
+    ``geopotential`` means divide by g. Guessing from the magnitude does not work: at
+    850 hPa the geopotential is ~15362 m2/s2, and a threshold set high enough to catch
+    that would also "convert" a genuine 500 hPa height, while one set low enough to
+    leave heights alone silently passes 15362 through as 15 km and throws the level
+    away. The magnitude check survives only as a fallback for files with no units.
+    """
+    from pyflam.atmosphere import _G
+
+    a = np.asarray(da.values, float)
+    units = str(da.attrs.get("units", "")).replace(" ", "").lower()
+    name = str(da.attrs.get("standard_name", "")).lower()
+    if units in ("m**2s**-2", "m2s-2", "m^2s^-2", "j/kg", "jkg-1") or name == "geopotential":
+        return a / _G
+    if units in ("m", "metres", "meters", "gpm") or "height" in name:
+        return a
+    return a / _G if np.nanmedian(np.abs(a)) > 1.0e4 else a     # last resort
+
+
+def read_icon2i_profile(files, bbox, run_dt, valid_dt, hours, levels=PROFILE_LEVELS):
+    """Read the full ICON-2I profile (geopotential/T/RH/wind + surface) for an AOI.
+
+    ``files`` is the dict returned by :func:`pyflam.atmosphere.fetch_icon2i_mistral`
+    with ``fields=ICON2I_PROFILE_FIELDS``. Returns a dict whose per-level fields are
+    stacked level-major with levels **ascending in height** (i.e. descending in
+    pressure): ``z_asl``/``T``/``RH``/``U``/``V`` are ``(nlev, ntime, ny, nx)``, and
+    ``hsurf``/``frland`` are static 2-D fields.
+
+    ICON's FI is a *geopotential* (m2/s2); some archives serve a geopotential *height*
+    (m) under the same short name. They differ by a factor g, and both are plausible
+    magnitudes -- 850 hPa is 15362 m2/s2, which is also a believable height in metres
+    if you are not careful -- so the units are read from the GRIB metadata rather than
+    guessed from the magnitude. See :func:`_as_height_m`.
+    """
+    asc = sorted(levels, reverse=True)          # 1000 -> 500 = ascending in height
+    z, T, RH, U, V = [], [], [], [], []
+    ref = None
+    for p in asc:
+        dz, v = _open_grib_subset(files[f"FI{p}"], bbox)
+        z.append(_as_height_m(dz[v]))
+        dt_, v = _open_grib_subset(files[f"T{p}"], bbox); T.append(dt_[v].values)
+        dr, v = _open_grib_subset(files[f"RELHUM{p}"], bbox); RH.append(dr[v].values)
+        du, v = _open_grib_subset(files[f"U{p}"], bbox); U.append(du[v].values)
+        dv, v = _open_grib_subset(files[f"V{p}"], bbox); V.append(dv[v].values)
+        ref = dt_
+
+    t2, v = _open_grib_subset(files["T2M"], bbox); T2m = t2[v].values
+    td, v = _open_grib_subset(files["TD2M"], bbox); Td2m = td[v].values
+    u1, v = _open_grib_subset(files["U10"], bbox); U10 = u1[v].values
+    v1, vn = _open_grib_subset(files["V10"], bbox); V10 = v1[vn].values
+    ps, v = _open_grib_subset(files["PS"], bbox); PS = ps[v].values
+    hs, v = _open_grib_subset(files["HSURF"], bbox); HS = _as_height_m(hs[v])
+    fl, v = _open_grib_subset(files["FRLAND"], bbox); FL = np.asarray(fl[v].values, float)
+
+    lat = ref["latitude"].values
+    lon = ref["longitude"].values
+    sh = (ref["step"].values / np.timedelta64(1, "h")).astype(int)
+    idx = []
+    for h in hours:
+        target = int((valid_dt.replace(hour=h) - run_dt).total_seconds() // 3600)
+        m = np.where(sh == target)[0]
+        if not m.size:
+            raise ValueError(f"valid {h:02d}Z needs forecast step +{target} h, "
+                             f"beyond this run (max +{int(sh.max())} h)")
+        idx.append(int(m[0]))
+
+    return dict(lat=lat, lon=lon, idx=idx, levels=tuple(asc),
+                z_asl=np.stack(z), T=np.stack(T), RH=np.stack(RH),
+                U=np.stack(U), V=np.stack(V),
+                T2m=T2m, Td2m=Td2m, U10=U10, V10=V10, PS=PS,
+                hsurf=HS, frland=FL)
+
+
+def _edge_value(z, x, *, top: bool):
+    """Value of ``x`` at the lowest (or highest) *usable* level of each column.
+
+    Unusable levels are ``nan`` (underground, or missing), and which ones they are
+    varies per cell -- a 1000 hPa level is below ground over the Apennines but not
+    over the coast -- so the first/last valid index has to be found per column rather
+    than assumed to be 0 / -1.
+    """
+    ok = np.isfinite(z) & np.isfinite(x)
+    any_ok = ok.any(axis=0)
+    order = ok[::-1] if top else ok
+    idx = np.argmax(order, axis=0)
+    if top:
+        idx = (ok.shape[0] - 1) - idx
+    val = np.take_along_axis(x, idx[None, ...], axis=0)[0]
+    return np.where(any_ok, val, np.nan)
+
+
+def _interp_at(z, x, ztarget):
+    """Per-column linear interpolation of ``x(z)`` to a 2-D target height.
+
+    ``z``/``x`` are ``(nlev, ny, nx)`` with ``z`` ascending along axis 0; ``ztarget``
+    is ``(ny, nx)``. Levels that are unusable in a given column carry ``nan`` and are
+    skipped, so a column whose bottom level is underground still interpolates from its
+    remaining levels. Targets outside the usable span clamp to the nearest usable
+    level. Vectorised over the grid (the level loop is short -- 5 levels -- so this
+    stays cheap).
+    """
+    out = np.full(ztarget.shape, np.nan)
+    for k in range(z.shape[0] - 1):
+        z0, z1 = z[k], z[k + 1]
+        x0, x1 = x[k], x[k + 1]
+        span = z1 - z0
+        good = (np.isfinite(z0) & np.isfinite(z1) & np.isfinite(x0) & np.isfinite(x1)
+                & (np.abs(span) > 1e-6))
+        f = np.divide(ztarget - z0, span, out=np.zeros_like(ztarget), where=good)
+        seg = np.isnan(out) & good & (ztarget >= z0) & (ztarget <= z1)
+        out = np.where(seg, x0 + np.clip(f, 0.0, 1.0) * (x1 - x0), out)
+
+    z_lo = _edge_value(z, z, top=False); x_lo = _edge_value(z, x, top=False)
+    z_hi = _edge_value(z, z, top=True); x_hi = _edge_value(z, x, top=True)
+    out = np.where(np.isnan(out) & (ztarget <= z_lo), x_lo, out)
+    out = np.where(np.isnan(out) & (ztarget >= z_hi), x_hi, out)
+    return out
+
+
+def _layer_gradient(z, x, zlo, zhi):
+    """d<x>/dz (per metre) across a per-cell layer ``[zlo, zhi]`` (2-D bounds)."""
+    dz = zhi - zlo
+    lo = _interp_at(z, x, zlo)
+    hi = _interp_at(z, x, zhi)
+    return np.where(dz > 1.0, (hi - lo) / np.where(dz > 1.0, dz, 1.0), np.nan)
+
+
+def _layer_mean(z, x, zlo, zhi, samples: int = 5):
+    """Mean of ``x`` across a per-cell layer, from evenly spaced sample heights."""
+    acc = np.zeros(zlo.shape)
+    for i in range(samples):
+        zi = zlo + (zhi - zlo) * (i / (samples - 1.0))
+        acc += _interp_at(z, x, zi)
+    return acc / samples
+
+
+ML_METHODS = ("surface_to_parcel", "surface_to_abl", "mid_layer")
+
+
+def profile_diagnostics(d, si, *, thresholds=None, shear=True,
+                        ml_method: str = "surface_to_parcel"):
+    """The five column diagnostics for one time slice of :func:`read_icon2i_profile`.
+
+    Returns a dict of 2-D fields: ``abl``, ``lcl``, ``lcl_ratio``, ``ml_grad``
+    (mixed-layer dtheta/dz), ``gamma`` (free-troposphere cap), ``rh_top`` (RH at the
+    ABL top), ``shear_dist`` (distance from the shear maximum to the ABL/LCL, in ABL
+    units) and ``valid`` (enough usable levels to classify).
+
+    Also returns ``parcel_ml``, the well-mixed-layer depth.
+
+    ``ml_method`` selects the mixed-layer stability diagnostic.
+
+    **Read this before trusting the ML-stability gate.** The mixed-layer dtheta/dz is
+    *not measurable* from a 5-pressure-level archive. Validated against IGRA radiosondes
+    (JJA 12Z, period of record, n=2835 soundings): a 5-level column holds only **0-2 model
+    levels inside the mixed layer** -- one or none in 92% of coastal columns, three or more
+    in just 8.5% of inland ones -- and the lowest of those sits in the superadiabatic
+    surface layer. Every *direct* estimate consequently fails. Fitting a gradient across the
+    in-ML levels scores a Youden J of ~0.00 (no skill at all); taking theta at the Rib ABL
+    top instead folds in the entrainment jump Delta-theta, which Castellnou et al. (2022,
+    sec.2.1.1) treat as a state variable *separate* from the gradient the ladder conditions
+    on (mixed-layer slab model; Vila-Guerau de Arellano et al. 2015).
+
+    The default is therefore an honest **proxy**, not a measurement:
+
+    * ``"surface_to_parcel"`` (**default**) -- bulk theta difference from 2 m to the parcel
+      mixing depth. Since the parcel top is *defined* as theta_sfc + 0.5 K, this is
+      identically ``0.5 / depth``: a **mixing-depth proxy** for ML stability (at the 1.1e-3
+      threshold it says exactly "parcel mixing depth >= 455 m"), *not* an estimate of
+      dtheta/dz. It is the default because it is the only candidate with any skill --
+      against the radiosonde truth it scores J = 0.29 inland / 0.55 coastal (r = +0.50),
+      versus J = 0.14 / 0.42 for ``surface_to_abl``. Deep mixing does genuinely imply an
+      unstable ML; that correlation, not a gradient measurement, is what this rests on.
+    * ``"surface_to_abl"`` -- bulk gradient to theta at the Rib ABL top. Superseded: the Rib
+      height sits above the entrainment zone, so theta there is post-jump.
+    * ``"mid_layer"`` -- the reference implementation's 0.2-0.8*ABL window. Superseded: at
+      ~900 m level spacing it straddles the entrainment zone.
+
+    Known bias of the default: it **over-flags**. Inland its specificity is only 0.29 --
+    of the columns that are truly ML-stable it still calls ~71% pyroCu-capable (sensitivity
+    0.99, so it rarely *misses* a capable column). Treat the ML-stability gate as a weak
+    filter and do not read the resulting class *counts* quantitatively. Fixing this needs
+    more vertical levels (ERA5's 37 pressure levels, or ICON native model levels), which
+    this open-data archive does not publish.
+
+    The Rib ABL remains the right height for the LCL/ABL and shear/ABL *ratios* -- that is
+    what the paper uses it for; it is only the wrong upper bound for this diagnostic.
+
+    The other layers follow the reference: the cap over ABL+200 m to ABL+1200 m, and
+    the ABL-top RH as the mean over ABL +/- 150 m.
+
+    ``shear`` is honoured only if the profile has enough levels to locate a shear
+    maximum; with ICON-2I's 5-6 levels it does not, so ``shear_dist`` comes back all
+    ``nan`` and the classifier drops to the four-diagnostic ladder. See
+    :func:`pyflam.atmosphere.shear_height_adaptive` for why this is deliberate.
+    """
+    if ml_method not in ML_METHODS:
+        raise ValueError(f"unknown ml_method {ml_method!r}; expected one of {ML_METHODS}")
+    from pyflam.atmosphere import (
+        _SHEAR_MIN_LEVELS, bulk_richardson_abl_grid, dewpoint_from_rh,
+        lcl_height_bolton_m, relative_humidity_from_dewpoint,
+        specific_humidity_from_rh, theta_kelvin, virtual_potential_temperature,
+        DEFAULT_PYROCONV_THRESHOLDS, shear_height_window, parcel_mixing_depth_grid,
+    )
+    th = thresholds or DEFAULT_PYROCONV_THRESHOLDS
+
+    levels = np.asarray(d["levels"], float)             # hPa, ascending in height
+    z_agl = d["z_asl"][:, si] - d["hsurf"][None, ...]   # (nlev, ny, nx)
+    T = d["T"][:, si]                                   # K
+    RH = np.clip(d["RH"][:, si], 0.0, 100.0)            # %
+    U, V = d["U"][:, si], d["V"][:, si]
+    p_pa = levels[:, None, None] * 100.0
+
+    T2m, Td2m = d["T2m"][si], d["Td2m"][si]             # K
+    U10, V10 = d["U10"][si], d["V10"][si]
+    ps_pa = d["PS"][si]
+    if np.nanmedian(ps_pa) < 2000.0:                    # served in hPa
+        ps_pa = ps_pa * 100.0
+
+    # Drop levels below ground / above the useful column, exactly as the reference:
+    # a 1000 hPa level is underground over the Apennines.
+    ok = (np.isfinite(z_agl) & np.isfinite(T) & np.isfinite(RH)
+          & (z_agl >= 20.0) & (z_agl <= th.max_abl_m + 3500.0)
+          & (p_pa <= ps_pa[None, ...] + 100.0))
+    valid = ok.sum(axis=0) >= MIN_PROFILE_LEVELS
+    # Unusable levels become nan (not a sentinel height): every downstream routine is
+    # nan-aware per column, so a cell whose 1000 hPa level is underground still uses
+    # the levels it does have.
+    z_use = np.where(ok, z_agl, np.nan)
+    T_use = np.where(ok, T, np.nan)
+    RH_use = np.where(ok, RH, np.nan)
+
+    theta = theta_kelvin(T_use - 273.15, levels[:, None, None])
+    q = specific_humidity_from_rh(RH_use, T_use, p_pa)
+    theta_v = virtual_potential_temperature(theta, q)
+
+    ps_hpa = ps_pa / 100.0
+    rh_sfc = relative_humidity_from_dewpoint(T2m - 273.15, Td2m - 273.15)
+    q_sfc = specific_humidity_from_rh(rh_sfc, T2m, ps_pa)
+    theta_v_sfc = virtual_potential_temperature(theta_kelvin(T2m - 273.15, ps_hpa), q_sfc)
+
+    abl = bulk_richardson_abl_grid(
+        z_use, theta_v, U, V, theta_v_surface=theta_v_sfc,
+        wind_u_surface=U10, wind_v_surface=V10)
+    lcl = lcl_height_bolton_m(T2m, Td2m, ps_pa)
+
+    # theta (dry, not virtual): the ladder's thresholds are defined on theta.
+    theta_sfc = theta_kelvin(T2m - 273.15, ps_hpa)
+    parcel_ml = parcel_mixing_depth_grid(z_use, theta, theta_sfc)
+
+    def _bulk_to(top):
+        return np.where(np.isfinite(top),
+                        (_interp_at(z_use, theta, top) - theta_sfc)
+                        / np.maximum(top - 2.0, 1.0), np.nan)
+
+    if ml_method == "surface_to_parcel":
+        ml_grad = _bulk_to(parcel_ml)          # below the entrainment jump
+    elif ml_method == "surface_to_abl":
+        ml_grad = _bulk_to(abl)                # includes the jump -- superseded
+    else:
+        abl_lo = np.maximum(100.0, 0.20 * abl)
+        abl_hi = np.maximum(abl_lo + 150.0, 0.80 * abl)
+        abl_hi = np.minimum(abl_hi, np.where(abl > 250.0, abl - 50.0, abl))
+        ml_grad = _layer_gradient(z_use, theta, abl_lo, abl_hi)
+
+    gamma = _layer_gradient(z_use, theta, abl + 200.0, abl + 1200.0)
+    rh_top = _layer_mean(z_use, RH_use, np.maximum(50.0, abl - 150.0), abl + 150.0)
+
+    shear_dist = np.full(abl.shape, np.nan)
+    n_levels = int(ok.sum(axis=0).max()) if ok.size else 0
+    if shear and n_levels >= _SHEAR_MIN_LEVELS:
+        ny, nx = abl.shape
+        for a in range(ny):
+            for b in range(nx):
+                if not valid[a, b]:
+                    continue
+                zs = shear_height_window(z_use[:, a, b], U[:, a, b], V[:, a, b])
+                if np.isfinite(zs) and abl[a, b] > 0:
+                    shear_dist[a, b] = min(abs(zs - abl[a, b]),
+                                           abs(zs - lcl[a, b])) / abl[a, b]
+
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ratio = lcl / np.where(abl > 0, abl, np.nan)
+    return dict(abl=abl, lcl=lcl, lcl_ratio=ratio, ml_grad=ml_grad, gamma=gamma,
+                rh_top=rh_top, shear_dist=shear_dist, valid=valid,
+                parcel_ml=parcel_ml, n_levels=n_levels)
+
+
+def classify_profile(diag, *, fli=None, fli_gate_kw=FLI_GATE_KW, ladder="adaptive",
+                     thresholds=None, abl_min_m=ABL_MIN_M):
+    """Per-cell pyroconvection class (0..4) from :func:`profile_diagnostics`.
+
+    ``ladder`` is passed through to :func:`pyflam.atmosphere.pyroconvection_type`;
+    the default ``"adaptive"`` runs the richest ladder the diagnostics support (five
+    where the shear height resolved, else four), which on ICON-2I open data means the
+    four-diagnostic ladder. ``fli`` (kW/m, optional) gates each cell to a surface
+    plume below ``fli_gate_kw`` -- pass it for the *expected* map, omit it for the
+    *potential* upper bound.
+
+    Also returns the ladder actually used, so the product can state it.
+    """
+    from pyflam.atmosphere import (
+        pyroconvection_type, PYROCONVECTION_TYPE_LEVEL, DEFAULT_PYROCONV_THRESHOLDS)
+    th = thresholds or DEFAULT_PYROCONV_THRESHOLDS
+
+    abl, ratio = diag["abl"], diag["lcl_ratio"]
+    ml, gamma, rh_top = diag["ml_grad"], diag["gamma"], diag["rh_top"]
+    sd, valid = diag["shear_dist"], diag["valid"]
+    ny, nx = abl.shape
+    out = np.zeros((ny, nx), np.int16)
+    used = set()
+
+    for a in range(ny):
+        for b in range(nx):
+            if not valid[a, b] or not np.isfinite(abl[a, b]) or abl[a, b] < abl_min_m:
+                continue
+            if not np.isfinite([ratio[a, b], ml[a, b], gamma[a, b]]).all():
+                continue
+            rh = float(rh_top[a, b]) if np.isfinite(rh_top[a, b]) else None
+            sdv = float(sd[a, b]) if np.isfinite(sd[a, b]) else None
+            fkw = None if fli is None else float(fli[a, b])
+            eff = ladder
+            if ladder == "adaptive":
+                eff = "shear" if sdv is not None else "noshear" if rh is not None \
+                    else "castellnou"
+            used.add(eff)
+            out[a, b] = PYROCONVECTION_TYPE_LEVEL[pyroconvection_type(
+                lcl_abl_ratio=float(ratio[a, b]), ml_theta_gradient=float(ml[a, b]),
+                gamma_theta=float(gamma[a, b]), ladder=eff, rh_top_abl=rh,
+                shear_distance=sdv, fireline_intensity_kw=fkw,
+                fli_threshold_kw=fli_gate_kw, thresholds=th)]
+    return out, sorted(used)
 
 
 def _is_known_fuel(n) -> bool:

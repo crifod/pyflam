@@ -648,6 +648,60 @@ _ML_STABLE = 1.1e-3
 _GAMMA_DEEP = 4.0e-3            # gamma-theta below this -> deep pyroCu/pyroCb
 _FLI_PYROCU_KW = 1.0e4         # fireline intensity gate for pyroCu (Tedim 2018)
 
+# Dry-air thermodynamics for the profile diagnostics. (_KAPPA above is von Karman,
+# hence _KAPPA_DRY for the Poisson exponent Rd/cp.)
+_RD = 287.05                   # J kg-1 K-1, gas constant for dry air
+_CP_DRY = 1004.0               # J kg-1 K-1
+_KAPPA_DRY = _RD / _CP_DRY     # ~0.286
+_EPSILON = 0.622               # Rd/Rv
+
+# Bulk-Richardson ABL + profile diagnostics.
+_RIB_CRITICAL = 0.33           # Rib crossing that marks the ABL top
+_PARCEL_EXCESS_K = 0.5         # theta excess defining the parcel mixing depth
+_RIB_START_M = 200.0           # start height (AGL) for the Rib search
+_ABL_MIN_M = 150.0             # plausibility clip on the diagnosed ABL depth
+_ABL_MAX_M = 4500.0
+# A shear *height* cannot be located from a handful of pressure levels: the
+# moving-window maximum then just reflects the interpolation, not the flow. Below
+# this level count the adaptive classifier drops the shear test rather than
+# fabricate one. ICON-2I open data publishes 6 levels, so it takes the no-shear
+# path; ERA5 (19+ levels) and radiosondes take the full path.
+_SHEAR_MIN_LEVELS = 10
+
+
+@dataclass(frozen=True)
+class PyroconvThresholds:
+    """Thresholds for the profile-based pyroconvection ladder.
+
+    Defaults follow the operational set used by the Castellnou-derived ICON-2I /
+    ERA5 products: a mixed layer is stable above ``ml_stable``; overshooting can
+    still occur in a slightly stable layer up to ``ml_overshoot_max``; a cap below
+    ``gamma_weak_cap`` lets a pyroCu deepen while one above ``gamma_strong_cap``
+    inhibits it (the paper brackets this with M11 at 4.2e-3 and SCQ41 at 5.1e-3);
+    classes 3-4 additionally require moist air at the ABL top and, where the shear
+    height is resolvable, a shear layer close to the ABL/LCL.
+    """
+
+    # Castellnou et al. (2022) sec.2.4.1, after Liu & Liang (2010): unstable
+    # < 0.1e-3, stable > 1.1e-3, neutral in between. Neutral and unstable are both
+    # pyroCu-capable, so 1.1e-3 is the gate. (The 1.0e-3 used by the reference
+    # implementation is a transcription slip -- the paper says 1.1e-3.)
+    ml_stable: float = 1.1e-3
+    ml_overshoot_max: float = 3.0e-3
+    gamma_weak_cap: float = 4.2e-3
+    gamma_strong_cap: float = 4.8e-3
+    lcl_ratio_overshoot_max: float = 1.60
+    lcl_ratio_deep_max: float = 1.10
+    lcl_ratio_resilient_max: float = 1.00
+    shear_distance_deep: float = 0.30
+    rh_top_moist: float = 80.0
+    residual_score: float = 35.0
+    min_abl_m: float = _ABL_MIN_M
+    max_abl_m: float = _ABL_MAX_M
+
+
+DEFAULT_PYROCONV_THRESHOLDS = PyroconvThresholds()
+
 
 def theta_kelvin(temp_c, pressure_hpa):
     """Potential temperature (K) from temperature (C) and pressure (hPa)."""
@@ -718,26 +772,323 @@ def bulk_richardson_abl_height(height_m, temperature_c, wind_u, wind_v, *,
     return float(z2[-1])
 
 
-def pyroconvection_type(*, lcl_abl_ratio: float, ml_theta_gradient: float,
-                        gamma_theta: float, fireline_intensity_kw: float | None = None,
-                        fli_threshold_kw: float = _FLI_PYROCU_KW) -> str:
-    """Classify a column into a Castellnou et al. (2022) pyroconvection prototype.
+# --- moist thermodynamics for the profile diagnostics --------------------------
 
-    Returns one of :data:`PYROCONVECTION_TYPES`. The decision follows the paper's
-    Fig. 7 ladder and §3.3 thresholds:
+def saturation_vapour_pressure_pa(temp_k):
+    """Saturation vapour pressure (Pa) over liquid water (Bolton 1980). Array-safe."""
+    tc = np.asarray(temp_k, float) - 273.15
+    return 611.2 * np.exp(17.67 * tc / (tc + 243.5))
 
-    1. **Fire-power gate.** If a per-cell ``fireline_intensity_kw`` is given and it
-       is below ``fli_threshold_kw`` (default 1e4 kW/m), the column only supports a
-       ``surface_plume`` (no pyroCu, regardless of the atmosphere). Pass ``None`` to
-       report the *potential* type assuming a pyroCu-capable fire.
-    2. **Mixed-layer stability.** A stable ML (``ml_theta_gradient`` > 1.1e-3 K/m)
-       gives a non-pyroCu ``convection_plume`` (penetrating only; cf. T21).
-    3. **LCL/ABL ratio.** In a pyroCu-capable (neutral/unstable) ML, ratio > 1 ->
-       ``overshooting_pyrocu`` (brief, slightly-stable; SCQ32); ratio < 1 ->
-       ``resilient_pyrocu`` (persistent, unstable; M11).
-    4. **Cap stability.** A weak cap (``gamma_theta`` < 4.0e-3 K/m) lets the pyroCu
-       deepen to ``deep_pyrocu_pyrocb`` (SCQ51 gamma-theta=3.9e-3 deep vs M11
-       gamma-theta=4.2e-3 resilient). A strong cap (e.g. SCQ41 5.1e-3) inhibits it.
+
+def specific_humidity_from_rh(relative_humidity, temp_k, pressure_pa):
+    """Specific humidity (kg/kg) from RH (%), temperature (K) and pressure (Pa)."""
+    e = np.clip(np.asarray(relative_humidity, float) / 100.0, 0.0, 1.0) \
+        * saturation_vapour_pressure_pa(temp_k)
+    p = np.asarray(pressure_pa, float)
+    return _EPSILON * e / np.maximum(p - (1.0 - _EPSILON) * e, 1.0)
+
+
+def virtual_potential_temperature(theta_k, specific_humidity):
+    """Virtual potential temperature (K) -- theta corrected for water-vapour buoyancy."""
+    return np.asarray(theta_k, float) * (
+        1.0 + 0.61 * np.asarray(specific_humidity, float))
+
+
+def lcl_height_bolton_m(temp_k, dewpoint_k, pressure_pa):
+    """LCL height above ground (m), exact form (Bolton 1980, eq. 21 + hypsometric).
+
+    More faithful than the Espy rule in :func:`lcl_height_m`, which is kept for the
+    surface-only diagnostics. Array-safe; returns 0 where the parcel is saturated.
+    """
+    t = np.asarray(temp_k, float)
+    td = np.minimum(np.asarray(dewpoint_k, float), t)
+    p = np.asarray(pressure_pa, float)
+    # Temperature at the LCL (K).
+    t_lcl = 1.0 / (1.0 / (td - 56.0) + np.log(t / td) / 800.0) + 56.0
+    # Dry adiabat from the surface to the LCL, then hypsometric to a height.
+    p_lcl = p * (t_lcl / t) ** (1.0 / _KAPPA_DRY)
+    tbar = 0.5 * (t + t_lcl)
+    z = _RD * tbar / _G * np.log(np.maximum(p, 1.0) / np.maximum(p_lcl, 1.0))
+    return np.maximum(z, 0.0)
+
+
+def bulk_richardson_abl_grid(height_agl_m, theta_v, wind_u, wind_v, *,
+                             theta_v_surface, wind_u_surface, wind_v_surface,
+                             fallback_m=None, rib_crit: float = _RIB_CRITICAL,
+                             start_m: float = _RIB_START_M,
+                             min_abl_m: float = _ABL_MIN_M,
+                             max_abl_m: float = _ABL_MAX_M):
+    """ABL depth (m AGL) over a whole grid from the bulk Richardson profile.
+
+    The gridded counterpart of :func:`bulk_richardson_abl_height`: same
+    ``Rib(z) = (g/theta_v_s)(theta_v(z)-theta_v_s) z / |U(z)-U_s|^2`` criterion, but
+    vectorised over ``(nlev, ny, nx)`` stacks so a forecast grid is one array op
+    instead of a per-cell Python loop.
+
+    ``height_agl_m``, ``theta_v``, ``wind_u``, ``wind_v`` are level-major stacks
+    (levels ascending in height); the ``*_surface`` arrays are the 2 m / 10 m
+    reference fields. The ABL is the first height above ``start_m`` where Rib reaches
+    ``rib_crit``, linearly interpolated between the bracketing levels. Cells that
+    never cross, or that fall outside ``[min_abl_m, max_abl_m]``, take ``fallback_m``
+    (the model's own boundary-layer height, if you have it) and are then clipped.
+
+    The surface reference is the model's own 2 m / 10 m state, not a 400 m parcel:
+    the paper's 400 m start applies to soundings *inside* the plume, where the fire's
+    indraft contaminates the lowest levels. Here the profile is ambient, so the
+    search still begins at ``start_m`` (200 m) to skip the surface layer.
+    """
+    z = np.asarray(height_agl_m, float)
+    thv = np.asarray(theta_v, float)
+    u = np.asarray(wind_u, float)
+    v = np.asarray(wind_v, float)
+    thv_s = np.asarray(theta_v_surface, float)[None, ...]
+    u_s = np.asarray(wind_u_surface, float)[None, ...]
+    v_s = np.asarray(wind_v_surface, float)[None, ...]
+
+    shear2 = np.maximum((u - u_s) ** 2 + (v - v_s) ** 2, 0.5)
+    rib = (_G / thv_s) * (thv - thv_s) * z / shear2
+
+    shape = z.shape[1:]
+    abl = np.full(shape, np.nan)
+    prev_z = np.full(shape, start_m)
+    prev_r = np.zeros(shape)
+    for k in range(z.shape[0]):
+        zk, rk = z[k], rib[k]
+        # Levels that are underground (a 1000 hPa level over the Apennines) or
+        # otherwise unusable arrive as nan and must not advance the bracket -- a nan
+        # `prev_r` would poison the interpolation for every level above them.
+        usable = np.isfinite(rk) & np.isfinite(zk) & (zk > start_m)
+        hit = np.isnan(abl) & usable & (rk >= rib_crit)
+        if hit.any():
+            denom = np.where(rk != prev_r, rk - prev_r, np.inf)
+            frac = np.clip((rib_crit - prev_r) / denom, 0.0, 1.0)
+            abl = np.where(hit, prev_z + frac * (zk - prev_z), abl)
+        prev_z = np.where(usable, zk, prev_z)
+        prev_r = np.where(usable, rk, prev_r)
+
+    if fallback_m is not None:
+        fb = np.asarray(fallback_m, float)
+        bad = ~np.isfinite(abl) | (abl < min_abl_m) | (abl > max_abl_m)
+        abl = np.where(bad & np.isfinite(fb), fb, abl)
+
+    # A column that never crosses Rib_crit is *well mixed through the profile* (a
+    # superadiabatic afternoon surface layer gives Rib < 0 all the way up), not a
+    # column we know nothing about. Returning nan there would silently drop exactly
+    # the deeply-mixed cells that matter. Fall back to the top of the usable profile,
+    # as the single-column bulk_richardson_abl_height does, and let the clip below cap
+    # it. Only a column with no usable level at all stays nan.
+    usable_z = np.where(np.isfinite(rib) & np.isfinite(z), z, np.nan)
+    with np.errstate(invalid="ignore"):
+        z_top = np.nanmax(np.where(np.isnan(usable_z), -np.inf, usable_z), axis=0)
+    z_top = np.where(np.isfinite(z_top) & (z_top > -np.inf), z_top, np.nan)
+    abl = np.where(~np.isfinite(abl) & np.isfinite(z_top), z_top, abl)
+
+    return np.clip(abl, min_abl_m, max_abl_m)
+
+
+def parcel_mixing_depth_grid(height_agl_m, theta, theta_surface, *,
+                             excess_k: float = _PARCEL_EXCESS_K,
+                             min_m: float = _ABL_MIN_M, max_m: float = _ABL_MAX_M):
+    """Well-mixed-layer depth (m AGL) by the parcel method (Holzworth 1964), gridded.
+
+    The first height at which ``theta`` exceeds the surface potential temperature by
+    ``excess_k``, linearly interpolated -- i.e. the top of the layer a surface parcel
+    mixes through, **below the entrainment jump**.
+
+    This is *not* the same height as :func:`bulk_richardson_abl_grid`, and the
+    difference is the point. The Rib height is where turbulence dies, which is at the
+    top of the entrainment zone; the parcel height is the top of the well-mixed layer,
+    at its base. Castellnou et al. (2022, sec.2.1.1) treat the mixed-layer gradient
+    dtheta/dz and the entrainment jump Delta-theta as **separate** state variables of
+    the mixed-layer slab model (Vila-Guerau de Arellano et al. 2015), and the
+    classification ladder conditions on the former only.
+
+    So: use the Rib height for the LCL/ABL and shear/ABL *ratios* (that is what the
+    paper uses it for), and this height as the upper bound when measuring the
+    mixed-layer dtheta/dz. Evaluating theta at the Rib top instead folds Delta-theta
+    into the gradient and reports the capping inversion rather than the mixing --
+    which, on a coarse profile, is enough to push a well-mixed summer CBL over the
+    "stable" threshold and gate it out of the pyroCu branch entirely.
+
+    ``height_agl_m`` and ``theta`` are level-major ``(nlev, ny, nx)`` stacks with
+    levels ascending in height; ``theta_surface`` is the 2 m field. Unusable levels
+    carry ``nan``. Columns that never cross take the top of the usable profile.
+    """
+    z = np.asarray(height_agl_m, float)
+    th = np.asarray(theta, float)
+    target = np.asarray(theta_surface, float) + excess_k
+
+    out = np.full(target.shape, np.nan)
+    for k in range(1, z.shape[0]):
+        z0, z1, t0, t1 = z[k - 1], z[k], th[k - 1], th[k]
+        good = np.isfinite(z0) & np.isfinite(z1) & np.isfinite(t0) & np.isfinite(t1)
+        hit = np.isnan(out) & good & (t1 >= target)
+        if hit.any():
+            denom = np.where(t1 != t0, t1 - t0, np.inf)
+            frac = np.clip((target - t0) / denom, 0.0, 1.0)
+            out = np.where(hit, z0 + frac * (z1 - z0), out)
+
+    usable = np.where(np.isfinite(z) & np.isfinite(th), z, -np.inf)
+    z_top = np.max(usable, axis=0)
+    out = np.where(~np.isfinite(out) & np.isfinite(z_top) & (z_top > -np.inf), z_top, out)
+    return np.clip(out, min_m, max_m)
+
+
+# --- shear height: three implementations (see pyroconvection_type) -------------
+#
+# The distance from the ABL/LCL to the height of maximum wind shear is the fifth
+# diagnostic of the operational ladder. It is the one diagnostic that a coarse
+# pressure-level model cannot honestly supply, so it has three implementations and
+# the classifier picks one by data richness. Variants 1 and 2 are exposed for
+# research use (forcing a path); variant 3 is what the pipeline runs.
+
+def shear_height_window(height_m, wind_u, wind_v, *, zmin: float = 200.0,
+                        zmax: float = 6000.0, half_window_m: float = 100.0,
+                        dz: float = 50.0) -> float:
+    """VARIANT 1 -- height (m AGL) of maximum vector shear, moving-window method.
+
+    Interpolates one column onto a uniform ``dz`` grid and returns the height where
+    ``|dU/dz|`` over a ``2 * half_window_m`` window is largest. This is the reference
+    method and reproduces the operational product's numbers.
+
+    **It requires a genuinely resolved profile.** Given only a handful of pressure
+    levels the interpolation invents the sub-window structure, and the "maximum"
+    then reflects the interpolant rather than the flow; see :data:`_SHEAR_MIN_LEVELS`
+    and prefer :func:`shear_height_adaptive` for model data of unknown richness.
+    """
+    z = np.asarray(height_m, float)
+    u = np.asarray(wind_u, float)
+    v = np.asarray(wind_v, float)
+    good = np.isfinite(z) & np.isfinite(u) & np.isfinite(v)
+    if good.sum() < 2:
+        return float("nan")
+    z, u, v = z[good], u[good], v[good]
+    order = np.argsort(z)
+    z, u, v = z[order], u[order], v[order]
+
+    grid = np.arange(max(z[0], 0.0), min(z[-1], zmax) + dz, dz)
+    if grid.size < 3:
+        return float("nan")
+    ug = np.interp(grid, z, u)
+    vg = np.interp(grid, z, v)
+    half = max(1, int(round(half_window_m / dz)))
+    if grid.size <= 2 * half:
+        return float("nan")
+    span = grid[2 * half:] - grid[:-2 * half]
+    du = ug[2 * half:] - ug[:-2 * half]
+    dv = vg[2 * half:] - vg[:-2 * half]
+    shear = np.hypot(du, dv) / np.maximum(span, 1e-6)
+    centre = grid[half:-half]
+    ok = (centre >= zmin) & (centre <= zmax) & np.isfinite(shear)
+    if not ok.any():
+        return float("nan")
+    return float(centre[ok][np.nanargmax(shear[ok])])
+
+
+def shear_height_none(*_args, **_kwargs) -> float:
+    """VARIANT 2 -- decline to estimate a shear height; always ``nan``.
+
+    The honest choice when the vertical resolution cannot locate a shear maximum.
+    Feeding ``nan`` to :func:`pyroconvection_type` drops the shear test from the
+    ladder (see :func:`pyroconvection_type_noshear`) rather than conditioning the
+    classification on a number the data do not contain.
+    """
+    return float("nan")
+
+
+def shear_height_adaptive(height_m, wind_u, wind_v, *,
+                          min_levels: int = _SHEAR_MIN_LEVELS, **kwargs) -> float:
+    """VARIANT 3 (pipeline default) -- window method when resolved, else ``nan``.
+
+    Counts the finite levels in the column and calls :func:`shear_height_window`
+    only when there are at least ``min_levels`` of them; otherwise returns ``nan``
+    so the classifier degrades to the no-shear ladder. This lets one code path serve
+    both a 6-level ICON-2I column (no shear test) and a 19-level ERA5 or sounding
+    column (full ladder), and makes which path ran an inspectable property of the
+    output rather than a silent assumption.
+    """
+    z = np.asarray(height_m, float)
+    u = np.asarray(wind_u, float)
+    v = np.asarray(wind_v, float)
+    n = int((np.isfinite(z) & np.isfinite(u) & np.isfinite(v)).sum())
+    if n < min_levels:
+        return float("nan")
+    return shear_height_window(z, u, v, **kwargs)
+
+
+def shear_distance_ratio(shear_height_m, abl_m, lcl_m) -> float:
+    """Distance from the shear maximum to the nearer of the ABL top / LCL, /ABL.
+
+    The ladder's ``shear_close`` test: a shear layer sitting on the ABL top or the
+    cloud base couples to the plume, one far above it does not.
+    """
+    if not np.isfinite([shear_height_m, abl_m, lcl_m]).all() or abl_m <= 0:
+        return float("nan")
+    return float(min(abs(shear_height_m - abl_m),
+                     abs(shear_height_m - lcl_m)) / abl_m)
+
+
+# --- the ladder ----------------------------------------------------------------
+
+def pyroconvection_score(*, lcl_abl_ratio: float, ml_theta_gradient: float,
+                         gamma_theta: float, rh_top_abl: float,
+                         shear_distance: float | None = None,
+                         thresholds: PyroconvThresholds = DEFAULT_PYROCONV_THRESHOLDS
+                         ) -> float:
+    """Continuous 0-100 pyroconvective-favourability score for a column.
+
+    A weighted blend of the ladder's diagnostics: LCL/ABL proximity (30), mixed-layer
+    instability (25), cap weakness (20), shear proximity (15) and moisture at the ABL
+    top (10). When ``shear_distance`` is ``nan``/``None`` its 15 points are
+    redistributed across the other four terms in proportion, so scores stay on the
+    same 0-100 scale whichever ladder ran.
+
+    This is a *diagnostic* ordering, not a calibrated probability of occurrence --
+    it ranks columns, it does not tell you how likely a pyroCb is.
+    """
+    th = thresholds
+    if not np.isfinite([lcl_abl_ratio, ml_theta_gradient, gamma_theta, rh_top_abl]).all():
+        return float("nan")
+
+    lcl_term = float(np.clip(1.0 - abs(lcl_abl_ratio - 1.0), 0.0, 1.0))
+    stability_term = float(np.clip(
+        (th.ml_overshoot_max - ml_theta_gradient) / (th.ml_overshoot_max + 1.0e-3),
+        0.0, 1.0))
+    cap_term = float(np.clip(
+        (th.gamma_strong_cap - gamma_theta) / (th.gamma_strong_cap - 2.5e-3), 0.0, 1.0))
+    moisture_term = float(np.clip((rh_top_abl - 55.0) / 40.0, 0.0, 1.0))
+
+    terms = [(30.0, lcl_term), (25.0, stability_term), (20.0, cap_term),
+             (10.0, moisture_term)]
+    has_shear = shear_distance is not None and np.isfinite(shear_distance)
+    if has_shear:
+        terms.append((15.0, float(np.clip(1.0 - shear_distance, 0.0, 1.0))))
+    total_w = sum(w for w, _ in terms)
+    score = sum(w * t for w, t in terms) * (100.0 / total_w)
+    return float(np.clip(score, 0.0, 100.0))
+
+
+def pyroconvection_type_castellnou(*, lcl_abl_ratio: float, ml_theta_gradient: float,
+                                   gamma_theta: float,
+                                   fireline_intensity_kw: float | None = None,
+                                   fli_threshold_kw: float = _FLI_PYROCU_KW) -> str:
+    """THREE-DIAGNOSTIC ladder -- Castellnou et al. (2022) Fig. 7 as published.
+
+    The original pyflam classifier, kept as the floor of :func:`pyroconvection_type`:
+    it is the only ladder that runs on the variables the paper's own Table 1 reports,
+    so it is what the reference cases are validated against. It uses no moisture or
+    shear information, and (unlike the profile ladders) lets a weak cap promote to
+    deep pyroCb from any LCL/ABL ratio, which is why it saturates on a well-mixed
+    summer afternoon.
+
+    1. **Fire-power gate.** ``fireline_intensity_kw`` below ``fli_threshold_kw``
+       (1e4 kW/m, Tedim et al. 2018) -> ``surface_plume`` whatever the atmosphere.
+       ``None`` reports the *potential* type, assuming a pyroCu-capable fire.
+    2. **Mixed-layer stability.** Stable ML (> 1.1e-3 K/m) -> ``convection_plume`` (T21).
+    3. **LCL/ABL ratio.** ratio > 1 -> ``overshooting_pyrocu`` (SCQ32);
+       ratio < 1 -> ``resilient_pyrocu`` (M11).
+    4. **Cap.** ``gamma_theta`` < 4.0e-3 -> ``deep_pyrocu_pyrocb`` (SCQ51 3.9e-3 deep
+       vs M11 4.2e-3 resilient; SCQ41 5.1e-3 strong cap inhibits).
     """
     if fireline_intensity_kw is not None and fireline_intensity_kw < fli_threshold_kw:
         return "surface_plume"
@@ -747,6 +1098,185 @@ def pyroconvection_type(*, lcl_abl_ratio: float, ml_theta_gradient: float,
     if gamma_theta < _GAMMA_DEEP:
         return "deep_pyrocu_pyrocb"
     return base
+
+
+def pyroconvection_type_shear(*, lcl_abl_ratio: float, ml_theta_gradient: float,
+                              gamma_theta: float, rh_top_abl: float,
+                              shear_distance: float,
+                              fireline_intensity_kw: float | None = None,
+                              fli_threshold_kw: float = _FLI_PYROCU_KW,
+                              thresholds: PyroconvThresholds = DEFAULT_PYROCONV_THRESHOLDS
+                              ) -> str:
+    """VARIANT 1 -- FIVE-DIAGNOSTIC ladder (LCL/ABL, ML theta, cap, RH-top, shear).
+
+    The full operational ladder. Relative to :func:`pyroconvection_type_castellnou`
+    it is markedly more conservative about the top of the ladder: reaching
+    ``deep_pyrocu_pyrocb`` needs the LCL *near* the ABL top (ratio <= 1.10), a
+    neutral/unstable ML, a weak cap, moist air at the ABL top, **and** a shear
+    maximum close to the plume -- not a weak cap alone.
+
+    Requires a shear height, so it requires a resolved profile (>= ~10 levels);
+    on 6-level model output use :func:`pyroconvection_type` (variant 3), which
+    falls back rather than trusting an interpolated shear maximum.
+    """
+    th = thresholds
+    if fireline_intensity_kw is not None and fireline_intensity_kw < fli_threshold_kw:
+        return "surface_plume"
+    required = [lcl_abl_ratio, ml_theta_gradient, gamma_theta, rh_top_abl, shear_distance]
+    if not np.isfinite(required).all():
+        return "surface_plume"
+
+    score = pyroconvection_score(
+        lcl_abl_ratio=lcl_abl_ratio, ml_theta_gradient=ml_theta_gradient,
+        gamma_theta=gamma_theta, rh_top_abl=rh_top_abl,
+        shear_distance=shear_distance, thresholds=th)
+
+    unstable = ml_theta_gradient <= th.ml_stable
+    slightly_stable_or_better = ml_theta_gradient <= th.ml_overshoot_max
+    weak_cap = gamma_theta <= th.gamma_weak_cap
+    strong_cap = gamma_theta >= th.gamma_strong_cap
+    shear_close = shear_distance <= th.shear_distance_deep
+    moist_top = rh_top_abl >= th.rh_top_moist
+
+    if (lcl_abl_ratio <= th.lcl_ratio_deep_max and unstable and weak_cap
+            and shear_close and moist_top):
+        return "deep_pyrocu_pyrocb"
+    if (lcl_abl_ratio < th.lcl_ratio_resilient_max and unstable and moist_top
+            and (strong_cap or not shear_close or not weak_cap)):
+        return "resilient_pyrocu"
+    if 1.0 <= lcl_abl_ratio <= th.lcl_ratio_overshoot_max and slightly_stable_or_better:
+        return "overshooting_pyrocu"
+    if lcl_abl_ratio > 1.0:
+        return "convection_plume"
+    # LCL below the ABL but the column is not coherent/moist enough for a
+    # persistent cloud: keep a cautious class only if it is at least well mixed.
+    if unstable and np.isfinite(score) and score >= th.residual_score:
+        return "overshooting_pyrocu"
+    return "surface_plume"
+
+
+def pyroconvection_type_noshear(*, lcl_abl_ratio: float, ml_theta_gradient: float,
+                                gamma_theta: float, rh_top_abl: float,
+                                fireline_intensity_kw: float | None = None,
+                                fli_threshold_kw: float = _FLI_PYROCU_KW,
+                                thresholds: PyroconvThresholds = DEFAULT_PYROCONV_THRESHOLDS
+                                ) -> str:
+    """VARIANT 2 -- FOUR-DIAGNOSTIC ladder: variant 1 with the shear test removed.
+
+    For data whose vertical resolution cannot locate a shear maximum. The ladder is
+    otherwise identical, with the shear clauses dropped: ``deep_pyrocu_pyrocb`` needs
+    LCL/ABL <= 1.10, a neutral/unstable ML, a weak cap and a moist ABL top; the
+    ``resilient_pyrocu`` fallback keys on the cap alone.
+
+    Dropping the shear requirement makes class 4 *easier* to reach than in variant 1
+    (one necessary condition fewer), so this ladder is the more permissive of the
+    two at the top end. It remains far stricter than the Castellnou ladder, which
+    has neither the moisture nor the LCL-proximity requirement.
+    """
+    th = thresholds
+    if fireline_intensity_kw is not None and fireline_intensity_kw < fli_threshold_kw:
+        return "surface_plume"
+    if not np.isfinite([lcl_abl_ratio, ml_theta_gradient, gamma_theta, rh_top_abl]).all():
+        return "surface_plume"
+
+    score = pyroconvection_score(
+        lcl_abl_ratio=lcl_abl_ratio, ml_theta_gradient=ml_theta_gradient,
+        gamma_theta=gamma_theta, rh_top_abl=rh_top_abl, thresholds=th)
+
+    unstable = ml_theta_gradient <= th.ml_stable
+    slightly_stable_or_better = ml_theta_gradient <= th.ml_overshoot_max
+    weak_cap = gamma_theta <= th.gamma_weak_cap
+    strong_cap = gamma_theta >= th.gamma_strong_cap
+    moist_top = rh_top_abl >= th.rh_top_moist
+
+    if lcl_abl_ratio <= th.lcl_ratio_deep_max and unstable and weak_cap and moist_top:
+        return "deep_pyrocu_pyrocb"
+    if (lcl_abl_ratio < th.lcl_ratio_resilient_max and unstable and moist_top
+            and (strong_cap or not weak_cap)):
+        return "resilient_pyrocu"
+    if 1.0 <= lcl_abl_ratio <= th.lcl_ratio_overshoot_max and slightly_stable_or_better:
+        return "overshooting_pyrocu"
+    if lcl_abl_ratio > 1.0:
+        return "convection_plume"
+    if unstable and np.isfinite(score) and score >= th.residual_score:
+        return "overshooting_pyrocu"
+    return "surface_plume"
+
+
+PYROCONVECTION_LADDERS = ("castellnou", "noshear", "shear", "adaptive")
+
+
+def pyroconvection_type(*, lcl_abl_ratio: float, ml_theta_gradient: float,
+                        gamma_theta: float, ladder: str = "castellnou",
+                        rh_top_abl: float | None = None,
+                        shear_distance: float | None = None,
+                        fireline_intensity_kw: float | None = None,
+                        fli_threshold_kw: float = _FLI_PYROCU_KW,
+                        thresholds: PyroconvThresholds = DEFAULT_PYROCONV_THRESHOLDS
+                        ) -> str:
+    """Classify a column into a pyroconvection prototype. Returns a :data:`PYROCONVECTION_TYPES` member.
+
+    ``ladder`` selects the decision ladder. They are *not* interchangeable -- they
+    condition on different variables and differ in strictness -- so the choice is
+    explicit rather than inferred:
+
+    * ``"castellnou"`` (**default**) -- :func:`pyroconvection_type_castellnou`, the
+      three-diagnostic ladder exactly as published (LCL/ABL, mixed-layer dtheta/dz,
+      cap gamma-theta). The only ladder validated against the paper's Table 1 cases,
+      and the only one that runs without moisture or shear input.
+    * ``"noshear"`` -- :func:`pyroconvection_type_noshear`, four diagnostics; also
+      needs ``rh_top_abl``.
+    * ``"shear"`` -- :func:`pyroconvection_type_shear`, the full five; also needs
+      ``shear_distance``, hence a profile with enough levels to locate a shear
+      maximum (>= ~10; see :func:`shear_height_adaptive`).
+    * ``"adaptive"`` -- run the richest ladder the supplied diagnostics support:
+      five if ``shear_distance`` is finite, else four if ``rh_top_abl`` is, else
+      fall back to ``"castellnou"``. Intended for pipelines that must serve both a
+      6-level model column and a full sounding from one call site; record which tier
+      ran, since it changes what the class means.
+
+    The profile ladders demand a moist ABL top and an LCL close to it before allowing
+    deep pyroCb, where the Castellnou ladder promotes on a weak cap alone -- so they
+    are markedly more conservative at the top of the ladder.
+
+    All ladders share the fire-power gate: ``fireline_intensity_kw`` below
+    ``fli_threshold_kw`` (1e4 kW/m, Tedim et al. 2018) returns ``surface_plume``
+    whatever the atmosphere; ``None`` reports the *potential* type, assuming a
+    pyroCu-capable fire.
+
+    Raises ``ValueError`` on an unknown ladder, or on one whose required diagnostics
+    are missing -- a silent downgrade would misreport what the class means. Use
+    ``"adaptive"`` if you want the fallback.
+    """
+    if ladder not in PYROCONVECTION_LADDERS:
+        raise ValueError(f"unknown ladder {ladder!r}; "
+                         f"expected one of {PYROCONVECTION_LADDERS}")
+    has_rh = rh_top_abl is not None and np.isfinite(rh_top_abl)
+    has_shear = shear_distance is not None and np.isfinite(shear_distance)
+
+    if ladder == "adaptive":
+        ladder = "shear" if (has_rh and has_shear) else "noshear" if has_rh else "castellnou"
+    if ladder in ("noshear", "shear") and not has_rh:
+        raise ValueError(f"ladder={ladder!r} needs a finite rh_top_abl")
+    if ladder == "shear" and not has_shear:
+        raise ValueError("ladder='shear' needs a finite shear_distance")
+
+    if ladder == "shear":
+        return pyroconvection_type_shear(
+            lcl_abl_ratio=lcl_abl_ratio, ml_theta_gradient=ml_theta_gradient,
+            gamma_theta=gamma_theta, rh_top_abl=rh_top_abl,
+            shear_distance=shear_distance, fireline_intensity_kw=fireline_intensity_kw,
+            fli_threshold_kw=fli_threshold_kw, thresholds=thresholds)
+    if ladder == "noshear":
+        return pyroconvection_type_noshear(
+            lcl_abl_ratio=lcl_abl_ratio, ml_theta_gradient=ml_theta_gradient,
+            gamma_theta=gamma_theta, rh_top_abl=rh_top_abl,
+            fireline_intensity_kw=fireline_intensity_kw,
+            fli_threshold_kw=fli_threshold_kw, thresholds=thresholds)
+    return pyroconvection_type_castellnou(
+        lcl_abl_ratio=lcl_abl_ratio, ml_theta_gradient=ml_theta_gradient,
+        gamma_theta=gamma_theta, fireline_intensity_kw=fireline_intensity_kw,
+        fli_threshold_kw=fli_threshold_kw)
 
 
 # --- integration with the fire model ------------------------------------------
@@ -1183,6 +1713,24 @@ ICON2I_FIRE_FIELDS = [
     ("T2M", "T_2M", "heightAboveGround", 2), ("TD2M", "TD_2M", "heightAboveGround", 2),
     ("U10", "U_10M", "heightAboveGround", 10), ("V10", "V_10M", "heightAboveGround", 10),
 ]
+
+# Pressure levels the ICON-2I open-data archive actually publishes. 250 hPa (~10 km)
+# is above anything the ABL/cap diagnostics look at, so the profile stops at 500.
+ICON2I_PROFILE_LEVELS = (1000, 925, 850, 700, 500)
+
+# The full profile the Rib-based ABL + moisture ladder needs: geopotential (FI ->
+# real per-cell heights, replacing the standard-atmosphere assumption), temperature,
+# RH and wind on each level, plus the surface reference state, the surface pressure
+# and orography (to get heights AGL) and the land fraction. RELHUM is taken straight
+# from the archive rather than derived from QV -- one variable fewer to download.
+ICON2I_PROFILE_FIELDS = (
+    [(f"{var}{p}", var, "isobaricInhPa", p)
+     for var in ("FI", "T", "RELHUM", "U", "V") for p in ICON2I_PROFILE_LEVELS]
+    + [("T2M", "T_2M", "heightAboveGround", 2), ("TD2M", "TD_2M", "heightAboveGround", 2),
+       ("U10", "U_10M", "heightAboveGround", 10), ("V10", "V_10M", "heightAboveGround", 10),
+       ("PS", "PS", "surface", 0), ("HSURF", "HSURF", "surface", 0),
+       ("FRLAND", "FR_LAND", "surface", 0)]
+)
 
 
 def fetch_icon2i_mistral(date, run: int = 0, *, cache_dir: str = ".",
