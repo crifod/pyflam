@@ -281,7 +281,27 @@ def _layer_mean(z, x, zlo, zhi, samples: int = 5):
     return acc / samples
 
 
-ML_METHODS = ("surface_to_parcel", "surface_to_abl", "mid_layer")
+def _masked_lin_slope(z, x, mask, min_pts: int = 3):
+    """Per-cell least-squares slope dx/dz over the masked levels (vectorised).
+
+    ``z``/``x``/``mask`` are ``(nlev, ny, nx)``. Returns a 2-D slope, ``nan`` where a
+    column has fewer than ``min_pts`` masked levels or zero spread in z. This is the
+    honest mixed-layer gradient -- it needs enough *real* levels inside the layer to
+    fit a line, which only the model-level (ICON-EU) path provides; on 5 pressure
+    levels it falls back to nan and the caller uses a proxy instead.
+    """
+    w = (mask & np.isfinite(z) & np.isfinite(x)).astype(float)
+    n = w.sum(0)
+    safe = np.maximum(n, 1.0)
+    zbar = (w * z).sum(0) / safe
+    xbar = (w * x).sum(0) / safe
+    cov = (w * (z - zbar) * (x - xbar)).sum(0)
+    var = (w * (z - zbar) ** 2).sum(0)
+    ok = (n >= min_pts) & (var > 1e-6)
+    return np.where(ok, cov / np.where(var > 1e-6, var, 1.0), np.nan)
+
+
+ML_METHODS = ("fit_in_ml", "surface_to_parcel", "surface_to_abl", "mid_layer")
 
 
 def profile_diagnostics(d, si, *, thresholds=None, shear=True,
@@ -400,7 +420,14 @@ def profile_diagnostics(d, si, *, thresholds=None, shear=True,
                         (_interp_at(z_use, theta, top) - theta_sfc)
                         / np.maximum(top - 2.0, 1.0), np.nan)
 
-    if ml_method == "surface_to_parcel":
+    if ml_method == "fit_in_ml":
+        # A genuine least-squares dtheta/dz across the levels inside the mixed layer.
+        # Needs many levels to have skill; on 5 pressure levels it returns nan almost
+        # everywhere and should not be the default -- it is here for the model-level
+        # (ICON-EU) path, which shares this helper via iconeu_diagnostics.
+        in_ml = (z_use >= 80.0) & (z_use <= parcel_ml[None, ...])
+        ml_grad = _masked_lin_slope(z_use, theta, in_ml)
+    elif ml_method == "surface_to_parcel":
         ml_grad = _bulk_to(parcel_ml)          # below the entrainment jump
     elif ml_method == "surface_to_abl":
         ml_grad = _bulk_to(abl)                # includes the jump -- superseded
@@ -567,4 +594,152 @@ def fli_grid(T2m, RH, wsp, lf, burn, *, m_live_herb=0.70, m_live_woody=0.90,
                     crown_spread="cruz2005")
                 fli = max(fli, cr.fireline_intensity)
             out[a, b] = fli
+    return out
+
+
+# --- ICON-EU model-level path (the hybrid product's atmosphere) ----------------
+#
+# ICON-2I open data publishes 5 pressure levels, on which the mixed-layer dtheta/dz is
+# not measurable (see profile_diagnostics and scripts/validation/). ICON-EU is coarser
+# horizontally (6.5 km) but publishes the native model levels -- ~10 inside the mixed
+# layer over Tuscany -- so the gradient becomes a real least-squares fit and the Rib ABL
+# bias drops from ~-700 m to ~-70 m against radiosondes. The hybrid product takes the
+# profile diagnostics from here and keeps ICON-2I's 2.2 km surface fields for the fuel
+# gate, where fine terrain actually matters.
+
+def _open_iconeu(path, bbox):
+    """Open one decompressed ICON-EU GRIB, subset to ``bbox`` (n, w, s, e). -> (da)."""
+    import xarray as xr
+    n, w, s, e = bbox
+    ds = xr.open_dataset(path, engine="cfgrib", backend_kwargs={"indexpath": ""})
+    v = list(ds.data_vars)[0]
+    la = ds["latitude"].values
+    d = (ds.sel(latitude=slice(n, s), longitude=slice(w, e)) if la[0] > la[-1]
+         else ds.sel(latitude=slice(s, n), longitude=slice(w, e)))
+    return d[v]
+
+
+def read_icon_eu(files, bbox, levels):
+    """Read an ICON-EU model-level column stack for an AOI.
+
+    ``files`` is the dict from :func:`pyflam.atmosphere.fetch_icon_eu`; ``bbox`` is
+    ``(north, west, south, east)``; ``levels`` the full model levels (ascending in
+    height, e.g. 74..51). Full-level heights AGL are reconstructed from the HHL half
+    levels (full level k = mean of half levels k and k+1, minus the surface height).
+    Returns a dict with 1-D ``lat``/``lon``, level-major ``(nlev, ny, nx)`` stacks
+    ``z``/``T``/``QV``/``P``/``U``/``V``, and the 2-D surface fields.
+    """
+    n, w, s, e = bbox
+    half = {k: np.asarray(_open_iconeu(files[f"HHL{k}"], bbox).values, float)
+            for k in tuple(levels) + (max(levels) + 1,)}
+    orog = half[max(levels) + 1]                        # HHL at the surface half level
+    z = np.stack([0.5 * (half[k] + half[k + 1]) - orog for k in levels])
+
+    def stack(var):
+        return np.stack([np.asarray(_open_iconeu(files[f"{var}{k}"], bbox).values, float)
+                         for k in levels])
+
+    ref = _open_iconeu(files["T_2M"], bbox)
+    return dict(
+        lat=ref["latitude"].values, lon=ref["longitude"].values, levels=tuple(levels),
+        z=z, T=stack("T"), QV=stack("QV"), P=stack("P"), U=stack("U"), V=stack("V"),
+        T2m=np.asarray(_open_iconeu(files["T_2M"], bbox).values, float),
+        Td2m=np.asarray(_open_iconeu(files["TD_2M"], bbox).values, float),
+        PS=np.asarray(_open_iconeu(files["PS"], bbox).values, float),
+        U10=np.asarray(_open_iconeu(files["U_10M"], bbox).values, float),
+        V10=np.asarray(_open_iconeu(files["V_10M"], bbox).values, float),
+        frland=np.asarray(_open_iconeu(files["FR_LAND"], bbox).values, float),
+        orog=orog)
+
+
+def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml"):
+    """Profile diagnostics from an ICON-EU model-level stack (:func:`read_icon_eu`).
+
+    Same output dict as :func:`profile_diagnostics` (``abl``, ``parcel_ml``, ``lcl``,
+    ``lcl_ratio``, ``ml_grad``, ``gamma``, ``rh_top``, ``shear_dist``, ``valid``,
+    ``n_levels``), so :func:`classify_profile` consumes it unchanged. The default
+    ``ml_method="fit_in_ml"`` is the genuine least-squares mixed-layer gradient, which is
+    only trustworthy *because* this is the model-level path (many levels inside the ML);
+    the pressure-level path cannot use it (see :func:`profile_diagnostics`).
+    """
+    from pyflam.atmosphere import (
+        theta_kelvin, specific_humidity_from_rh, virtual_potential_temperature,
+        saturation_vapour_pressure_pa, bulk_richardson_abl_grid, parcel_mixing_depth_grid,
+        lcl_height_bolton_m, relative_humidity_from_dewpoint, DEFAULT_PYROCONV_THRESHOLDS,
+        _EPSILON)
+    th = thresholds or DEFAULT_PYROCONV_THRESHOLDS
+
+    z, T, QV, P, U, V = d["z"], d["T"], d["QV"], d["P"], d["U"], d["V"]
+    T2m, Td2m, ps = d["T2m"], d["Td2m"], d["PS"]
+    U10, V10 = d["U10"], d["V10"]
+
+    theta = theta_kelvin(T - 273.15, P / 100.0)
+    thv = virtual_potential_temperature(theta, QV)
+    e = QV * P / (_EPSILON + (1.0 - _EPSILON) * QV)
+    RH = np.clip(100.0 * e / saturation_vapour_pressure_pa(T), 1.0, 100.0)
+
+    rh_s = relative_humidity_from_dewpoint(T2m - 273.15, Td2m - 273.15)
+    q_s = specific_humidity_from_rh(rh_s, T2m, ps)
+    theta_sfc = theta_kelvin(T2m - 273.15, ps / 100.0)
+    thv_s = virtual_potential_temperature(theta_sfc, q_s)
+
+    abl = bulk_richardson_abl_grid(z, thv, U, V, theta_v_surface=thv_s,
+                                   wind_u_surface=U10, wind_v_surface=V10)
+    parcel_ml = parcel_mixing_depth_grid(z, theta, theta_sfc)
+    lcl = lcl_height_bolton_m(T2m, Td2m, ps)
+
+    in_ml = (z >= 80.0) & (z <= parcel_ml[None, ...])
+    n_in_ml = in_ml.sum(0)
+    if ml_method == "fit_in_ml":
+        ml_grad = _masked_lin_slope(z, theta, in_ml)
+    elif ml_method == "surface_to_parcel":
+        ml_grad = np.where(np.isfinite(parcel_ml),
+                           (_interp_at(z, theta, parcel_ml) - theta_sfc)
+                           / np.maximum(parcel_ml - 2.0, 1.0), np.nan)
+    else:
+        raise ValueError(f"iconeu_diagnostics: unsupported ml_method {ml_method!r}")
+
+    gamma = _layer_gradient(z, theta, abl + 200.0, abl + 1200.0)
+    rh_top = _layer_mean(z, RH, np.maximum(50.0, abl - 150.0), abl + 150.0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ratio = lcl / np.where(abl > 0, abl, np.nan)
+
+    valid = np.isfinite(abl) & np.isfinite(ratio) & np.isfinite(ml_grad)
+    return dict(abl=abl, lcl=lcl, lcl_ratio=ratio, ml_grad=ml_grad, gamma=gamma,
+                rh_top=rh_top, shear_dist=np.full(abl.shape, np.nan), valid=valid,
+                parcel_ml=parcel_ml, n_levels=int(np.median(n_in_ml)))
+
+
+def regrid_to(field, lat_src, lon_src, lat_dst, lon_dst):
+    """Bilinear-interpolate a 2-D field from one lat/lon grid onto another.
+
+    Used to move ICON-EU diagnostics (6.5 km) onto the ICON-2I 2.2 km grid the hybrid
+    product renders on. Points outside the source grid extrapolate from the edge rather
+    than go blank (the ICON-EU domain amply covers Tuscany, so this only bites at the
+    very border).
+    """
+    from scipy.interpolate import RegularGridInterpolator
+
+    la, fld = lat_src, np.asarray(field, float)
+    if la[0] > la[-1]:
+        la = la[::-1]
+        fld = fld[::-1]
+    f = RegularGridInterpolator((la, lon_src), fld, bounds_error=False, fill_value=None)
+    LO, LA = np.meshgrid(lon_dst, lat_dst)
+    return f(np.stack([LA.ravel(), LO.ravel()], -1)).reshape(LA.shape)
+
+
+def regrid_diagnostics(diag, lat_src, lon_src, lat_dst, lon_dst, *, abl_min_m=ABL_MIN_M):
+    """Move a whole diagnostics dict onto a target grid and rebuild ``valid``.
+
+    Interpolates each 2-D diagnostic field, then recomputes ``valid`` on the target grid
+    (finite ABL/ratio/gradient, ABL above the floor) rather than interpolating a boolean.
+    ``shear_dist`` stays all-``nan`` and ``n_levels`` is carried through unchanged.
+    """
+    fields = ("abl", "lcl", "lcl_ratio", "ml_grad", "gamma", "rh_top", "parcel_ml")
+    out = {k: regrid_to(diag[k], lat_src, lon_src, lat_dst, lon_dst) for k in fields}
+    out["shear_dist"] = np.full(out["abl"].shape, np.nan)
+    out["valid"] = (np.isfinite(out["abl"]) & np.isfinite(out["lcl_ratio"])
+                    & np.isfinite(out["ml_grad"]) & (out["abl"] >= abl_min_m))
+    out["n_levels"] = diag["n_levels"]
     return out

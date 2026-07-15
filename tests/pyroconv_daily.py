@@ -19,7 +19,14 @@ Config via env (all optional):
   PYROCONV_LCP    .lcp path    (default: the Tuscany canopy .lcp)
   PYROCONV_LADDER adaptive | noshear | shear | castellnou  (default: adaptive)
   PYROCONV_ML_METHOD  surface_to_parcel | surface_to_abl | mid_layer  (default: surface_to_parcel)
+  PYROCONV_SOURCE     icon2i | hybrid   (default: icon2i)
+  PYROCONV_HOURS      subset of valid hours, e.g. "12" or "9,12,15" (default: all 8)
 Usage:  PYTHONPATH=src python tests/pyroconv_daily.py [YYYY-MM-DD] [run]
+
+SOURCE=hybrid takes the atmospheric profile from ICON-EU model levels (the mixed-layer
+dtheta/dz is a genuine measurement there, ~10 levels inside the mixed layer, vs a proxy on
+ICON-2I's 5 pressure levels) and keeps ICON-2I's 2.2 km surface fields for the fuel gate.
+It downloads one ICON-EU step per valid hour (~200 MB each), so use PYROCONV_HOURS to test.
 """
 from __future__ import annotations
 
@@ -33,7 +40,7 @@ import pyflam
 from pyflam import units, fuel_models
 from pyflam.atmosphere import (
     equilibrium_moisture_content, relative_humidity_from_dewpoint,
-    fetch_icon2i_mistral, ICON2I_PROFILE_FIELDS,
+    fetch_icon2i_mistral, fetch_icon_eu, ICON2I_PROFILE_FIELDS, ICON_EU_MODEL_LEVELS,
     PYROCONVECTION_TYPES, PYROCONVECTION_TYPE_LEVEL, PYROCONVECTION_TYPE_COLOR,
     PYROCONVECTION_TYPE_LABEL,
 )
@@ -43,6 +50,7 @@ from pyflam.atmosphere import (
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pyflam_gui.core.pyroconv import (
     read_icon2i_profile, profile_diagnostics, classify_profile, fli_grid,
+    read_icon_eu, iconeu_diagnostics, regrid_diagnostics,
     lcp_fields as _core_lcp_fields)
 
 warnings.simplefilter("ignore")
@@ -75,7 +83,15 @@ OUTDIR = os.environ.get("PYROCONV_OUT") or os.path.join(REPO, "docs", "daily")
 CACHE = os.environ.get("PYROCONV_CACHE") or f"/tmp/pyflam_icon2i/{STAMP}"
 LCP = (os.environ.get("PYROCONV_LCP")
        or "/Users/cristianofoderi/DATI/FUEL_TOS/pyflam_canopy_tuscany/canopy_tuscany.lcp")
-RASTERDIR = os.path.join(OUTDIR, f"rasters_{DATE}")
+# Data source for the ATMOSPHERE (defined here because filenames below depend on it).
+# "icon2i" (default) uses ICON-2I 2.2 km's 5 pressure levels throughout. "hybrid" takes
+# the profile diagnostics from ICON-EU model levels (~10 levels inside the mixed layer,
+# so dtheta/dz is measurable via ml_method=fit_in_ml), regrids them onto the 2.2 km grid,
+# and keeps ICON-2I's surface fields for the fuel gate.
+SOURCE = os.environ.get("PYROCONV_SOURCE", "icon2i")
+# Model token in output filenames, so hybrid and icon2i products do not clobber each other.
+MODEL_TAG = "hybrid" if SOURCE == "hybrid" else "icon2i"
+RASTERDIR = os.path.join(OUTDIR, f"rasters_{MODEL_TAG}_{DATE}")
 # Which decision ladder to run. "adaptive" (default) uses the richest one the data
 # support: on ICON-2I open data that is the 4-diagnostic ladder, because 5-6 pressure
 # levels cannot locate a shear maximum. Set "castellnou" to reproduce the old
@@ -86,6 +102,12 @@ LADDER = os.environ.get("PYROCONV_LADDER", "adaptive")
 # Castellnou thresholds are defined on. "surface_to_abl" and "mid_layer" both fold
 # the jump into the gradient and are kept only for comparison.
 ML_METHOD = os.environ.get("PYROCONV_ML_METHOD", "surface_to_parcel")
+# Optional comma-separated subset of valid hours, e.g. "12" or "9,12,15" -- handy for a
+# quick single-hour product or for testing the (bandwidth-heavy) hybrid path.
+if os.environ.get("PYROCONV_HOURS"):
+    HOURS = [int(h) for h in os.environ["PYROCONV_HOURS"].split(",")]
+# ICON-EU GRIB cache (per run; one subdir per forecast step).
+EU_CACHE = os.environ.get("PYROCONV_EU_CACHE") or f"/tmp/pyflam_iconeu/{STAMP}"
 # Tuscany province borders (ISTAT-derived, openpolis geojson-italy, EPSG:4326).
 PROV_GEOJSON = (os.environ.get("PYROCONV_PROVINCES")
                 or "/Users/cristianofoderi/DATI/boundaries/limits_IT_provinces.geojson")
@@ -128,7 +150,9 @@ def render(cats, lat, lon, tag):
     cmap = ListedColormap([PYROCONVECTION_TYPE_COLOR[t] for t in PYROCONVECTION_TYPES])
     norm = BoundaryNorm(np.arange(-0.5, 5.5, 1), cmap.N)
     prov = _tuscany_provinces()
-    fig, ax = plt.subplots(1, len(HOURS), figsize=(2.1*len(HOURS), 3.0), constrained_layout=True)
+    fig, ax = plt.subplots(1, len(HOURS), figsize=(2.1*len(HOURS), 3.0),
+                           constrained_layout=True, squeeze=False)
+    ax = ax[0]                         # squeeze=False -> always a 1xN row; take the row
     for hi, hour in enumerate(HOURS):
         a = cats[hi][::-1] if flip else cats[hi]
         ax[hi].imshow(a, origin="lower", extent=ext, cmap=cmap, norm=norm, aspect="auto", interpolation="nearest")
@@ -136,7 +160,9 @@ def render(cats, lat, lon, tag):
             prov.plot(ax=ax[hi], color="0.15", linewidth=0.4)
             ax[hi].set_xlim(ext[0], ext[1]); ax[hi].set_ylim(ext[2], ext[3])
         ax[hi].set_title(f"{DATE} {hour:02d}Z", fontsize=8); ax[hi].set_xticks([]); ax[hi].set_yticks([])
-    fig.suptitle(f"Pyroconvection type -- {TAG_TITLE.get(tag, tag)}\nICON-2I 2.2 km -- "
+    src_label = ("ICON-EU model levels + ICON-2I 2.2 km gate" if SOURCE == "hybrid"
+                 else "ICON-2I 2.2 km")
+    fig.suptitle(f"Pyroconvection type -- {TAG_TITLE.get(tag, tag)}\n{src_label} -- "
                  f"Tuscany -- VALID {DATE} (run {RUNDATE} {RUN:02d}Z)", fontsize=11)
     leg = [Patch(facecolor=PYROCONVECTION_TYPE_COLOR[t], edgecolor="0.4",
                  label=f"{PYROCONVECTION_TYPE_LEVEL[t]}  {PYROCONVECTION_TYPE_LABEL[t]}")
@@ -144,7 +170,7 @@ def render(cats, lat, lon, tag):
     fig.legend(handles=leg, loc="lower center", ncol=5, fontsize=8.5, frameon=False,
                title="Pyroconvection class (0 = lowest activity -> 4 = highest)",
                bbox_to_anchor=(0.5, -0.12))
-    png = os.path.join(OUTDIR, f"pyroconv_tuscany_icon2i_{tag}_{DATE}.png")
+    png = os.path.join(OUTDIR, f"pyroconv_tuscany_{MODEL_TAG}_{tag}_{DATE}.png")
     fig.savefig(png, dpi=140, bbox_inches="tight"); plt.close(fig)
     dlon = float(abs(lon[1]-lon[0])); dlat = float(abs(lat[1]-lat[0]))
     tr = from_origin(lon.min()-dlon/2, lat.max()+dlat/2, dlon, dlat)
@@ -158,12 +184,78 @@ def render(cats, lat, lon, tag):
 
 
 def build_pdf(png_pot, png_gate, ladders, n_levels):
-    md = os.path.join(OUTDIR, f"pyroconv_{DATE}.md")
-    pdf = os.path.join(OUTDIR, f"pyroconv_tuscany_icon2i_{DATE}.pdf")
+    md = os.path.join(OUTDIR, f"pyroconv_{MODEL_TAG}_{DATE}.md")
+    pdf = os.path.join(OUTDIR, f"pyroconv_tuscany_{MODEL_TAG}_{DATE}.pdf")
     ladder_txt = ", ".join(ladders) if ladders else "none (no classifiable cell)"
+    if SOURCE == "hybrid":
+        src_title = "ICON-EU model levels + ICON-2I 2.2 km gate"
+        heights_txt = ("per-cell heights from the ICON-EU model-level heights (HHL)")
+        ml_rows = (
+            "| ML dtheta/dz (least-squares fit, in mixed layer) | > 1.1e-3 K/m (stable) | "
+            "Convection plume only -- no pyroCu |\n"
+            "| ML dtheta/dz (measured on model levels) | <= 1.1e-3 K/m | "
+            "Column is pyroCu-capable (bias ~-0.4e-4 K/m vs radiosondes) |")
+        forcing_txt = (
+            "Forcing: atmosphere from ICON-EU 6.5 km native model levels (DWD open data, "
+            "CC-BY), lowest ~24 levels; ~{n} inside the mixed layer here, regridded to the "
+            "ICON-2I 2.2 km grid. Surface fields and fuel gate from ICON-2I 2.2 km "
+            "(MISTRAL / AgenziaItaliaMeteo). Classifier: pyflam.pyroconvection_type "
+            "(bulk-Richardson ABL, Bolton LCL, measured mixed-layer dtheta/dz, cap "
+            "gamma-theta, ABL-top RH; no surface CAPE)."
+        ).format(n=n_levels)
+        ml_para = (
+"""The **mixed-layer stability** here is a genuine measurement, not a proxy. The ICON-EU
+native model levels put ~10 levels inside the mixed layer (this run: {n} median), so the
+mixed-layer dtheta/dz is a real least-squares fit across those levels. Validated against
+IGRA radiosondes (JJA 12Z, period of record), the model-level fit cuts the gradient bias to
+~-0.4e-4 K/m (from ~-4.7e-4 on ICON-2I's 5 pressure levels) and the Rib ABL bias to ~-70 m
+(from ~-700 m). This is why the hybrid product exists: the ICON-2I 2.2 km open data cannot
+resolve the mixed layer, and ICON-EU can.
+
+The trade is horizontal resolution: the atmosphere is 6.5 km (regridded to the 2.2 km grid),
+while the **fuel gate keeps ICON-2I's 2.2 km surface fields**, where fine terrain matters.
+The mixed-layer gradient is now measured, but the 1.1e-3 K/m threshold still sits inside the
+validated error bar (+/- ~2.6e-4), so treat class *counts* as indicative, not exact.""")
+    else:
+        src_title = "ICON-2I 2.2 km"
+        heights_txt = "per-cell heights from the model geopotential (FI)"
+        ml_rows = (
+            "| ML stability *proxy*: parcel mixing depth (see Method) | depth < 455 m "
+            "(\"stable\") | Convection plume only -- no pyroCu |\n"
+            "| ML stability proxy | depth >= 455 m (= dtheta/dz <= 1.1e-3 K/m) | "
+            "Column is pyroCu-capable (weak filter: spec. 0.29 inland) |")
+        forcing_txt = (
+            "Forcing: ICON-2I 2.2 km full-Italy GRIB (MISTRAL / AgenziaItaliaMeteo, CC-BY), "
+            "Tuscany subset: geopotential, temperature, RH and wind on {n} pressure levels "
+            "plus the 2 m / 10 m state, surface pressure and orography. Classifier: "
+            "pyflam.pyroconvection_type (bulk-Richardson ABL, Bolton LCL, mixed-layer "
+            "dtheta/dz proxy, cap gamma-theta, ABL-top RH; no surface CAPE)."
+        ).format(n=n_levels)
+        ml_para = (
+"""The **mixed-layer stability** diagnostic is the weakest link in this product, and is a
+*proxy*, not a measurement. Validated against IGRA radiosondes (JJA 12Z, period of record,
+n=2835), a 5-pressure-level column contains only 0-2 model levels inside the mixed layer --
+one or none in 92% of coastal columns -- and the lowest sits in the superadiabatic surface
+layer. The mixed-layer dtheta/dz is therefore **not measurable from this archive**: fitting
+it across the in-mixed-layer levels has no skill (Youden J ~ 0.00), and measuring theta up to
+the Rib ABL top folds in the entrainment jump (Delta-theta), which Castellnou et al. (2022,
+sec.2.1.1) treat as a variable *separate* from the gradient the ladder conditions on.
+
+What is used instead is the **parcel mixing depth** as a proxy: at the 1.1e-3 K/m threshold
+the criterion reduces to "well-mixed layer >= 455 m deep". It is the only candidate with
+skill (J = 0.29 inland / 0.55 coastal, r = +0.50 against the radiosonde truth). It
+**over-flags**: inland specificity is 0.29, so of the columns that are truly stable it still
+calls ~71% pyroCu-capable (sensitivity 0.99 -- it rarely misses a capable column).
+
+**Consequence: read the classes as a screening flag, not as calibrated counts.** The class
+*totals* on these maps are not quantitatively trustworthy. The hybrid product
+(`PYROCONV_SOURCE=hybrid`, ICON-EU model levels) measures this gradient properly; on this
+5-level source, set `PYROCONV_ML_METHOD=surface_to_abl` or `mid_layer` for the superseded
+measurements.""")
+    ml_para = ml_para.format(n=n_levels)
     with open(md, "w") as f:
         f.write(f"""---
-title: "Tuscany Pyroconvection-Type Forecast -- ICON-2I 2.2 km -- VALID {DATE}"
+title: "Tuscany Pyroconvection-Type Forecast -- {src_title} -- VALID {DATE}"
 subtitle: "3-hourly, 24 h. Run {RUNDATE} {RUN:02d}Z. Method after Castellnou et al. (2022), JGR-Atmos."
 geometry: a4paper, landscape, margin=1.2cm
 fontsize: 9pt
@@ -182,40 +274,19 @@ the atmospheric ceiling.
 ## Method and its limits (read this before using the classes)
 
 The column is classified from a **real vertical profile**, not a standard atmosphere:
-per-cell heights come from the model geopotential (FI), the mixing depth from the
-**bulk Richardson number** (first Rib >= 0.33 above 200 m AGL, referenced to the 2 m /
-10 m state), the LCL from the exact **Bolton (1980)** formula, and the humidity at the
-ABL top from the model's RH. The cap gamma-theta is taken over ABL+200 m to ABL+1200 m.
+{heights_txt}, the mixing depth from the **bulk Richardson number** (first Rib >= 0.33
+above 200 m AGL, referenced to the 2 m / 10 m state), the LCL from the exact
+**Bolton (1980)** formula, and the humidity at the ABL top from the model's RH. The cap
+gamma-theta is taken over ABL+200 m to ABL+1200 m.
 
-The **mixed-layer stability** diagnostic is the weakest link in this product, and is a
-*proxy*, not a measurement. Validated against IGRA radiosondes (JJA 12Z, period of record,
-n=2835), a 5-pressure-level column contains only 0-2 model levels inside the mixed layer --
-one or none in 92% of coastal columns -- and the lowest sits in the superadiabatic surface
-layer. The mixed-layer dtheta/dz is therefore **not measurable from this archive**: fitting
-it across the in-mixed-layer levels has no skill (Youden J ~ 0.00), and measuring theta up to
-the Rib ABL top folds in the entrainment jump (Delta-theta), which Castellnou et al. (2022,
-sec.2.1.1) treat as a variable *separate* from the gradient the ladder conditions on.
+{ml_para}
 
-What is used instead is the **parcel mixing depth** as a proxy: at the 1.1e-3 K/m threshold
-the criterion reduces to "well-mixed layer >= 455 m deep". It is the only candidate with
-skill (J = 0.29 inland / 0.55 coastal, r = +0.50 against the radiosonde truth). It
-**over-flags**: inland specificity is 0.29, so of the columns that are truly stable it still
-calls ~71% pyroCu-capable (sensitivity 0.99 -- it rarely misses a capable column).
-
-**Consequence: read the classes as a screening flag, not as calibrated counts.** The class
-*totals* on these maps are not quantitatively trustworthy. Resolving this requires more
-vertical levels (ERA5's 37 pressure levels, or ICON native model levels), which the
-open-data archive does not publish. Set `PYROCONV_ML_METHOD=surface_to_abl` or `mid_layer`
-for the superseded measurements.
-
-**Ladder actually used for this run: `{ladder_txt}`** ({n_levels} usable pressure
-levels). The full method has a fifth diagnostic -- the distance from the ABL/LCL to
-the height of maximum wind shear -- but locating a shear *maximum* needs a resolved
-profile, and the ICON-2I open-data archive publishes only 5-6 pressure levels. The
-classifier therefore **drops the shear test rather than invent one** from an
-interpolant; the shear clause is a *necessary* condition for the top class, so
-omitting it makes class 4 somewhat **easier** to reach here than in the full method.
-Treat class 4 as an alert to inspect the column, not as a calibrated probability.
+**Ladder actually used for this run: `{ladder_txt}`.** The full method has a fifth
+diagnostic -- the distance from the ABL/LCL to the height of maximum wind shear -- which
+this product does not yet compute, so the four-diagnostic ladder runs. The shear clause is a
+*necessary* condition for the top class, so omitting it makes class 4 somewhat **easier** to
+reach here than in the full method. Treat class 4 as an alert to inspect the column, not as a
+calibrated probability.
 
 The classes express atmospheric predisposition **given a fire of sufficient power**;
 in the gated panel that power is computed, not assumed. They are paper-informed
@@ -243,8 +314,7 @@ thresholds, not locally validated ones.
 
 | Diagnostic | Threshold | Effect |
 |:--|:--|:--|
-| ML stability *proxy*: parcel mixing depth (see Method) | depth < 455 m ("stable") | Convection plume only -- no pyroCu |
-| ML stability proxy | depth >= 455 m (= dtheta/dz <= 1.1e-3 K/m) | Column is pyroCu-capable (weak filter: spec. 0.29 inland) |
+{ml_rows}
 | LCL / ABL ratio | 1.0 -- 1.60 | Overshooting pyroCu (brief) |
 | LCL / ABL ratio | < 1.0 | Resilient pyroCu (persistent) |
 | LCL / ABL ratio | <= 1.10 (+ conditions below) | Admissible for deep pyroCu / pyroCb |
@@ -271,10 +341,7 @@ stricter at the top: they additionally require a moist ABL top and an LCL close 
 | SCQ41 | pyroCu, not pyroCb | < 1 | unstable | 5.1e-3 (strong cap) |
 | SCQ51 | Deep pyroCu / pyroCb | < 1 | unstable | 3.9e-3 (weak cap) |
 
-Forcing: ICON-2I 2.2 km full-Italy GRIB (MISTRAL / AgenziaItaliaMeteo, CC-BY), Tuscany subset:
-geopotential, temperature, RH and wind on {n_levels} pressure levels plus the 2 m / 10 m state,
-surface pressure and orography. Classifier: pyflam.pyroconvection_type (bulk-Richardson ABL,
-Bolton LCL, mixed-layer dtheta/dz, cap gamma-theta, ABL-top RH; no surface CAPE).
+{forcing_txt}
 Gate: Rothermel + Cruz-2005 crown on the .lcp fuels with forecast moisture/wind.
 Per-hour diagnostic rasters (ABL, LCL, LCL/ABL, ML dtheta/dz, cap, RH-top) accompany the classes.
 Province borders: ISTAT-derived (openpolis geojson-italy). Generated by tests/pyroconv_daily.py.
@@ -311,9 +378,25 @@ def export_diagnostics(diags, lat, lon):
                 d.write(arr, 1)
 
 
+def eu_diag_for_hour(h, lat, lon):
+    """Hybrid path: ICON-EU model-level diagnostics for valid hour ``h``, on the 2.2 km grid.
+
+    Fetches one ICON-EU forecast step (cached per step), computes the profile diagnostics
+    from the native model levels (real in-mixed-layer dtheta/dz), and regrids them onto the
+    ICON-2I grid the product renders on.
+    """
+    step = int((VALIDDT.replace(hour=h) - RUNDT).total_seconds() // 3600)
+    files = fetch_icon_eu(DT, run=RUN, step=step, cache_dir=os.path.join(EU_CACHE, f"{step:03d}"))
+    eud = read_icon_eu(files, (LAT1, LON0, LAT0, LON1), ICON_EU_MODEL_LEVELS)
+    ediag = iconeu_diagnostics(eud, ml_method="fit_in_ml")
+    return regrid_diagnostics(ediag, eud["lat"], eud["lon"], lat, lon)
+
+
 def main():
     os.makedirs(OUTDIR, exist_ok=True)
-    sys.stderr.write(f"[pyroconv_daily] {DATE} {RUN:02d}Z -> {OUTDIR}\n")
+    sys.stderr.write(f"[pyroconv_daily] {DATE} {RUN:02d}Z -> {OUTDIR}  [source={SOURCE}]\n")
+    # ICON-2I is always fetched: it supplies the surface fields for the fuel gate and the
+    # 2.2 km grid everything renders on, whether or not the atmosphere comes from ICON-EU.
     files = fetch_icon2i_mistral(DT, run=RUN, cache_dir=CACHE,
                                  fields=ICON2I_PROFILE_FIELDS)
     d = read_icon2i_profile(files, (LAT1, LON0, LAT0, LON1), RUNDT, VALIDDT, HOURS)
@@ -325,7 +408,12 @@ def main():
 
     pot, gate, diags, ladders = [], [], [], set()
     for hi, si in enumerate(idx):
-        diag = profile_diagnostics(d, si, ml_method=ML_METHOD)
+        if SOURCE == "hybrid":
+            diag = eu_diag_for_hour(HOURS[hi], lat, lon)
+            tag = f"EU model levels, ~{diag['n_levels']} in ML"
+        else:
+            diag = profile_diagnostics(d, si, ml_method=ML_METHOD)
+            tag = f"2I levels={diag['n_levels']}"
         diags.append(diag)
         cls, used = classify_profile(diag, ladder=LADDER)
         pot.append(cls); ladders.update(used)
@@ -334,7 +422,7 @@ def main():
             fli = fli_grid(T2m_c[si], RH_sfc[si], wsp, lf, burn)
             g, _ = classify_profile(diag, fli=fli, ladder=LADDER)
             gate.append(g)
-        sys.stderr.write(f"  {HOURS[hi]:02d}Z  levels={diag['n_levels']}  "
+        sys.stderr.write(f"  {HOURS[hi]:02d}Z  {tag}  "
                          f"ladder={','.join(sorted(used)) or '-'}\n")
 
     png_pot = render(np.stack(pot), lat, lon, "potential")

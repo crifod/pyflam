@@ -74,8 +74,33 @@ any skill:
 (sensitivity 0.99, so it rarely *misses* a capable column). The ML-stability gate is a
 screening filter, not a calibrated one.
 
-Fixing this properly needs more vertical levels — ERA5's 37 pressure levels, or ICON native
-model levels. The open-data archive publishes neither.
+Fixing this needs more vertical levels than the Italian 2.2 km open data publishes — which
+is exactly what the **hybrid** path adds (below).
+
+## 5. The hybrid: ICON-EU model levels fix it
+
+ICON-2I open data has no model levels (MeteoHub publishes only `..._SURFACE_PRESSURE_LEVELS`,
+and `ICON_2I_RUC` carries the same 6 pressure levels). **ICON-EU** (DWD open data) is coarser
+horizontally (6.5 km vs 2.2 km) but publishes the native 74 model levels + `HHL` heights.
+Degrading the same soundings onto the real ICON-EU model-level heights (decoded from HHL over
+Tuscany: 10, 42, 94, 164, 249, 348, 461, 586, 723, 872, 1033, 1205, 1388 m …):
+
+| grid | levels in ML | ML-grad bias | MAE | Youden J | **Rib ABL bias** |
+|:--|--:|--:|--:|--:|--:|
+| ICON-2I (5 p-lev) | 2.1 | −4.7e-4 | 4.8e-4 | 0.00 | **−696 m** |
+| ICON-EU (20 p-lev) | 4.3 | −3.8e-4 | 4.2e-4 | 0.01 | — |
+| **ICON-EU (real model levels)** | **10.4** | **−0.4e-4** | 2.6e-4 | **0.37** | **−73 m** |
+
+Model levels — *not* ICON-EU's pressure levels, which barely help — make the mixed-layer
+gradient a genuine measurement (bias 5× smaller) and fix the ABL itself (−696 m → −73 m).
+
+The production **hybrid** product (`PYROCONV_SOURCE=hybrid` in `tests/pyroconv_daily.py`)
+takes the atmospheric profile from ICON-EU model levels (`ml_method="fit_in_ml"`, a real
+least-squares dtheta/dz), regrids it onto the 2.2 km grid, and keeps ICON-2I's 2.2 km surface
+fields for the fuel gate — where fine terrain actually matters. The threshold still sits inside
+the ±2.6e-4 error bar, so class *counts* are indicative, not exact; but the diagnostic is now a
+measurement rather than a proxy. `scripts/validation/sounding_degradation.py` and the ICON-EU
+level lists reproduce the table above.
 
 ## References
 

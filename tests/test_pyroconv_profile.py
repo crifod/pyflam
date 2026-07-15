@@ -357,6 +357,105 @@ def test_unknown_ml_method_raises():
         profile_diagnostics({}, 0, ml_method="nonsense")
 
 
+# --- ICON-EU model-level path (the hybrid atmosphere) -------------------------
+
+def _iconeu_core():
+    import sys, os
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from pyflam_gui.core import pyroconv as pc
+    return pc
+
+
+def test_masked_lin_slope_recovers_a_known_gradient():
+    """The in-ML least-squares fit must return the true slope, and nan below 3 points."""
+    pc = _iconeu_core()
+    z = np.linspace(0, 2000, 11)[:, None, None] * np.ones((11, 2, 3))
+    slope_true = 3.0e-3
+    theta = 300.0 + slope_true * z
+    mask = z <= 1500.0
+    got = pc._masked_lin_slope(z, theta, mask)
+    assert np.allclose(got, slope_true, atol=1e-6)
+    # a column with only two masked levels -> nan (cannot fit)
+    thin = z <= 200.0
+    assert np.all(np.isnan(pc._masked_lin_slope(z, theta, thin)))
+
+
+def test_regrid_to_is_identity_on_the_same_grid_and_interpolates():
+    pc = _iconeu_core()
+    lat = np.array([42.0, 43.0, 44.0]); lon = np.array([10.0, 11.0, 12.0])
+    f = np.arange(9.0).reshape(3, 3)
+    same = pc.regrid_to(f, lat, lon, lat, lon)
+    assert np.allclose(same, f)
+    # midpoint of a linear ramp interpolates to the mean of its neighbours
+    mid = pc.regrid_to(f, lat, lon, np.array([42.5]), np.array([10.5]))
+    assert mid[0, 0] == pytest.approx((f[0, 0] + f[0, 1] + f[1, 0] + f[1, 1]) / 4)
+
+
+def test_iconeu_diagnostics_measures_a_well_mixed_column():
+    """On a synthetic model-level column, fit_in_ml recovers a near-zero ML gradient and
+    the diagnostics dict is classifiable -- i.e. the hybrid atmosphere path is sound."""
+    pc = _iconeu_core()
+    ny, nx = 2, 3
+    # 24 model levels, fine near the surface. Well-mixed theta to ~1400 m, then a cap.
+    z1d = np.array([10, 40, 90, 160, 250, 350, 460, 590, 720, 870, 1030, 1200, 1390,
+                    1580, 1790, 2000, 2230, 2460, 2710, 2960, 3230, 3500, 3790, 4080], float)
+    nlev = z1d.size
+    theta1d = np.where(z1d <= 1400, 305.0, 305.0 + 6.0e-3 * (z1d - 1400))   # ~0 in ML
+    # pressure from a rough hydrostatic column; RH moderate; light sheared wind
+    p1d = 1000e2 * np.exp(-z1d / 8500.0)
+    T1d = theta1d * (p1d / 1e5) ** 0.286
+    QV1d = np.full(nlev, 0.008)
+    U1d = 2.0 + 0.004 * z1d; V1d = np.zeros(nlev)
+    g = lambda a: np.repeat(np.repeat(a[:, None, None], ny, 1), nx, 2)
+
+    d = dict(lat=np.array([43.0, 43.1]), lon=np.array([11.0, 11.1, 11.2]),
+             levels=tuple(range(74, 74 - nlev, -1)),
+             z=g(z1d), T=g(T1d), QV=g(QV1d), P=g(p1d), U=g(U1d), V=g(V1d),
+             T2m=np.full((ny, nx), 306.0), Td2m=np.full((ny, nx), 291.0),
+             PS=np.full((ny, nx), 1000e2), U10=np.full((ny, nx), 2.0),
+             V10=np.zeros((ny, nx)), frland=np.ones((ny, nx)), orog=np.zeros((ny, nx)))
+
+    diag = pc.iconeu_diagnostics(d, ml_method="fit_in_ml")
+    assert diag["n_levels"] >= 8, "should see many levels inside the mixed layer"
+    assert np.all(np.isfinite(diag["ml_grad"])), "gradient measurable on model levels"
+    assert np.nanmedian(diag["ml_grad"]) < 1.1e-3, "a well-mixed column reads as capable"
+    # the dict must be classifiable and regriddable exactly like the ICON-2I one
+    cls, used = pc.classify_profile(diag, ladder="noshear")
+    assert cls.shape == (ny, nx)
+    rg = pc.regrid_diagnostics(diag, d["lat"], d["lon"],
+                               np.array([43.05]), np.array([11.05]))
+    assert set(rg) >= {"abl", "ml_grad", "lcl_ratio", "gamma", "rh_top", "valid"}
+
+
+def test_fetch_icon_eu_builds_expected_urls(monkeypatch, tmp_path):
+    """No network: capture the URLs and local names fetch_icon_eu would request."""
+    import pyflam.atmosphere as atm
+    from datetime import datetime
+
+    calls = []
+
+    def fake_urlretrieve(url, *a, **k):
+        calls.append(url)
+        p = tmp_path / "raw.bz2"
+        import bz2
+        p.write_bytes(bz2.compress(b"x"))
+        return str(p), None
+
+    monkeypatch.setattr(atm.urllib.request if hasattr(atm, "urllib") else __import__(
+        "urllib.request", fromlist=["request"]), "urlretrieve", fake_urlretrieve, raising=False)
+    import urllib.request as ur
+    monkeypatch.setattr(ur, "urlretrieve", fake_urlretrieve)
+
+    out = atm.fetch_icon_eu(datetime(2026, 7, 14), run=0, step=12,
+                            cache_dir=str(tmp_path), levels=(74, 73))
+    # model levels for 5 vars x 2 levels, HHL for 74,73,75, 5 surface, FR_LAND
+    assert f"{atm.ICON_EU_BASE}/00/t/" in "".join(c for c in calls if "_74_T." in c)
+    assert any("model-level_2026071400_012_74_T.grib2.bz2" in c for c in calls)
+    assert any("time-invariant_2026071400_75_HHL.grib2.bz2" in c for c in calls)
+    assert any(c.endswith("FR_LAND.grib2.bz2") for c in calls)
+    assert out["T74"].endswith("T74.grib2") and out["HHL75"].endswith("HHL75.grib2")
+
+
 # --- the continuous score ------------------------------------------------------
 
 def test_score_is_bounded_and_ranks_columns():

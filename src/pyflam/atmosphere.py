@@ -1764,3 +1764,83 @@ def fetch_icon2i_mistral(date, run: int = 0, *, cache_dir: str = ".",
             urllib.request.urlretrieve(url, dst)            # raises on HTTP error
         out[name] = dst
     return out
+
+
+# --- ICON-EU (DWD open data): coarser horizontally (6.5 km) but with the native
+# vertical grid, which the Italian 2.2 km product does not publish. Used for the
+# hybrid pyroconvection product: profile diagnostics (ABL, mixed-layer stability,
+# cap, LCL) from the model levels, fuel gate from ICON-2I's 2.2 km surface fields.
+# See scripts/validation/: on the model levels the mixed-layer dtheta/dz becomes a
+# genuine measurement (~10 levels inside the mixed layer, vs ~2 on ICON-2I).
+
+ICON_EU_BASE = "https://opendata.dwd.de/weather/nwp/icon-eu/grib"
+
+# ICON-EU has 74 model levels; the lowest ~24 span the surface to ~4 km (level 74 is
+# the lowest, ~10 m AGL, level 51 ~4 km). HHL is a *half*-level height field, so the
+# full level k needs half levels k and k+1 -- hence the +1 fetched below.
+ICON_EU_MODEL_LEVELS = tuple(range(74, 50, -1))     # ascending in height (74 -> 51)
+ICON_EU_MODEL_VARS = ("T", "QV", "U", "V", "P")
+ICON_EU_SURFACE_VARS = ("T_2M", "TD_2M", "PS", "U_10M", "V_10M")
+
+
+def fetch_icon_eu(date, run: int = 0, step: int = 0, *, cache_dir: str = ".",
+                  levels=ICON_EU_MODEL_LEVELS, model_vars=ICON_EU_MODEL_VARS,
+                  surface_vars=ICON_EU_SURFACE_VARS, base_url: str = ICON_EU_BASE,
+                  force: bool = False, timeout: int = 600) -> dict:
+    """Download one ICON-EU forecast step (model levels + surface) from DWD open data.
+
+    ``date`` is the run day, ``run`` the run hour (00/03/.../21 -- ICON-EU has 8 runs
+    a day), ``step`` the forecast lead in hours. Downloads, for that step, each
+    ``model_vars`` variable on every model level in ``levels`` (default the lowest 24,
+    surface to ~4 km), the ``surface_vars`` single-level fields, the ``HHL`` half-level
+    heights and ``FR_LAND`` (both time-invariant). Files are bz2 on the server and are
+    stored decompressed in ``cache_dir``; anything already present is skipped unless
+    ``force``. Returns ``{local_name: path}`` -- ``"{VAR}{level}"`` for model levels,
+    ``"HHL{level}"`` for the half-level heights, and the bare variable name otherwise.
+
+    One step is ~200 MB (24 levels x 5 vars). The daily hybrid product fetches 8 steps
+    per run (~1.6 GB), against ~2.6 GB for the ICON-2I product; ICON-EU serves one small
+    file per level/step rather than whole-domain blobs.
+    """
+    import bz2
+    import os
+    import urllib.request
+
+    stamp = f"{date:%Y%m%d}{int(run):02d}"
+    os.makedirs(cache_dir, exist_ok=True)
+
+    def grab(url, dst):
+        if force or not os.path.exists(dst) or os.path.getsize(dst) == 0:
+            tmp, _ = urllib.request.urlretrieve(url)        # raises on HTTP error
+            with open(tmp, "rb") as f:
+                raw = bz2.decompress(f.read())
+            os.remove(tmp)
+            with open(dst, "wb") as f:
+                f.write(raw)
+
+    out = {}
+    ml = f"{base_url}/{int(run):02d}"
+    for var in model_vars:
+        for lev in levels:
+            fn = (f"icon-eu_europe_regular-lat-lon_model-level_{stamp}_"
+                  f"{int(step):03d}_{lev}_{var}.grib2")
+            dst = os.path.join(cache_dir, f"{var}{lev}.grib2")
+            grab(f"{ml}/{var.lower()}/{fn}.bz2", dst)
+            out[f"{var}{lev}"] = dst
+    # HHL half levels: full level k lies between half levels k and k+1.
+    for lev in tuple(levels) + (max(levels) + 1,):
+        fn = f"icon-eu_europe_regular-lat-lon_time-invariant_{stamp}_{lev}_HHL.grib2"
+        dst = os.path.join(cache_dir, f"HHL{lev}.grib2")
+        grab(f"{ml}/hhl/{fn}.bz2", dst)
+        out[f"HHL{lev}"] = dst
+    for var in surface_vars:
+        fn = (f"icon-eu_europe_regular-lat-lon_single-level_{stamp}_"
+              f"{int(step):03d}_{var}.grib2")
+        dst = os.path.join(cache_dir, f"{var}.grib2")
+        grab(f"{ml}/{var.lower()}/{fn}.bz2", dst)
+        out[var] = dst
+    fn = f"icon-eu_europe_regular-lat-lon_time-invariant_{stamp}_FR_LAND.grib2"
+    dst = os.path.join(cache_dir, "FR_LAND.grib2")
+    grab(f"{ml}/fr_land/{fn}.bz2", dst)
+    out["FR_LAND"] = dst
+    return out
