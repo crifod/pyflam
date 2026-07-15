@@ -19,14 +19,18 @@ Config via env (all optional):
   PYROCONV_LCP    .lcp path    (default: the Tuscany canopy .lcp)
   PYROCONV_LADDER adaptive | noshear | shear | castellnou  (default: adaptive)
   PYROCONV_ML_METHOD  surface_to_parcel | surface_to_abl | mid_layer  (default: surface_to_parcel)
-  PYROCONV_SOURCE     icon2i | hybrid   (default: icon2i)
+  PYROCONV_SOURCE     hybrid | icon2i   (default: hybrid, auto-falls back to icon2i)
   PYROCONV_HOURS      subset of valid hours, e.g. "12" or "9,12,15" (default: all 8)
 Usage:  PYTHONPATH=src python tests/pyroconv_daily.py [YYYY-MM-DD] [run]
 
-SOURCE=hybrid takes the atmospheric profile from ICON-EU model levels (the mixed-layer
-dtheta/dz is a genuine measurement there, ~10 levels inside the mixed layer, vs a proxy on
-ICON-2I's 5 pressure levels) and keeps ICON-2I's 2.2 km surface fields for the fuel gate.
-It downloads one ICON-EU step per valid hour (~200 MB each), so use PYROCONV_HOURS to test.
+SOURCE=hybrid (the default) takes the atmospheric profile from ICON-EU model levels -- the
+mixed-layer dtheta/dz is a genuine measurement there (~10 levels inside the mixed layer),
+against a mixing-depth proxy on ICON-2I's 5 pressure levels -- and keeps ICON-2I's 2.2 km
+surface fields for the fuel gate. It downloads one ICON-EU step per valid hour (~200 MB each).
+If the ICON-EU run is not yet published (or any step fails), the whole run **automatically
+falls back to icon2i**, so a missing ICON-EU run never breaks the product; the filenames and
+PDF then reflect the source actually used. Set SOURCE=icon2i to force the 5-pressure-level
+product. Use PYROCONV_HOURS to test the (bandwidth-heavy) hybrid path on one hour.
 """
 from __future__ import annotations
 
@@ -84,14 +88,24 @@ CACHE = os.environ.get("PYROCONV_CACHE") or f"/tmp/pyflam_icon2i/{STAMP}"
 LCP = (os.environ.get("PYROCONV_LCP")
        or "/Users/cristianofoderi/DATI/FUEL_TOS/pyflam_canopy_tuscany/canopy_tuscany.lcp")
 # Data source for the ATMOSPHERE (defined here because filenames below depend on it).
-# "icon2i" (default) uses ICON-2I 2.2 km's 5 pressure levels throughout. "hybrid" takes
-# the profile diagnostics from ICON-EU model levels (~10 levels inside the mixed layer,
-# so dtheta/dz is measurable via ml_method=fit_in_ml), regrids them onto the 2.2 km grid,
-# and keeps ICON-2I's surface fields for the fuel gate.
-SOURCE = os.environ.get("PYROCONV_SOURCE", "icon2i")
-# Model token in output filenames, so hybrid and icon2i products do not clobber each other.
-MODEL_TAG = "hybrid" if SOURCE == "hybrid" else "icon2i"
+# "hybrid" (default) takes the profile diagnostics from ICON-EU model levels (~10 levels
+# inside the mixed layer, so dtheta/dz is measurable via ml_method=fit_in_ml), regrids them
+# onto the 2.2 km grid, and keeps ICON-2I's surface fields for the fuel gate. "icon2i" uses
+# ICON-2I 2.2 km's 5 pressure levels throughout. SOURCE is what was *requested*;
+# EFFECTIVE_SOURCE is what actually ran (main() downgrades hybrid -> icon2i if ICON-EU is
+# unavailable). Filenames and PDF track EFFECTIVE_SOURCE.
+SOURCE = os.environ.get("PYROCONV_SOURCE", "hybrid")
+EFFECTIVE_SOURCE = SOURCE
+MODEL_TAG = "hybrid" if EFFECTIVE_SOURCE == "hybrid" else "icon2i"
 RASTERDIR = os.path.join(OUTDIR, f"rasters_{MODEL_TAG}_{DATE}")
+
+
+def _apply_source(src):
+    """Set the effective source and the filename/raster paths that depend on it."""
+    global EFFECTIVE_SOURCE, MODEL_TAG, RASTERDIR
+    EFFECTIVE_SOURCE = src
+    MODEL_TAG = "hybrid" if src == "hybrid" else "icon2i"
+    RASTERDIR = os.path.join(OUTDIR, f"rasters_{MODEL_TAG}_{DATE}")
 # Which decision ladder to run. "adaptive" (default) uses the richest one the data
 # support: on ICON-2I open data that is the 4-diagnostic ladder, because 5-6 pressure
 # levels cannot locate a shear maximum. Set "castellnou" to reproduce the old
@@ -160,7 +174,7 @@ def render(cats, lat, lon, tag):
             prov.plot(ax=ax[hi], color="0.15", linewidth=0.4)
             ax[hi].set_xlim(ext[0], ext[1]); ax[hi].set_ylim(ext[2], ext[3])
         ax[hi].set_title(f"{DATE} {hour:02d}Z", fontsize=8); ax[hi].set_xticks([]); ax[hi].set_yticks([])
-    src_label = ("ICON-EU model levels + ICON-2I 2.2 km gate" if SOURCE == "hybrid"
+    src_label = ("ICON-EU model levels + ICON-2I 2.2 km gate" if EFFECTIVE_SOURCE == "hybrid"
                  else "ICON-2I 2.2 km")
     fig.suptitle(f"Pyroconvection type -- {TAG_TITLE.get(tag, tag)}\n{src_label} -- "
                  f"Tuscany -- VALID {DATE} (run {RUNDATE} {RUN:02d}Z)", fontsize=11)
@@ -187,7 +201,7 @@ def build_pdf(png_pot, png_gate, ladders, n_levels):
     md = os.path.join(OUTDIR, f"pyroconv_{MODEL_TAG}_{DATE}.md")
     pdf = os.path.join(OUTDIR, f"pyroconv_tuscany_{MODEL_TAG}_{DATE}.pdf")
     ladder_txt = ", ".join(ladders) if ladders else "none (no classifiable cell)"
-    if SOURCE == "hybrid":
+    if EFFECTIVE_SOURCE == "hybrid":
         src_title = "ICON-EU model levels + ICON-2I 2.2 km gate"
         heights_txt = ("per-cell heights from the ICON-EU model-level heights (HHL)")
         ml_rows = (
@@ -392,9 +406,29 @@ def eu_diag_for_hour(h, lat, lon):
     return regrid_diagnostics(ediag, eud["lat"], eud["lon"], lat, lon)
 
 
+def hybrid_diags_or_none(lat, lon):
+    """All-hours ICON-EU diagnostics, or ``None`` if the ICON-EU run is unavailable.
+
+    Built atomically: if *any* hour's ICON-EU fetch/read fails (e.g. the run is not yet
+    published, or a step 404s), the whole attempt is abandoned and the caller falls back to
+    ICON-2I -- a run is never a mix of two sources.
+    """
+    try:
+        out = []
+        for h in HOURS:
+            diag = eu_diag_for_hour(h, lat, lon)
+            out.append(diag)
+            sys.stderr.write(f"  {h:02d}Z  EU model levels, ~{diag['n_levels']} in ML\n")
+        return out
+    except Exception as e:
+        sys.stderr.write(f"[pyroconv_daily] hybrid (ICON-EU) unavailable ({e}); "
+                         f"falling back to icon2i\n")
+        return None
+
+
 def main():
     os.makedirs(OUTDIR, exist_ok=True)
-    sys.stderr.write(f"[pyroconv_daily] {DATE} {RUN:02d}Z -> {OUTDIR}  [source={SOURCE}]\n")
+    sys.stderr.write(f"[pyroconv_daily] {DATE} {RUN:02d}Z -> {OUTDIR}  [requested={SOURCE}]\n")
     # ICON-2I is always fetched: it supplies the surface fields for the fuel gate and the
     # 2.2 km grid everything renders on, whether or not the atmosphere comes from ICON-EU.
     files = fetch_icon2i_mistral(DT, run=RUN, cache_dir=CACHE,
@@ -406,14 +440,18 @@ def main():
     T2m_c = d["T2m"] - 273.15
     RH_sfc = relative_humidity_from_dewpoint(T2m_c, d["Td2m"] - 273.15)
 
+    # Resolve the atmosphere source: hybrid if requested and ICON-EU is available, else
+    # icon2i. Everything downstream (filenames, PDF, labels) follows EFFECTIVE_SOURCE.
+    hybrid_diags = hybrid_diags_or_none(lat, lon) if SOURCE == "hybrid" else None
+    _apply_source("hybrid" if hybrid_diags is not None else "icon2i")
+    sys.stderr.write(f"[pyroconv_daily] effective source: {EFFECTIVE_SOURCE}\n")
+
     pot, gate, diags, ladders = [], [], [], set()
     for hi, si in enumerate(idx):
-        if SOURCE == "hybrid":
-            diag = eu_diag_for_hour(HOURS[hi], lat, lon)
-            tag = f"EU model levels, ~{diag['n_levels']} in ML"
+        if hybrid_diags is not None:
+            diag = hybrid_diags[hi]
         else:
             diag = profile_diagnostics(d, si, ml_method=ML_METHOD)
-            tag = f"2I levels={diag['n_levels']}"
         diags.append(diag)
         cls, used = classify_profile(diag, ladder=LADDER)
         pot.append(cls); ladders.update(used)
@@ -422,8 +460,6 @@ def main():
             fli = fli_grid(T2m_c[si], RH_sfc[si], wsp, lf, burn)
             g, _ = classify_profile(diag, fli=fli, ladder=LADDER)
             gate.append(g)
-        sys.stderr.write(f"  {HOURS[hi]:02d}Z  {tag}  "
-                         f"ladder={','.join(sorted(used)) or '-'}\n")
 
     png_pot = render(np.stack(pot), lat, lon, "potential")
     png_gate = render(np.stack(gate), lat, lon, "gated") if gate else png_pot
