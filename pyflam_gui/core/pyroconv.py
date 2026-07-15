@@ -652,7 +652,7 @@ def read_icon_eu(files, bbox, levels):
         orog=orog)
 
 
-def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml"):
+def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True):
     """Profile diagnostics from an ICON-EU model-level stack (:func:`read_icon_eu`).
 
     Same output dict as :func:`profile_diagnostics` (``abl``, ``parcel_ml``, ``lcl``,
@@ -666,7 +666,7 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml"):
         theta_kelvin, specific_humidity_from_rh, virtual_potential_temperature,
         saturation_vapour_pressure_pa, bulk_richardson_abl_grid, parcel_mixing_depth_grid,
         lcl_height_bolton_m, relative_humidity_from_dewpoint, DEFAULT_PYROCONV_THRESHOLDS,
-        _EPSILON)
+        shear_height_grid, shear_distance_grid, _EPSILON)
     th = thresholds or DEFAULT_PYROCONV_THRESHOLDS
 
     z, T, QV, P, U, V = d["z"], d["T"], d["QV"], d["P"], d["U"], d["V"]
@@ -704,9 +704,17 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml"):
     with np.errstate(invalid="ignore", divide="ignore"):
         ratio = lcl / np.where(abl > 0, abl, np.nan)
 
+    # The fifth diagnostic: the model levels resolve a shear-maximum height (the coarse
+    # pressure-level path cannot), so classify_profile(ladder="adaptive") runs the full
+    # 5-diagnostic ladder where shear_dist is finite.
+    if shear:
+        shear_dist = shear_distance_grid(shear_height_grid(z, U, V), abl, lcl)
+    else:
+        shear_dist = np.full(abl.shape, np.nan)
+
     valid = np.isfinite(abl) & np.isfinite(ratio) & np.isfinite(ml_grad)
     return dict(abl=abl, lcl=lcl, lcl_ratio=ratio, ml_grad=ml_grad, gamma=gamma,
-                rh_top=rh_top, shear_dist=np.full(abl.shape, np.nan), valid=valid,
+                rh_top=rh_top, shear_dist=shear_dist, valid=valid,
                 parcel_ml=parcel_ml, n_levels=int(np.median(n_in_ml)))
 
 

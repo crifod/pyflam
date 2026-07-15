@@ -162,6 +162,20 @@ def test_shear_none_always_declines():
     assert np.isnan(shear_height_none([1, 2, 3], [1, 2, 3], [1, 2, 3]))
 
 
+def test_shear_height_grid_finds_the_planted_layer_per_cell():
+    """The gridded (model-level) shear height locates a planted shear layer over a grid."""
+    from pyflam.atmosphere import shear_height_grid, shear_distance_grid
+    z1 = np.linspace(0, 6000, 25)
+    u1 = np.where(z1 < 2000, 2.0, 2.0 + 0.03 * (z1 - 2000))     # shear kicks in at 2 km
+    u1 = np.where(z1 > 2500, 2.0 + 0.03 * 500, u1)              # ...and stops at 2.5 km
+    g = lambda a: np.repeat(np.repeat(a[:, None, None], 2, 1), 3, 2)
+    zs = shear_height_grid(g(z1), g(u1), g(np.zeros_like(z1)))
+    assert zs.shape == (2, 3)
+    assert np.all((zs >= 1900) & (zs <= 2600))
+    sd = shear_distance_grid(zs, np.full((2, 3), 2100.0), np.full((2, 3), 1500.0))
+    assert np.all(np.isfinite(sd)) and np.all(sd >= 0)
+
+
 def test_shear_adaptive_refuses_a_coarse_profile_but_uses_a_rich_one():
     """The whole point of variant 3: 5 levels -> nan; 61 levels -> a real height.
 

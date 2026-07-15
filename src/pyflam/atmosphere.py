@@ -694,7 +694,13 @@ class PyroconvThresholds:
     lcl_ratio_deep_max: float = 1.10
     lcl_ratio_resilient_max: float = 1.00
     shear_distance_deep: float = 0.30
-    rh_top_moist: float = 80.0
+    # RH at the ABL top required for classes 3-4 (resilient/deep). The reference (MARI)
+    # port used 80%, but that is too strict for dry Mediterranean fire weather -- on a
+    # well-mixed summer afternoon only ~1-2% of columns pass it, gating pyroCu/pyroCb out
+    # exactly in the regime where they occur. Lowered to 60% (validated against the Catalan
+    # Bombers ICON-EU product for 2026-07-15: 60% brings the deep-pyroCb fraction into
+    # agreement, e.g. 3.0% vs their 3.4% at 15Z, and its spatial pattern over the ranges).
+    rh_top_moist: float = 60.0
     residual_score: float = 35.0
     min_abl_m: float = _ABL_MIN_M
     max_abl_m: float = _ABL_MAX_M
@@ -934,13 +940,51 @@ def parcel_mixing_depth_grid(height_agl_m, theta, theta_surface, *,
     return np.clip(out, min_m, max_m)
 
 
+def shear_height_grid(height_agl_m, wind_u, wind_v, *, zmin: float = 200.0,
+                      zmax: float = 6000.0):
+    """Height (m AGL) of maximum vector wind shear over a grid, from consecutive levels.
+
+    The gridded, native-model-level analogue of :func:`shear_height_window`. On a resolved
+    model-level column (dz of tens to a few hundred metres) the consecutive-level shear
+    ``|dU/dz|`` already resolves the shear maximum, so no 50 m re-interpolation is needed and
+    the whole grid is one vectorised op instead of a per-cell loop. This is what makes the
+    fifth (shear) diagnostic affordable on the ICON-EU model-level path, which the coarse
+    5-pressure-level path cannot supply (hence :func:`shear_height_none` there).
+
+    ``height_agl_m``/``wind_u``/``wind_v`` are ``(nlev, ny, nx)`` stacks with levels ascending
+    in height. Returns the 2-D height of the strongest shear between adjacent levels whose
+    midpoint lies in ``[zmin, zmax]``; ``nan`` where no level pair qualifies.
+    """
+    z = np.asarray(height_agl_m, float)
+    u = np.asarray(wind_u, float)
+    v = np.asarray(wind_v, float)
+    dz = z[1:] - z[:-1]
+    zmid = 0.5 * (z[1:] + z[:-1])
+    with np.errstate(invalid="ignore", divide="ignore"):
+        shear = np.hypot(u[1:] - u[:-1], v[1:] - v[:-1]) / np.where(dz > 1.0, dz, np.nan)
+    ok = (zmid >= zmin) & (zmid <= zmax) & np.isfinite(shear)
+    masked = np.where(ok, shear, -np.inf)
+    k = np.argmax(masked, axis=0)
+    zsel = np.take_along_axis(zmid, k[None, ...], axis=0)[0]
+    return np.where(ok.any(axis=0), zsel, np.nan)
+
+
+def shear_distance_grid(shear_height_m, abl_m, lcl_m):
+    """Gridded ``min(|z_shear - ABL|, |z_shear - LCL|) / ABL`` (the ladder's shear test)."""
+    zs = np.asarray(shear_height_m, float)
+    abl = np.asarray(abl_m, float)
+    lcl = np.asarray(lcl_m, float)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        sd = np.minimum(np.abs(zs - abl), np.abs(zs - lcl)) / np.where(abl > 0, abl, np.nan)
+    return np.where(np.isfinite(zs) & (abl > 0), sd, np.nan)
+
+
 # --- shear height: three implementations (see pyroconvection_type) -------------
 #
 # The distance from the ABL/LCL to the height of maximum wind shear is the fifth
-# diagnostic of the operational ladder. It is the one diagnostic that a coarse
-# pressure-level model cannot honestly supply, so it has three implementations and
-# the classifier picks one by data richness. Variants 1 and 2 are exposed for
-# research use (forcing a path); variant 3 is what the pipeline runs.
+# diagnostic of the operational ladder. On a coarse pressure-level model it cannot be
+# honestly located (three per-column implementations below, one picked by data
+# richness); on the ICON-EU model levels it can, via shear_height_grid above.
 
 def shear_height_window(height_m, wind_u, wind_v, *, zmin: float = 200.0,
                         zmax: float = 6000.0, half_window_m: float = 100.0,
