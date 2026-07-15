@@ -27,3 +27,6 @@ docs/daily/rasters_*/
 # by the profile-based path (a8eb3b4) and not comparable with it -- keeping them alongside
 # the current product would put two different methods in one directory.
 docs/daily/*2026-06-*
+
+# ERA5 validation inputs (~1 MB, re-fetchable via era5_fetch_catalonia.py)
+scripts/validation/*.nc

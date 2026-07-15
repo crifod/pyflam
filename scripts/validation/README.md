@@ -102,6 +102,49 @@ the ±2.6e-4 error bar, so class *counts* are indicative, not exact; but the dia
 measurement rather than a proxy. `scripts/validation/sounding_degradation.py` and the ICON-EU
 level lists reproduce the table above.
 
+## 6. ERA5 referees the ICON-EU product against the Catalan fire service
+
+Compared over Catalonia, the ICON-EU hybrid product and the Catalan fire-service (**Bombers**)
+ICON-EU product agree overnight and (after relaxing the moisture gate, §7) on pyroCb, but
+diverge sharply on the daytime overshoot/surface balance: the Bombers are surface-heavy
+(~62-68% surface, 12-15% overshoot at midday) where the pyflam product is overshoot-heavy
+(~46-52% overshoot). No same-day inland Catalan sounding or WRF was available to adjudicate, so
+we used **ERA5** — an independent model (ECMWF reanalysis, 31 km, 22+ pressure levels), fetched
+for the most recent available days (2026-07-06..10) and run through the *same* classifier.
+
+**ERA5 backs the pyflam product, decisively.** Inland midday LCL/ABL ≈ 1.0-1.2 with a deep
+~2600-3500 m ABL — the overshooting regime — and the class balance is **~58% overshoot / ~14%
+surface**, i.e. *more* overshoot-heavy than the pyflam product and nothing like the Bombers'
+surface-heavy picture. (Coastal cells show LCL/ABL ~2-2.8, the sea-breeze shallow-ABL case,
+which is why a coastal Barcelona sounding alone was misleading.) ERA5 also produces the
+resilient/deep tail on the unstable days (up to ~12% deep on 07-10), independently confirming
+the `rh_top_moist = 60` relaxation. So three independent sources — inland radiosondes (Madrid),
+ERA5, and the resolution model below — all place the truth with the pyflam product.
+
+**Relationship model (reduced → full levels within ERA5).** Degrading ERA5 to each model's
+level count, against the full 22-level reference:
+
+| level set | ABL (m) | LCL/ABL | ML grad | bias vs full |
+|:--|--:|--:|--:|:--|
+| full (22) | 2585 | 1.16 | 1.15e-3 | — |
+| ICON-EU-like (12) | 2759 | 1.15 | 1.05e-3 | **ABL +174 m, ratio −0.01** |
+| ICON-2I-like (5) | 3209 | 1.18 | 6.6e-4 | ABL +623 m, gradient halved |
+
+At ICON-EU's level density the diagnostics are **essentially unbiased** vs the full reanalysis,
+so the "scale-and-adapt" correction to carry to ICON-EU is negligible — ICON-EU can be used
+directly. The 5-level path carries a real +623 m ABL bias and a halved gradient, which is
+exactly why the model-level hybrid was needed. This is the gridded ERA5 version of the
+radiosonde degradation in §5, over many more columns.
+
+```bash
+pip install cdsapi   # + a ~/.cdsapirc key (https://cds.climate.copernicus.eu/how-to-api)
+PYTHONPATH=../../src python era5_fetch_catalonia.py          # writes era5_{pl,sfc}_cat.nc
+PYTHONPATH=../../src python era5_regime_relationship.py      # the tables above
+```
+
+The `.nc` inputs (~1 MB) are not committed — re-fetch them with the script (ERA5T lags ~5 days,
+so pick past dates).
+
 ## References
 
 - Castellnou, M., et al. (2022). *JGR: Atmospheres, 127*, e2022JD036920. https://doi.org/10.1029/2022JD036920
@@ -111,3 +154,4 @@ level lists reproduce the table above.
 - Holzworth, G. C. (1964). *Monthly Weather Review, 92*(5), 235–242. (parcel method)
 - Vilà-Guerau de Arellano, J., et al. (2015). *Atmospheric Boundary Layer.* Cambridge UP.
 - Durre, Vose & Wuertz (2006). *Journal of Climate, 19*(1), 53–68. (IGRA)
+- Hersbach, H., et al. (2020). The ERA5 global reanalysis. *QJRMS, 146*(730), 1999–2049. https://doi.org/10.1002/qj.3803
