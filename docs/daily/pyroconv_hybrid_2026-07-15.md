@@ -36,7 +36,7 @@ while the **fuel gate keeps ICON-2I's 2.2 km surface fields**, where fine terrai
 The mixed-layer gradient is now measured, but the 1.1e-3 K/m threshold still sits inside the
 validated error bar (+/- ~2.6e-4), so treat class *counts* as indicative, not exact.
 
-**Ladder actually used for this run: `noshear`.** The full method has a fifth
+**Ladder actually used for this run: `shear`.** The full method has a fifth
 diagnostic -- the distance from the ABL/LCL to the height of maximum wind shear -- which
 this product does not yet compute, so the four-diagnostic ladder runs. The shear clause is a
 *necessary* condition for the top class, so omitting it makes class 4 somewhat **easier** to
@@ -65,7 +65,7 @@ thresholds, not locally validated ones.
 | 3 | orange | Resilient pyroCu | Persistent pyrocumulus in an unstable column (LCL/ABL < 1). |
 | 4 | dark red | Deep pyroCu / pyroCb | Deep pyroconvection / pyrocumulonimbus; weak upper cap lets the plume deepen. |
 
-## Classification thresholds (ladder in use: `noshear`)
+## Classification thresholds (ladder in use: `shear`)
 
 | Diagnostic | Threshold | Effect |
 |:--|:--|:--|
@@ -76,7 +76,7 @@ thresholds, not locally validated ones.
 | LCL / ABL ratio | <= 1.10 (+ conditions below) | Admissible for deep pyroCu / pyroCb |
 | Cap gamma-theta (ABL+200 m -> ABL+1200 m) | <= 4.2e-3 K/m (weak cap) | Permits deepening to pyroCb |
 | Cap gamma-theta | >= 4.8e-3 K/m (strong cap) | Inhibits deepening (resilient at most) |
-| RH at the ABL top (mean, ABL +/- 150 m) | >= 80% | Required for classes 3 and 4 |
+| RH at the ABL top (mean, ABL +/- 150 m) | >= 60% | Required for classes 3 and 4 (was 80%; relaxed for dry fire weather) |
 | Shear-maximum distance / ABL | <= 0.30 | Required for class 4 **in the 5-diagnostic ladder only** (not resolvable here -- see Method) |
 | Fireline intensity (fuel gate, gated panel) | >= 10 MW/m | Minimum fire power for any pyroCu (Tedim et al. 2018) |
 | ABL depth | < 600 m | Held at surface plume (mixing too shallow) |

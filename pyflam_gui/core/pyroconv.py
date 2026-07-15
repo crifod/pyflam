@@ -740,13 +740,13 @@ def regrid_to(field, lat_src, lon_src, lat_dst, lon_dst):
 def regrid_diagnostics(diag, lat_src, lon_src, lat_dst, lon_dst, *, abl_min_m=ABL_MIN_M):
     """Move a whole diagnostics dict onto a target grid and rebuild ``valid``.
 
-    Interpolates each 2-D diagnostic field, then recomputes ``valid`` on the target grid
-    (finite ABL/ratio/gradient, ABL above the floor) rather than interpolating a boolean.
-    ``shear_dist`` stays all-``nan`` and ``n_levels`` is carried through unchanged.
+    Interpolates each 2-D diagnostic field (``shear_dist`` included, so the regridded product
+    keeps the 5-diagnostic ladder where the model levels resolved a shear maximum), then
+    recomputes ``valid`` on the target grid (finite ABL/ratio/gradient, ABL above the floor)
+    rather than interpolating a boolean. ``n_levels`` is carried through unchanged.
     """
-    fields = ("abl", "lcl", "lcl_ratio", "ml_grad", "gamma", "rh_top", "parcel_ml")
+    fields = ("abl", "lcl", "lcl_ratio", "ml_grad", "gamma", "rh_top", "parcel_ml", "shear_dist")
     out = {k: regrid_to(diag[k], lat_src, lon_src, lat_dst, lon_dst) for k in fields}
-    out["shear_dist"] = np.full(out["abl"].shape, np.nan)
     out["valid"] = (np.isfinite(out["abl"]) & np.isfinite(out["lcl_ratio"])
                     & np.isfinite(out["ml_grad"]) & (out["abl"] >= abl_min_m))
     out["n_levels"] = diag["n_levels"]
