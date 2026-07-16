@@ -30,3 +30,6 @@ docs/daily/*2026-06-*
 
 # ERA5 validation inputs (~1 MB, re-fetchable via era5_fetch_catalonia.py)
 scripts/validation/*.nc
+
+# 3-day forecast GeoTIFF stacks (regenerable, ~3.5 MB/day)
+docs/forecast_*/rasters_*/
