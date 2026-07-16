@@ -31,6 +31,47 @@ RUNDT = datetime.strptime(RUNDATE, "%Y-%m-%d")
 DAYS = [(RUNDT + timedelta(days=k)).strftime("%Y-%m-%d") for k in (0, 1, 2)]
 HOURS = [0, 3, 6, 9, 12, 15, 18, 21]
 OUT = os.environ.get("PYROCONV_OUT") or os.path.join(REPO, "docs", f"forecast_{RUNDATE}_3day")
+LON0, LON1, LAT0, LAT1 = 9.6, 12.5, 42.2, 44.6            # Tuscany bbox (matches the daily runner)
+CACHE = os.environ.get("PYROCONV_CACHE") or f"/tmp/pyflam_icon2i/{RUNDT:%Y%m%d}{RUN:02d}"
+PROV_GEOJSON = (os.environ.get("PYROCONV_PROVINCES")
+                or "/Users/cristianofoderi/DATI/boundaries/limits_IT_provinces.geojson")
+SEA_COLOR = "#cfe4ef"
+
+
+def sea_mask(lat, lon):
+    """ICON-2I land fraction on the raster grid -> sea (frland < 0.5) as True, or None."""
+    import warnings
+    warnings.simplefilter("ignore")
+    import xarray as xr
+    path = os.path.join(CACHE, "FRLAND.grib")
+    if not os.path.exists(path):
+        return None
+    ds = xr.open_dataset(path, engine="cfgrib", backend_kwargs={"indexpath": ""})
+    v = list(ds.data_vars)[0]
+    la = ds["latitude"].values
+    ds = (ds.sel(latitude=slice(LAT1, LAT0), longitude=slice(LON0, LON1)) if la[0] > la[-1]
+          else ds.sel(latitude=slice(LAT0, LAT1), longitude=slice(LON0, LON1)))
+    fr = np.asarray(ds[v].values, float)
+    if ds["latitude"].values[0] < ds["latitude"].values[-1]:
+        fr = fr[::-1]                                    # north-up, to match the rasters
+    return fr < 0.5
+
+
+def provinces():
+    """Tuscany province boundaries clipped to the bbox, or None if unavailable."""
+    try:
+        import geopandas as gpd
+    except Exception:
+        return None
+    if not os.path.exists(PROV_GEOJSON):
+        return None
+    try:
+        g = gpd.read_file(PROV_GEOJSON)
+        if "reg_name" in g.columns:
+            g = g[g["reg_name"] == "Toscana"]
+        return g.clip((LON0, LAT0, LON1, LAT1)).boundary
+    except Exception:
+        return None
 
 
 def run_daily(valid):
@@ -42,35 +83,57 @@ def run_daily(valid):
 
 
 def load_stack(valid, kind):
+    """Class stack (nhours, ny, nx) + (lat, lon) 1-D arrays, from the daily rasters."""
     rdir = os.path.join(OUT, f"rasters_hybrid_{valid}")
-    arrs, transform = [], None
+    arrs, lat, lon = [], None, None
     for h in HOURS:
         with rasterio.open(os.path.join(rdir, f"pyroconv_{kind}_{h:02d}Z.tif")) as d:
-            arrs.append(d.read(1)); transform = d.transform
-    return np.stack(arrs), transform
+            arrs.append(d.read(1))
+            if lat is None:
+                t = d.transform
+                lon = t.c + t.a * (np.arange(d.width) + 0.5)
+                lat = t.f + t.e * (np.arange(d.height) + 0.5)      # north-up (t.e < 0)
+    return np.stack(arrs), lat, lon
 
 
 def combined_figure(kind, path):
+    """WRF-style day x hour grid: geographic panels, sea masked, province borders, legend."""
     import matplotlib; matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.colors import ListedColormap, BoundaryNorm
     from matplotlib.patches import Patch
-    cmap = ListedColormap([PYROCONVECTION_TYPE_COLOR[t] for t in PYROCONVECTION_TYPES])
-    norm = BoundaryNorm(np.arange(-0.5, 5.5, 1), cmap.N)
-    fig, ax = plt.subplots(len(DAYS), len(HOURS), figsize=(2.05 * len(HOURS), 2.7 * len(DAYS)),
+
+    # class colours preceded by a sea colour (index -1 = sea).
+    colors = [SEA_COLOR] + [PYROCONVECTION_TYPE_COLOR[t] for t in PYROCONVECTION_TYPES]
+    cmap = ListedColormap(colors)
+    norm = BoundaryNorm(np.arange(-1.5, 5.5, 1), cmap.N)
+    _, lat0, lon0 = load_stack(DAYS[0], kind)
+    ext = [lon0.min(), lon0.max(), lat0.min(), lat0.max()]
+    sea = sea_mask(lat0, lon0)
+    prov = provinces()
+
+    fig, ax = plt.subplots(len(DAYS), len(HOURS), figsize=(2.05 * len(HOURS), 2.5 * len(DAYS)),
                            constrained_layout=True, squeeze=False)
     for r, valid in enumerate(DAYS):
-        stack, _ = load_stack(valid, kind)
+        stack, _, _ = load_stack(valid, kind)
         for c, hour in enumerate(HOURS):
-            ax[r][c].imshow(stack[c], origin="upper", cmap=cmap, norm=norm,
-                            aspect="auto", interpolation="nearest")
-            ax[r][c].set_xticks([]); ax[r][c].set_yticks([])
+            a = stack[c].astype(float)
+            if sea is not None and sea.shape == a.shape:
+                a = np.where(sea, -1, a)                 # paint sea cells with the sea colour
+            axc = ax[r][c]
+            axc.imshow(a, origin="upper", extent=ext, cmap=cmap, norm=norm,
+                       aspect="auto", interpolation="nearest")
+            if prov is not None:
+                prov.plot(ax=axc, color="0.25", linewidth=0.4)
+                axc.set_xlim(ext[0], ext[1]); axc.set_ylim(ext[2], ext[3])
+            axc.set_xticks([]); axc.set_yticks([])
             if r == 0:
-                ax[r][c].set_title(f"{hour:02d}Z", fontsize=9)
+                axc.set_title(f"{hour:02d}Z", fontsize=9)
             if c == 0:
-                ax[r][c].set_ylabel(f"{valid}\n(+{r}d)", fontsize=9)
-    title = ("FUEL-GATED (expected)" if kind == "gated"
-             else "POTENTIAL (atmospheric upper bound)")
+                axc.set_ylabel(f"{valid}\n(+{r}d)", fontsize=9)
+    title = ("FUEL-GATED -- expected (fire power >= 10 MW/m on the Tuscany fuels)"
+             if kind == "gated"
+             else "POTENTIAL -- atmospheric upper bound (assumes a pyroCu-capable fire everywhere)")
     fig.suptitle(f"Tuscany pyroconvection -- 3-day forecast -- {title}\n"
                  f"ICON-EU model levels + ICON-2I 2.2 km gate -- run {RUNDATE} {RUN:02d}Z",
                  fontsize=12)
@@ -78,8 +141,9 @@ def combined_figure(kind, path):
                  label=f"{PYROCONVECTION_TYPE_LEVEL[t]}  {PYROCONVECTION_TYPE_LABEL[t]}")
            for t in PYROCONVECTION_TYPES]
     fig.legend(handles=leg, loc="lower center", ncol=5, fontsize=9, frameon=False,
-               bbox_to_anchor=(0.5, -0.04))
-    fig.savefig(path, dpi=135, bbox_inches="tight"); import matplotlib.pyplot as p; p.close(fig)
+               title="Pyroconvection class (0 = lowest -> 4 = highest)",
+               bbox_to_anchor=(0.5, -0.09))
+    fig.savefig(path, dpi=140, bbox_inches="tight"); plt.close(fig)
 
 
 def dist_table(kind):
@@ -91,7 +155,7 @@ def dist_table(kind):
     n = max(int(land.sum()), 1)
     rows = []
     for valid in DAYS:
-        st, _ = load_stack(valid, kind)
+        st = load_stack(valid, kind)[0]
         for hi, h in enumerate(HOURS):
             pct = [round(100 * ((st[hi] == c) & land).sum() / n, 1) for c in range(5)]
             rows.append((valid, h, pct))
