@@ -22,6 +22,7 @@ from pyflam.atmosphere import (
     pyroconvection_type_shear, saturation_vapour_pressure_pa, shear_distance_ratio,
     shear_height_adaptive, shear_height_none, shear_height_window,
     specific_humidity_from_rh, virtual_potential_temperature,
+    fire_parcel_theta_excess, fire_induced_abl_grid, mixed_layer_fire_flux,
 )
 
 
@@ -260,6 +261,84 @@ def test_fire_power_gate_applies_to_every_ladder():
                                      **strong) == "deep_pyrocu_pyrocb"
 
 
+# --- fire-induced boundary layer (dry-pyrocloud encroachment) ------------------
+
+# A theta profile that is exactly linear above the ABL, so the encroachment
+# intersection has a closed-form answer:  theta(z) = 305 + GAMMA*(z - BLH).
+_FA_Z = np.array([50, 500, 1000, 2000, 3000, 5000], float)
+_FA_BLH = 1000.0
+_FA_GAMMA = 0.005                       # K/m
+_FA_TH = 305.0 + _FA_GAMMA * np.maximum(_FA_Z - _FA_BLH, 0.0)   # 305 below BLH
+
+
+def _fa_grid(F):
+    """Run fire_induced_abl_grid on the analytic column for a scalar heat flux."""
+    return fire_induced_abl_grid(
+        _column_to_grid(_FA_Z), _column_to_grid(_FA_TH),
+        theta_mean_below=np.full((2, 3), 305.0),
+        heat_flux=np.full((2, 3), float(F)), blh=np.full((2, 3), _FA_BLH))
+
+
+def test_fire_parcel_theta_excess_zero_and_monotone():
+    """No flux -> no excess; excess and w0 both rise with the convective heat flux."""
+    e0, w0_0 = fire_parcel_theta_excess(0.0, 305.0)
+    assert e0 == pytest.approx(0.0) and w0_0 == pytest.approx(0.0)
+    e_lo, _ = fire_parcel_theta_excess(50.0, 305.0)
+    e_hi, _ = fire_parcel_theta_excess(300.0, 305.0)
+    assert 0.0 < e_lo < e_hi                      # hotter fire -> larger theta excess
+
+
+def test_fireabl_matches_closed_form_intersection():
+    """The fireABL top is the exact height where the linear ambient theta = parcel theta.
+
+    On a profile that is linear above the ABL, encroachment has a closed form:
+    z = BLH + theta'/GAMMA. This pins the profile-intersection against algebra.
+    """
+    F = 130.0
+    excess, _ = fire_parcel_theta_excess(F, 305.0)
+    expected = _FA_BLH + excess / _FA_GAMMA
+    assert expected < _FA_Z[-1]                    # stays inside the sounding
+    fa = _fa_grid(F)
+    assert np.allclose(fa, expected, atol=1.0)
+    assert np.allclose(fa, fa[0, 0])               # uniform column -> uniform field
+
+
+def test_fireabl_no_decoupling_without_fire():
+    """Zero heat flux -> the fireABL collapses to the ambient ABL (no decoupling)."""
+    assert np.allclose(_fa_grid(0.0), _FA_BLH)
+
+
+def test_fireabl_monotone_in_firepower():
+    """A more powerful fire punches the fireABL higher."""
+    assert np.all(_fa_grid(60.0) < _fa_grid(200.0))
+
+
+def test_mixed_layer_flux_is_the_front_flux_scaled_by_depth_ratio():
+    """The ML-averaged flux spreads I over the ABL depth, not the flaming-front depth.
+
+    So it is the front flux times (front_depth / ABL) -- a large reduction that fixes
+    the fireABL magnitude. Here a 1e7 W/m fire over a 1500 m ABL gives 0.5*I/abl.
+    """
+    I, abl = 1.0e7, 1500.0
+    q_ml = mixed_layer_fire_flux(I, abl)
+    assert q_ml == pytest.approx(0.5 * I / abl)          # convective_fraction 0.5 default
+    # Deeper ABL -> more dilution -> smaller flux -> a lower fireABL.
+    assert mixed_layer_fire_flux(I, 3000.0) < q_ml
+    # array-safe over a grid
+    q = mixed_layer_fire_flux(np.full((2, 2), I), np.array([[1000.0, 2000.0], [1500.0, 3000.0]]))
+    assert q.shape == (2, 2) and np.all(q > 0)
+
+
+def test_fireabl_is_bounded_by_the_sounding_not_extrapolated():
+    """A parcel hotter than the whole profile returns the sounding top, not a runaway.
+
+    This is the fix over the GRAF/WUR original: no linear extrapolation above the
+    fitted layer, so the fireABL can never exceed the modelled column.
+    """
+    fa = _fa_grid(5.0e4)                            # absurdly powerful fire
+    assert np.allclose(fa, _FA_Z[-1])              # capped at the profile top
+
+
 # --- parcel mixing depth vs Rib ABL (the entrainment-jump problem) -------------
 
 def test_parcel_depth_finds_the_base_of_the_inversion():
@@ -439,6 +518,12 @@ def test_iconeu_diagnostics_measures_a_well_mixed_column():
     rg = pc.regrid_diagnostics(diag, d["lat"], d["lon"],
                                np.array([43.05]), np.array([11.05]))
     assert set(rg) >= {"abl", "ml_grad", "lcl_ratio", "gamma", "rh_top", "valid"}
+
+    # The dry-pyrocloud diagnostic rides along: a reference fire on a deep dry column
+    # grows a fireABL above the ambient ABL (decoupling > 1), and it survives regridding.
+    assert np.all(diag["fireabl"] >= diag["abl"] - 1e-6)
+    assert np.nanmedian(diag["decoupling"]) > 1.0        # a reference fire decouples here
+    assert "decoupling" in rg and np.isfinite(rg["fireabl"]).all()
 
 
 def test_fetch_icon_eu_builds_expected_urls(monkeypatch, tmp_path):

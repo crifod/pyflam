@@ -35,6 +35,11 @@ STD_LEVEL_HEIGHT_M = {1000: 110.0, 850: 1457.0, 700: 3012.0, 500: 5574.0}
 DEFAULT_LEVELS = (850, 700, 500)
 FLI_GATE_KW = 1.0e4              # 10 MW/m minimum fire power for any pyroCu
 ABL_MIN_M = 600.0               # below this ABL depth, held at surface plume
+# Reference convective heat flux (W/m^2) for the dry-pyrocloud fireABL diagnostic:
+# a fixed intense-fire flux applied to every cell (the "potential"/upper-bound
+# framing). The GRAF SCQ active-fire hours span ~120-280 W/m^2; 200 is the intense
+# end. This scales the fireABL height; treat the decoupling ratio qualitatively.
+_REFERENCE_FIRE_FLUX_W_M2 = 200.0
 
 # Profile path: the levels the ICON-2I open-data archive publishes below 500 hPa.
 PROFILE_LEVELS = (1000, 925, 850, 700, 500)
@@ -368,6 +373,7 @@ def profile_diagnostics(d, si, *, thresholds=None, shear=True,
         lcl_height_bolton_m, relative_humidity_from_dewpoint,
         specific_humidity_from_rh, theta_kelvin, virtual_potential_temperature,
         DEFAULT_PYROCONV_THRESHOLDS, shear_height_window, parcel_mixing_depth_grid,
+        fire_induced_abl_grid,
     )
     th = thresholds or DEFAULT_PYROCONV_THRESHOLDS
 
@@ -440,6 +446,23 @@ def profile_diagnostics(d, si, *, thresholds=None, shear=True,
     gamma = _layer_gradient(z_use, theta, abl + 200.0, abl + 1200.0)
     rh_top = _layer_mean(z_use, RH_use, np.maximum(50.0, abl - 150.0), abl + 150.0)
 
+    # Dry-pyrocloud diagnostic (DIAGNOSTIC ONLY, no class label): the fire-induced
+    # boundary layer a reference intense fire would grow by sensible heat alone, and
+    # how far it decouples above the ambient ABL. This is the DRY counterpart to the
+    # moist LCL/cap/shear ladder -- it fires on deep, hot, dry columns the ladder
+    # scores low (Castellnou et al. 2022; Castellnou Ribau et al. 2024). Like the
+    # "potential" panel it assumes a fire everywhere (here a fixed reference flux),
+    # so it is an upper bound, not an expectation. The dry/moist split and any
+    # in-plume-LCL offset are deliberately NOT applied (offset not supported by the
+    # GRAF labels; see atmosphere.fire_induced_abl_grid).
+    theta_mean_below = _layer_mean(z_use, theta,
+                                   np.full(abl.shape, 50.0), np.maximum(abl, 200.0))
+    fireabl = fire_induced_abl_grid(
+        z_use, theta, theta_mean_below=theta_mean_below,
+        heat_flux=np.full(abl.shape, _REFERENCE_FIRE_FLUX_W_M2), blh=abl)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        decoupling = fireabl / np.where(abl > 0, abl, np.nan)
+
     shear_dist = np.full(abl.shape, np.nan)
     n_levels = int(ok.sum(axis=0).max()) if ok.size else 0
     if shear and n_levels >= _SHEAR_MIN_LEVELS:
@@ -457,7 +480,8 @@ def profile_diagnostics(d, si, *, thresholds=None, shear=True,
         ratio = lcl / np.where(abl > 0, abl, np.nan)
     return dict(abl=abl, lcl=lcl, lcl_ratio=ratio, ml_grad=ml_grad, gamma=gamma,
                 rh_top=rh_top, shear_dist=shear_dist, valid=valid,
-                parcel_ml=parcel_ml, n_levels=n_levels)
+                parcel_ml=parcel_ml, fireabl=fireabl, decoupling=decoupling,
+                n_levels=n_levels)
 
 
 def classify_profile(diag, *, fli=None, fli_gate_kw=FLI_GATE_KW, ladder="adaptive",
@@ -713,9 +737,23 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True)
         shear_dist = np.full(abl.shape, np.nan)
 
     valid = np.isfinite(abl) & np.isfinite(ratio) & np.isfinite(ml_grad)
+
+    # Dry-pyrocloud fireABL diagnostic (see profile_diagnostics for the rationale):
+    # the sensible-heat-only decoupling of a reference intense fire. Model levels give
+    # the real theta(z) stack, so this is the higher-fidelity path for the diagnostic.
+    from pyflam.atmosphere import fire_induced_abl_grid
+    theta_mean_below = _layer_mean(z, theta,
+                                   np.full(abl.shape, 50.0), np.maximum(abl, 200.0))
+    fireabl = fire_induced_abl_grid(
+        z, theta, theta_mean_below=theta_mean_below,
+        heat_flux=np.full(abl.shape, _REFERENCE_FIRE_FLUX_W_M2), blh=abl)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        decoupling = fireabl / np.where(abl > 0, abl, np.nan)
+
     return dict(abl=abl, lcl=lcl, lcl_ratio=ratio, ml_grad=ml_grad, gamma=gamma,
                 rh_top=rh_top, shear_dist=shear_dist, valid=valid,
-                parcel_ml=parcel_ml, n_levels=int(np.median(n_in_ml)))
+                parcel_ml=parcel_ml, fireabl=fireabl, decoupling=decoupling,
+                n_levels=int(np.median(n_in_ml)))
 
 
 def regrid_to(field, lat_src, lon_src, lat_dst, lon_dst):
@@ -745,7 +783,8 @@ def regrid_diagnostics(diag, lat_src, lon_src, lat_dst, lon_dst, *, abl_min_m=AB
     recomputes ``valid`` on the target grid (finite ABL/ratio/gradient, ABL above the floor)
     rather than interpolating a boolean. ``n_levels`` is carried through unchanged.
     """
-    fields = ("abl", "lcl", "lcl_ratio", "ml_grad", "gamma", "rh_top", "parcel_ml", "shear_dist")
+    fields = ("abl", "lcl", "lcl_ratio", "ml_grad", "gamma", "rh_top", "parcel_ml",
+              "shear_dist", "fireabl", "decoupling")
     out = {k: regrid_to(diag[k], lat_src, lon_src, lat_dst, lon_dst) for k in fields}
     out["valid"] = (np.isfinite(out["abl"]) & np.isfinite(out["lcl_ratio"])
                     & np.isfinite(out["ml_grad"]) & (out["abl"] >= abl_min_m))

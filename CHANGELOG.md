@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Dry-pyrocloud fire-induced boundary layer.** `atmosphere.fire_induced_abl_grid`
+  and `atmosphere.fire_parcel_theta_excess` add the sensible-heat-only,
+  condensation-free boundary-layer decoupling mechanism (the "fireABL") from the
+  GRAF/WUR pipeline (Castellnou et al. 2022; Castellnou Ribau et al. 2024) — the
+  dry counterpart to the existing moist LCL/cap/shear classifier. The fireABL top
+  is found by intersecting the fire-heated parcel with the actual `theta(z)`
+  profile stack (bounded by the sounding), fixing the linear-extrapolation
+  runaway in the original. Validated against the reference pipeline on the Santa
+  Coloma de Queralt case (≤2.5 m) and against the Eghdami et al. (2023) WRF-Fire
+  LES anchors. The in-plume LCL offset for the dry/moist split is left as a
+  configurable parameter (default 0 = ambient LCL); the literature +1 km value is
+  not baked in, as it is not supported by the GRAF prototype labels.
+  **Magnitude — recalibrated forcing.** The reference stage-4 forcing (fire-front
+  flux) drives the fireABL too high, and no scale height fixes it. `mixed_layer_fire_flux`
+  spreads the fire's convective power over the ABL depth instead of the flaming front.
+  Confirmed across the 4 fires with ERA5 soundings + sonde fireABLs (36 h): bias −15 m,
+  MAE 400 m, r 0.91, and it correctly captures the shallow-ABL strong-decoupling case
+  the front flux misses by ~4×. Recommended forcing for a real fire is
+  `mixed_layer_fire_flux(I, abl)`. The gridded `decoupling` diagnostic still uses a
+  fixed reference flux (a convention, since it assumes a fire everywhere) — read its
+  spatial/diurnal pattern qualitatively.
+
 ## [0.1.3] - 2026-07-02
 
 Submission-ready release — no library/behavior changes.

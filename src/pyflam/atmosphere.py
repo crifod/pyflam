@@ -940,6 +940,181 @@ def parcel_mixing_depth_grid(height_agl_m, theta, theta_surface, *,
     return np.clip(out, min_m, max_m)
 
 
+# --- fire-induced boundary layer (dry-pyrocloud encroachment) ------------------
+#
+# The moist diagnostics above (LCL, cap, shear, the Castellnou ladder) describe
+# whether the *plume* reaches free moist convection. They do not describe the
+# other route to fire-driven boundary-layer decoupling: the fire's *sensible*
+# heat flux alone growing a fire-induced boundary layer (a "fireABL") that
+# encroaches into the free troposphere with no condensation involved -- the
+# dry-pyrocloud mechanism (Castellnou et al. 2022; Castellnou Ribau et al. 2024).
+#
+# This is the fire-forced analogue of ordinary daytime convective-boundary-layer
+# growth by encroachment (Stull 1988, convective-mixed-layer chapter: "thermals
+# rise until they hit the stable layer capping the ML"), with the fire's
+# convective heat flux substituted for solar insolation. It ports stage 4 of the
+# GRAF/WUR pipeline, with one physics fix: the fireABL top is found by
+# intersecting the fire-heated parcel with the *actual* theta(z) profile (as in
+# :func:`parcel_mixing_depth_grid`), not by extrapolating a short free-tropo
+# linear fit -- the extrapolation runs the fireABL to unphysical heights (13 km
+# from a 2 km fit) on the very hours it matters most.
+
+# GRAF/WUR fire-plume scale height (m) in the convective-velocity scale. A named
+# constant because it is a calibration target, not a first-principles value: it
+# sets only the theta-excess magnitude (theta' ~ H^(-1/3)).
+#
+# CALIBRATION STATUS (magnitude is NOT calibrated; the ranking is):
+#
+#  * Linear-geometry fit vs the 90-fire sonde set: rescaling theta' by 1.08
+#    (H ~ 56 m) removes the linear model's low bias. But that geometry is not the
+#    one this module uses.
+#  * Profile-intersection fit vs the SCQ sonde (the one fire with a full sounding
+#    AND observed heights, 19 h): the profile fireABL OVER-predicts by ~3x
+#    (median 6.1 km vs sonde 2.0 km), and the scale height that would fix it runs
+#    off the top of the physical range (best H > 6 km, still +0.4 km biased). So
+#    the H knob CANNOT calibrate the magnitude -- the theta' FORM is the problem:
+#    F here is the fire-*front* flux ((Ib/2)/front_depth), a locally intense value,
+#    used to force a mixed-layer-scale encroachment; a mixed-layer-averaged flux is
+#    what that intersection should see. (Tellingly, GRAF's own published
+#    ``expected_fireABL`` matches the sondes to within ~-370 m, i.e. their refined
+#    model runs ~3x lower than the Demo stage-4 code ported here.)
+#
+# FIX (:func:`mixed_layer_fire_flux`): the over-prediction is a flux problem, not a
+# scale-height one. Feed the encroachment a mixed-layer-averaged flux -- the fire's
+# convective power over the ABL depth, not the ~10-20 m flaming-front depth. Confirmed
+# across the 4 fires with ERA5 soundings + sonde fireABLs (36 h; zenodo_6433389):
+# bias -15 m, MAE 400 m, r 0.91 (one global coefficient for the table's unit
+# ambiguity), and it correctly captures the shallow-ABL strong-decoupling case
+# (Torroella) the front flux misses by ~4x. So the recommended forcing for a real
+# fire is ``mixed_layer_fire_flux(I, abl)``, not the front flux.
+# Default scale height left at the reference 70 m; pass ``scale_height_m`` to override.
+_FIRE_PLUME_SCALE_M = 70.0
+
+
+def fire_parcel_theta_excess(heat_flux_w_m2, theta_mean_below_k, *,
+                             scale_height_m: float = _FIRE_PLUME_SCALE_M):
+    """Fire-forced potential-temperature excess (K) -- the sensible-heat forcing.
+
+    The temperature perturbation the fire's convective heat flux adds to the
+    sub-ABL mixed layer, via a convective-velocity scale (array-safe):
+
+        ``w0     = (3 g F H / (2 rho theta_v))^(1/3)``   convective velocity (m/s)
+        ``theta' = F / (rho w0)``                        flux / (rho * velocity)
+
+    ``heat_flux_w_m2`` is the cell-averaged convective heat flux (W/m^2), e.g.
+    from :func:`pyflam.pyroconvection.fire_heat_flux`; ``theta_mean_below_k`` is
+    the mean potential temperature of the sub-ABL mixed layer (K). Returns
+    ``(theta_excess_k, w0_ms)``. Zero flux gives zero excess (and w0 -> 0 is
+    handled so the excess is exactly 0, not a divide-by-zero).
+    """
+    f = np.asarray(heat_flux_w_m2, float)
+    thv = np.asarray(theta_mean_below_k, float)
+    pos = f > 0.0
+    w0 = np.where(pos, (3.0 * _G * f * scale_height_m
+                        / (2.0 * _RHO_AIR * np.maximum(thv, 1.0))) ** (1.0 / 3.0), 0.0)
+    excess = np.where(pos & (w0 > 0.0), f / (_RHO_AIR * np.maximum(w0, 1e-9)), 0.0)
+    return excess, w0
+
+
+def mixed_layer_fire_flux(fireline_intensity_w_m, abl_m, *,
+                          convective_fraction: float = 0.5):
+    """Mixed-layer-averaged fire heat flux (W/m^2) for the fireABL encroachment.
+
+    The fire's convective power per unit front (``convective_fraction * I``, I in
+    W/m) spread over the **boundary-layer depth** -- the scale over which the heat
+    is actually mixed -- rather than over the narrow flaming-front depth. Feed the
+    result as ``heat_flux`` to :func:`fire_induced_abl_grid`.
+
+    This fixes the fireABL *magnitude* bug (see the calibration note on
+    ``_FIRE_PLUME_SCALE_M``): the reference stage-4 forcing uses the fire-front flux
+    ``(I/2)/front_depth`` (front_depth ~ 10-20 m, a locally intense value), which
+    drives the encroachment too high. Substituting the ABL depth for the front depth
+    couples the forcing to the mixing scale.
+
+    Validation. On the SCQ sonde alone (self-consistent units) the swap is
+    parameter-free and collapses the bias from +3.6 km to +0.06 km (r 0.84 -> 0.94).
+    Across the 4 fires with ERA5 soundings AND sonde-observed fireABLs (SCQ,
+    Martorell, PoblaMassaluca, Torroella; 36 h; zenodo_6433389), with one global
+    coefficient absorbing the aggregated table's ambiguous I units, the ML form
+    gives bias -15 m, MAE 400 m, r 0.91. Its decisive advantage is the shallow-ABL,
+    strong-decoupling regime (Torroella, ABL 315 m: ML +27 m vs the front flux's
+    -444 m) -- exactly where the dry mechanism matters; on deep-ABL fires a rescaled
+    front flux does nearly as well. In pyflam the intensity is in known units
+    (W/m from :func:`pyflam.pyroconvection.fire_heat_flux`), so no coefficient is
+    needed. ``convective_fraction`` defaults to 0.5 to match the reference ``I/2``.
+    """
+    i = np.asarray(fireline_intensity_w_m, float)
+    return convective_fraction * i / np.maximum(np.asarray(abl_m, float), 1.0)
+
+
+def fire_induced_abl_grid(height_agl_m, theta, *, theta_mean_below, heat_flux,
+                          blh, scale_height_m: float = _FIRE_PLUME_SCALE_M,
+                          min_m: float = _ABL_MIN_M, max_m: float | None = None):
+    """Fire-induced boundary-layer top (m AGL) by fire-forced encroachment, gridded.
+
+    The height at which the fire-heated parcel
+    ``theta_mean_below + theta'(heat_flux)`` reaches neutral buoyancy in the
+    ambient sounding -- i.e. the first level *at or above* the ambient ABL where
+    ambient ``theta`` catches the heated parcel, linearly interpolated. Same
+    interpolation pattern as :func:`parcel_mixing_depth_grid`, but with the
+    fire-forced target of :func:`fire_parcel_theta_excess` instead of a fixed
+    surface excess, and the search anchored above ``blh`` (the mixed layer below
+    is already accounted for by ``theta_mean_below``).
+
+    Unlike the GRAF/WUR stage-4 original, the intersection is against the real
+    ``theta(z)`` stack, so the result is bounded by the sounding: a column whose
+    parcel is warmer than the entire profile returns the profile top (the fire
+    penetrates the modelled domain) rather than an extrapolated height.
+
+    ``height_agl_m`` and ``theta`` are level-major ``(nlev, ny, nx)`` stacks with
+    levels ascending in height (K for ``theta``); ``theta_mean_below``,
+    ``heat_flux`` (W/m^2) and ``blh`` (m) are ``(ny, nx)`` fields. Unusable levels
+    carry ``nan``. Clipped to ``[min_m, max_m]`` (``max_m=None`` -> only the
+    sounding bounds it) and never returned below ``blh``.
+
+    Magnitude caveat: this reproduces the reference stage-4 mechanism and ranks
+    columns well (r ~ 0.8 vs sondes) but its absolute heights run ~3x high vs
+    sonde-observed fireABLs, and no scale height fixes it (see the calibration note
+    on ``_FIRE_PLUME_SCALE_M``). Read the height and the decoupling ratio
+    qualitatively until the forcing flux is recalibrated.
+
+    Note the fireABL is a *height* diagnostic only; whether the decoupled fire
+    also goes moist is a separate question -- compare a plume height against
+    ``LCL + offset`` for that, where the in-plume ``offset`` is a configurable
+    parameter (default 0 = ambient LCL). The +1 km cloud-base offset reported in
+    the literature (Kablick 2018; Lareau & Clements 2016) is *not* supported by
+    the GRAF prototype labels (a fit prefers ~ -0.5 km), so it is not baked in.
+    """
+    z = np.asarray(height_agl_m, float)
+    th = np.asarray(theta, float)
+    thm = np.asarray(theta_mean_below, float)
+    blh = np.asarray(blh, float)
+    excess, _ = fire_parcel_theta_excess(heat_flux, thm, scale_height_m=scale_height_m)
+    target = thm + excess
+
+    out = np.full(target.shape, np.nan)
+    for k in range(1, z.shape[0]):
+        z0, z1, t0, t1 = z[k - 1], z[k], th[k - 1], th[k]
+        good = np.isfinite(z0) & np.isfinite(z1) & np.isfinite(t0) & np.isfinite(t1)
+        # only bracket intervals reaching above the ambient ABL top
+        hit = np.isnan(out) & good & (z1 >= blh) & (t1 >= target)
+        if hit.any():
+            denom = np.where(t1 != t0, t1 - t0, np.inf)
+            frac = np.clip((target - t0) / denom, 0.0, 1.0)
+            out = np.where(hit, z0 + frac * (z1 - z0), out)
+
+    # Parcel warmer than the whole profile -> fire penetrates the domain top.
+    usable = np.where(np.isfinite(z) & np.isfinite(th), z, -np.inf)
+    z_top = np.max(usable, axis=0)
+    out = np.where(~np.isfinite(out) & np.isfinite(z_top) & (z_top > -np.inf), z_top, out)
+    hi = z_top if max_m is None else np.minimum(z_top, max_m)
+    out = np.clip(out, min_m, hi)
+    # The fireABL cannot sit below the ambient ABL it grows out of. Applied last so
+    # the sounding clip cannot push it back under the ABL on a thin/degenerate column
+    # (profile top below the ABL), where ``hi`` would otherwise win.
+    return np.maximum(out, blh)
+
+
 def shear_height_grid(height_agl_m, wind_u, wind_v, *, zmin: float = 200.0,
                       zmax: float = 6000.0):
     """Height (m AGL) of maximum vector wind shear over a grid, from consecutive levels.
