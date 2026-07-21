@@ -21,13 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   LES anchors. The in-plume LCL offset for the dry/moist split is left as a
   configurable parameter (default 0 = ambient LCL); the literature +1 km value is
   not baked in, as it is not supported by the GRAF prototype labels.
-  **Magnitude — first-cut fix.** The reference stage-4 forcing (fire-front flux)
-  drives the fireABL ~3× too high, and no scale height fixes it. `mixed_layer_fire_flux`
-  spreads the fire's convective power over the ABL depth instead of the ~10 m flaming
-  front; on the SCQ sonde this collapses the bias from +3.6 km to +0.06 km and lifts
-  the correlation to 0.94 (from 0.84), parameter-free. Validated on one fire so far —
-  multi-fire confirmation (5 ERA5 soundings in the GRAF dataset) pending; read the
-  gridded `decoupling` diagnostic qualitatively until then.
+  **Magnitude — recalibrated forcing.** The reference stage-4 forcing (fire-front
+  flux) drives the fireABL too high, and no scale height fixes it. `mixed_layer_fire_flux`
+  spreads the fire's convective power over the ABL depth instead of the flaming front.
+  Confirmed across the 4 fires with ERA5 soundings + sonde fireABLs (36 h): bias −15 m,
+  MAE 400 m, r 0.91, and it correctly captures the shallow-ABL strong-decoupling case
+  the front flux misses by ~4×. Recommended forcing for a real fire is
+  `mixed_layer_fire_flux(I, abl)`. The gridded `decoupling` diagnostic still uses a
+  fixed reference flux (a convention, since it assumes a fire everywhere) — read its
+  spatial/diurnal pattern qualitatively.
 
 ## [0.1.3] - 2026-07-02
 

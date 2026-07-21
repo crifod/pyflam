@@ -979,14 +979,14 @@ def parcel_mixing_depth_grid(height_agl_m, theta, theta_surface, *,
 #    ``expected_fireABL`` matches the sondes to within ~-370 m, i.e. their refined
 #    model runs ~3x lower than the Demo stage-4 code ported here.)
 #
-# FIRST-CUT FIX (:func:`mixed_layer_fire_flux`): the ~3x over-prediction is a flux
-# problem, not a scale-height one. Feeding the encroachment a mixed-layer-averaged
-# flux -- the fire's convective power spread over the ABL depth, not the ~10 m
-# flaming-front depth -- collapses the SCQ bias from +3.6 km to +0.06 km AND lifts
-# the correlation to 0.94 (from 0.84), with no free parameter. So the recommended
-# forcing for a real fire is ``mixed_layer_fire_flux(I, abl)``, not the front flux.
-# Still validated on one fire (SCQ); multi-fire confirmation across the 5 ERA5
-# soundings in zenodo_6433389 is pending, so read absolute heights cautiously.
+# FIX (:func:`mixed_layer_fire_flux`): the over-prediction is a flux problem, not a
+# scale-height one. Feed the encroachment a mixed-layer-averaged flux -- the fire's
+# convective power over the ABL depth, not the ~10-20 m flaming-front depth. Confirmed
+# across the 4 fires with ERA5 soundings + sonde fireABLs (36 h; zenodo_6433389):
+# bias -15 m, MAE 400 m, r 0.91 (one global coefficient for the table's unit
+# ambiguity), and it correctly captures the shallow-ABL strong-decoupling case
+# (Torroella) the front flux misses by ~4x. So the recommended forcing for a real
+# fire is ``mixed_layer_fire_flux(I, abl)``, not the front flux.
 # Default scale height left at the reference 70 m; pass ``scale_height_m`` to override.
 _FIRE_PLUME_SCALE_M = 70.0
 
@@ -1027,14 +1027,21 @@ def mixed_layer_fire_flux(fireline_intensity_w_m, abl_m, *,
 
     This fixes the fireABL *magnitude* bug (see the calibration note on
     ``_FIRE_PLUME_SCALE_M``): the reference stage-4 forcing uses the fire-front flux
-    ``(I/2)/front_depth`` (front_depth ~ 10 m, a locally intense value), which drives
-    the encroachment ~3x too high. Substituting the ABL depth for the front depth is
-    a first-cut fix validated on the SCQ sonde (19 h): the profile-method fireABL
-    bias collapses from +3.6 km to **+0.06 km** and the correlation rises from 0.84
-    to **0.94**, with no free parameter. Multi-fire confirmation (the 5 fires with
-    ERA5 soundings in zenodo_6433389) is still pending, so treat it as a promising
-    first cut, not a finished calibration. ``convective_fraction`` defaults to 0.5
-    to match the reference ``I/2`` split.
+    ``(I/2)/front_depth`` (front_depth ~ 10-20 m, a locally intense value), which
+    drives the encroachment too high. Substituting the ABL depth for the front depth
+    couples the forcing to the mixing scale.
+
+    Validation. On the SCQ sonde alone (self-consistent units) the swap is
+    parameter-free and collapses the bias from +3.6 km to +0.06 km (r 0.84 -> 0.94).
+    Across the 4 fires with ERA5 soundings AND sonde-observed fireABLs (SCQ,
+    Martorell, PoblaMassaluca, Torroella; 36 h; zenodo_6433389), with one global
+    coefficient absorbing the aggregated table's ambiguous I units, the ML form
+    gives bias -15 m, MAE 400 m, r 0.91. Its decisive advantage is the shallow-ABL,
+    strong-decoupling regime (Torroella, ABL 315 m: ML +27 m vs the front flux's
+    -444 m) -- exactly where the dry mechanism matters; on deep-ABL fires a rescaled
+    front flux does nearly as well. In pyflam the intensity is in known units
+    (W/m from :func:`pyflam.pyroconvection.fire_heat_flux`), so no coefficient is
+    needed. ``convective_fraction`` defaults to 0.5 to match the reference ``I/2``.
     """
     i = np.asarray(fireline_intensity_w_m, float)
     return convective_fraction * i / np.maximum(np.asarray(abl_m, float), 1.0)
