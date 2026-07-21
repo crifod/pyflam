@@ -55,6 +55,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pyflam_gui.core.pyroconv import (
     read_icon2i_profile, profile_diagnostics, classify_profile, fli_grid,
     read_icon_eu, iconeu_diagnostics, regrid_diagnostics,
+    _REFERENCE_FIRE_FLUX_W_M2,
     lcp_fields as _core_lcp_fields)
 
 warnings.simplefilter("ignore")
@@ -197,7 +198,48 @@ def render(cats, lat, lon, tag):
     return png
 
 
-def build_pdf(png_pot, png_gate, ladders, n_levels):
+def render_decoupling(diags, lat, lon):
+    """Render the dry-pyrocloud decoupling ratio (fireABL / ABL) as an 8-hour panel.
+
+    A continuous heatmap, the DRY counterpart to the moist class map: how far a
+    reference intense fire would grow its own boundary layer above the ambient ABL
+    by sensible heat alone. Diagnostic only -- no class label.
+    """
+    import matplotlib; matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    os.makedirs(RASTERDIR, exist_ok=True)
+    flip = lat[0] > lat[-1]; ext = [lon.min(), lon.max(), lat.min(), lat.max()]
+    prov = _tuscany_provinces()
+    fig, ax = plt.subplots(1, len(HOURS), figsize=(2.1*len(HOURS), 3.0),
+                           constrained_layout=True, squeeze=False)
+    ax = ax[0]
+    cmap = plt.get_cmap("magma").copy(); cmap.set_bad("0.9")
+    vmin, vmax = 1.0, 8.0
+    im = None
+    for hi, hour in enumerate(HOURS):
+        r = np.asarray(diags[hi]["decoupling"], float)
+        r = np.where(np.asarray(diags[hi]["valid"], bool), r, np.nan)
+        a = r[::-1] if flip else r
+        im = ax[hi].imshow(a, origin="lower", extent=ext, cmap=cmap, vmin=vmin, vmax=vmax,
+                           aspect="auto", interpolation="nearest")
+        if prov is not None:
+            prov.plot(ax=ax[hi], color="0.15", linewidth=0.4)
+            ax[hi].set_xlim(ext[0], ext[1]); ax[hi].set_ylim(ext[2], ext[3])
+        ax[hi].set_title(f"{DATE} {hour:02d}Z", fontsize=8)
+        ax[hi].set_xticks([]); ax[hi].set_yticks([])
+    src_label = ("ICON-EU model levels + ICON-2I 2.2 km gate" if EFFECTIVE_SOURCE == "hybrid"
+                 else "ICON-2I 2.2 km")
+    fig.suptitle(f"Dry-pyrocloud decoupling  fireABL / ABL  "
+                 f"(reference {int(_REFERENCE_FIRE_FLUX_W_M2)} W/m^2 fire -- DIAGNOSTIC, no class)\n"
+                 f"{src_label} -- Tuscany -- VALID {DATE} (run {RUNDATE} {RUN:02d}Z)", fontsize=11)
+    cb = fig.colorbar(im, ax=ax, shrink=0.72, aspect=30, pad=0.01)
+    cb.set_label("fireABL / ABL   (1 = no decoupling; higher = deeper dry decoupling)", fontsize=8)
+    png = os.path.join(OUTDIR, f"pyroconv_tuscany_{MODEL_TAG}_decoupling_{DATE}.png")
+    fig.savefig(png, dpi=140, bbox_inches="tight"); plt.close(fig)
+    return png
+
+
+def build_pdf(png_pot, png_gate, ladders, n_levels, png_decoup=None):
     md = os.path.join(OUTDIR, f"pyroconv_{MODEL_TAG}_{DATE}.md")
     pdf = os.path.join(OUTDIR, f"pyroconv_tuscany_{MODEL_TAG}_{DATE}.pdf")
     ladder_txt = ", ".join(ladders) if ladders else "none (no classifiable cell)"
@@ -267,6 +309,20 @@ calls ~71% pyroCu-capable (sensitivity 0.99 -- it rarely misses a capable column
 5-level source, set `PYROCONV_ML_METHOD=surface_to_abl` or `mid_layer` for the superseded
 measurements.""")
     ml_para = ml_para.format(n=n_levels)
+    decoup_block = ""
+    if png_decoup:
+        decoup_block = (
+"## Dry-pyrocloud decoupling -- DIAGNOSTIC (no class label)\n\n"
+f"![decoupling]({png_decoup}){{{{width=100%}}}}\n\n"
+"The **decoupling ratio** fireABL / ABL is how high a reference intense fire "
+f"({int(_REFERENCE_FIRE_FLUX_W_M2)} W/m^2 convective flux) would grow its own boundary layer "
+"by *sensible heat alone*, divided by the ambient ABL. It is the **dry** counterpart to the "
+"moist class map above (Castellnou et al. 2022; Castellnou Ribau et al. 2024): values well "
+"above 1 mark deep, hot, dry columns where a fire can punch through and decouple from the "
+"surface *even where the moist ladder scores low*. It is a diagnostic, not a calibrated class "
+"-- no dry/moist LCL split is applied (the +1 km literature offset is not supported by the "
+"GRAF prototype labels; a fit prefers ~ -0.5 km). fireABL from "
+"`pyflam.atmosphere.fire_induced_abl_grid` (parcel intersected with the real theta(z) stack).\n\n")
     with open(md, "w") as f:
         f.write(f"""---
 title: "Tuscany Pyroconvection-Type Forecast -- {src_title} -- VALID {DATE}"
@@ -314,7 +370,7 @@ thresholds, not locally validated ones.
 
 ![potential]({png_pot}){{width=100%}}
 
-## Class scale (low -> high pyroconvective activity)
+{decoup_block}## Class scale (low -> high pyroconvective activity)
 
 | Level | Colour | Class | Meaning |
 |:--:|:--|:--|:--|
@@ -464,8 +520,10 @@ def main():
 
     png_pot = render(np.stack(pot), lat, lon, "potential")
     png_gate = render(np.stack(gate), lat, lon, "gated") if gate else png_pot
+    png_decoup = render_decoupling(diags, lat, lon)
     export_diagnostics(diags, lat, lon)
-    pdf = build_pdf(png_pot, png_gate, sorted(ladders), diags[0]["n_levels"])
+    pdf = build_pdf(png_pot, png_gate, sorted(ladders), diags[0]["n_levels"],
+                    png_decoup=png_decoup)
     print(f"OK {DATE} {RUN:02d}Z [ladder={','.join(sorted(ladders))}]: {png_pot}"
           + (f" | {pdf}" if pdf else ""))
 
