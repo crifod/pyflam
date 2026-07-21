@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   LES anchors. The in-plume LCL offset for the dry/moist split is left as a
   configurable parameter (default 0 = ambient LCL); the literature +1 km value is
   not baked in, as it is not supported by the GRAF prototype labels.
+  **Magnitude is not yet calibrated**: the fireABL ranks columns well (r ~ 0.8 vs
+  sondes) but its absolute heights run ~3× high, and no scale height fixes it — the
+  forcing uses the fire-front flux where a mixed-layer-averaged flux is wanted.
+  Read the fireABL and the gridded `decoupling` diagnostic qualitatively for now.
 
 ## [0.1.3] - 2026-07-02
 

@@ -963,18 +963,28 @@ def parcel_mixing_depth_grid(height_agl_m, theta, theta_surface, *,
 # constant because it is a calibration target, not a first-principles value: it
 # sets only the theta-excess magnitude (theta' ~ H^(-1/3)).
 #
-# Stage-C fit vs the 90-fire / 835-hour sonde set (observed fire_ABL): the
-# linear-model fireABL is biased low, worse for the deepest events (pyroCb
-# -1439 m). Rescaling theta' by 1.08 (H ~ 56 m) removes the overall bias
-# (-458 -> +53 m) and halves the pyroCb bias (-> -561 m), CV-validated (MAE
-# 513 -> 451 m). That fit is NOT adopted as the default here: it is derived
-# through the linear-extrapolation geometry, whereas the profile-intersection
-# method (fire_induced_abl_grid) maps theta' to height differently -- and on the
-# deep SCQ sounding the profile method already runs high vs typical sonde
-# fireABLs, i.e. it may want the opposite correction. A definitive scale-height
-# calibration for the profile method needs full soundings across many fires,
-# which the public GRAF dataset does not provide. Left at the reference 70 m;
-# pass ``scale_height_m`` to override per call.
+# CALIBRATION STATUS (magnitude is NOT calibrated; the ranking is):
+#
+#  * Linear-geometry fit vs the 90-fire sonde set: rescaling theta' by 1.08
+#    (H ~ 56 m) removes the linear model's low bias. But that geometry is not the
+#    one this module uses.
+#  * Profile-intersection fit vs the SCQ sonde (the one fire with a full sounding
+#    AND observed heights, 19 h): the profile fireABL OVER-predicts by ~3x
+#    (median 6.1 km vs sonde 2.0 km), and the scale height that would fix it runs
+#    off the top of the physical range (best H > 6 km, still +0.4 km biased). So
+#    the H knob CANNOT calibrate the magnitude -- the theta' FORM is the problem:
+#    F here is the fire-*front* flux ((Ib/2)/front_depth), a locally intense value,
+#    used to force a mixed-layer-scale encroachment; a mixed-layer-averaged flux is
+#    what that intersection should see. (Tellingly, GRAF's own published
+#    ``expected_fireABL`` matches the sondes to within ~-370 m, i.e. their refined
+#    model runs ~3x lower than the Demo stage-4 code ported here.)
+#
+# Net: fire_induced_abl_grid reproduces the reference stage-4 mechanism and RANKS
+# columns well (r ~ 0.8 vs sondes), but its absolute heights are ~3x high. Read the
+# fireABL and the decoupling ratio QUALITATIVELY until the forcing is recalibrated
+# against ``expected_fireABL`` across the 5 fires with ERA5 soundings in
+# zenodo_6433389. Default left at the reference 70 m; pass ``scale_height_m`` to
+# override per call.
 _FIRE_PLUME_SCALE_M = 70.0
 
 
@@ -1027,6 +1037,12 @@ def fire_induced_abl_grid(height_agl_m, theta, *, theta_mean_below, heat_flux,
     ``heat_flux`` (W/m^2) and ``blh`` (m) are ``(ny, nx)`` fields. Unusable levels
     carry ``nan``. Clipped to ``[min_m, max_m]`` (``max_m=None`` -> only the
     sounding bounds it) and never returned below ``blh``.
+
+    Magnitude caveat: this reproduces the reference stage-4 mechanism and ranks
+    columns well (r ~ 0.8 vs sondes) but its absolute heights run ~3x high vs
+    sonde-observed fireABLs, and no scale height fixes it (see the calibration note
+    on ``_FIRE_PLUME_SCALE_M``). Read the height and the decoupling ratio
+    qualitatively until the forcing flux is recalibrated.
 
     Note the fireABL is a *height* diagnostic only; whether the decoupled fire
     also goes moist is a separate question -- compare a plume height against
