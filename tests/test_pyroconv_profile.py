@@ -503,6 +503,12 @@ def test_iconeu_diagnostics_measures_a_well_mixed_column():
                                np.array([43.05]), np.array([11.05]))
     assert set(rg) >= {"abl", "ml_grad", "lcl_ratio", "gamma", "rh_top", "valid"}
 
+    # The dry-pyrocloud diagnostic rides along: a reference fire on a deep dry column
+    # grows a fireABL above the ambient ABL (decoupling > 1), and it survives regridding.
+    assert np.all(diag["fireabl"] >= diag["abl"] - 1e-6)
+    assert np.nanmedian(diag["decoupling"]) > 1.0        # a reference fire decouples here
+    assert "decoupling" in rg and np.isfinite(rg["fireabl"]).all()
+
 
 def test_fetch_icon_eu_builds_expected_urls(monkeypatch, tmp_path):
     """No network: capture the URLs and local names fetch_icon_eu would request."""

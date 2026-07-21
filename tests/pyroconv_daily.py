@@ -382,7 +382,8 @@ def export_diagnostics(diags, lat, lon):
     dlon = float(abs(lon[1] - lon[0])); dlat = float(abs(lat[1] - lat[0]))
     tr = from_origin(lon.min() - dlon / 2, lat.max() + dlat / 2, dlon, dlat)
     for hi, hour in enumerate(HOURS):
-        for name in ("abl", "parcel_ml", "lcl", "lcl_ratio", "ml_grad", "gamma", "rh_top"):
+        for name in ("abl", "parcel_ml", "lcl", "lcl_ratio", "ml_grad", "gamma", "rh_top",
+                     "fireabl", "decoupling"):
             arr = np.asarray(diags[hi][name], "float32")
             arr = arr if flip else arr[::-1]
             path = os.path.join(RASTERDIR, f"diag_{name}_{hour:02d}Z.tif")

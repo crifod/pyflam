@@ -959,10 +959,22 @@ def parcel_mixing_depth_grid(height_agl_m, theta, theta_surface, *,
 # linear fit -- the extrapolation runs the fireABL to unphysical heights (13 km
 # from a 2 km fit) on the very hours it matters most.
 
-# GRAF/WUR fire-plume scale height used in the convective-velocity scale. Left as
-# a named constant because it is a Stage-C calibration target (fireABL heights
-# are biased low vs sonde-observed fireABLs, worse for the deepest events), not a
-# first-principles value.
+# GRAF/WUR fire-plume scale height (m) in the convective-velocity scale. A named
+# constant because it is a calibration target, not a first-principles value: it
+# sets only the theta-excess magnitude (theta' ~ H^(-1/3)).
+#
+# Stage-C fit vs the 90-fire / 835-hour sonde set (observed fire_ABL): the
+# linear-model fireABL is biased low, worse for the deepest events (pyroCb
+# -1439 m). Rescaling theta' by 1.08 (H ~ 56 m) removes the overall bias
+# (-458 -> +53 m) and halves the pyroCb bias (-> -561 m), CV-validated (MAE
+# 513 -> 451 m). That fit is NOT adopted as the default here: it is derived
+# through the linear-extrapolation geometry, whereas the profile-intersection
+# method (fire_induced_abl_grid) maps theta' to height differently -- and on the
+# deep SCQ sounding the profile method already runs high vs typical sonde
+# fireABLs, i.e. it may want the opposite correction. A definitive scale-height
+# calibration for the profile method needs full soundings across many fires,
+# which the public GRAF dataset does not provide. Left at the reference 70 m;
+# pass ``scale_height_m`` to override per call.
 _FIRE_PLUME_SCALE_M = 70.0
 
 
@@ -1045,10 +1057,12 @@ def fire_induced_abl_grid(height_agl_m, theta, *, theta_mean_below, heat_flux,
     usable = np.where(np.isfinite(z) & np.isfinite(th), z, -np.inf)
     z_top = np.max(usable, axis=0)
     out = np.where(~np.isfinite(out) & np.isfinite(z_top) & (z_top > -np.inf), z_top, out)
-    # The fireABL cannot sit below the ambient ABL it grows out of.
-    out = np.maximum(out, blh)
     hi = z_top if max_m is None else np.minimum(z_top, max_m)
-    return np.clip(out, min_m, hi)
+    out = np.clip(out, min_m, hi)
+    # The fireABL cannot sit below the ambient ABL it grows out of. Applied last so
+    # the sounding clip cannot push it back under the ABL on a thin/degenerate column
+    # (profile top below the ABL), where ``hi`` would otherwise win.
+    return np.maximum(out, blh)
 
 
 def shear_height_grid(height_agl_m, wind_u, wind_v, *, zmin: float = 200.0,
