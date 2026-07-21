@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-21
+
+Pre-release for field testing against real recorded wildfires. Integrates the
+fire-weather / FWI pipeline and the new dry-pyrocloud fire-induced boundary layer.
+
 ### Added
 
 - **Dry-pyrocloud fire-induced boundary layer.** `atmosphere.fire_induced_abl_grid`
