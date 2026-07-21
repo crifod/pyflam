@@ -22,7 +22,7 @@ from pyflam.atmosphere import (
     pyroconvection_type_shear, saturation_vapour_pressure_pa, shear_distance_ratio,
     shear_height_adaptive, shear_height_none, shear_height_window,
     specific_humidity_from_rh, virtual_potential_temperature,
-    fire_parcel_theta_excess, fire_induced_abl_grid,
+    fire_parcel_theta_excess, fire_induced_abl_grid, mixed_layer_fire_flux,
 )
 
 
@@ -311,6 +311,22 @@ def test_fireabl_no_decoupling_without_fire():
 def test_fireabl_monotone_in_firepower():
     """A more powerful fire punches the fireABL higher."""
     assert np.all(_fa_grid(60.0) < _fa_grid(200.0))
+
+
+def test_mixed_layer_flux_is_the_front_flux_scaled_by_depth_ratio():
+    """The ML-averaged flux spreads I over the ABL depth, not the flaming-front depth.
+
+    So it is the front flux times (front_depth / ABL) -- a large reduction that fixes
+    the fireABL magnitude. Here a 1e7 W/m fire over a 1500 m ABL gives 0.5*I/abl.
+    """
+    I, abl = 1.0e7, 1500.0
+    q_ml = mixed_layer_fire_flux(I, abl)
+    assert q_ml == pytest.approx(0.5 * I / abl)          # convective_fraction 0.5 default
+    # Deeper ABL -> more dilution -> smaller flux -> a lower fireABL.
+    assert mixed_layer_fire_flux(I, 3000.0) < q_ml
+    # array-safe over a grid
+    q = mixed_layer_fire_flux(np.full((2, 2), I), np.array([[1000.0, 2000.0], [1500.0, 3000.0]]))
+    assert q.shape == (2, 2) and np.all(q > 0)
 
 
 def test_fireabl_is_bounded_by_the_sounding_not_extrapolated():

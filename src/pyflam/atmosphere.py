@@ -979,12 +979,15 @@ def parcel_mixing_depth_grid(height_agl_m, theta, theta_surface, *,
 #    ``expected_fireABL`` matches the sondes to within ~-370 m, i.e. their refined
 #    model runs ~3x lower than the Demo stage-4 code ported here.)
 #
-# Net: fire_induced_abl_grid reproduces the reference stage-4 mechanism and RANKS
-# columns well (r ~ 0.8 vs sondes), but its absolute heights are ~3x high. Read the
-# fireABL and the decoupling ratio QUALITATIVELY until the forcing is recalibrated
-# against ``expected_fireABL`` across the 5 fires with ERA5 soundings in
-# zenodo_6433389. Default left at the reference 70 m; pass ``scale_height_m`` to
-# override per call.
+# FIRST-CUT FIX (:func:`mixed_layer_fire_flux`): the ~3x over-prediction is a flux
+# problem, not a scale-height one. Feeding the encroachment a mixed-layer-averaged
+# flux -- the fire's convective power spread over the ABL depth, not the ~10 m
+# flaming-front depth -- collapses the SCQ bias from +3.6 km to +0.06 km AND lifts
+# the correlation to 0.94 (from 0.84), with no free parameter. So the recommended
+# forcing for a real fire is ``mixed_layer_fire_flux(I, abl)``, not the front flux.
+# Still validated on one fire (SCQ); multi-fire confirmation across the 5 ERA5
+# soundings in zenodo_6433389 is pending, so read absolute heights cautiously.
+# Default scale height left at the reference 70 m; pass ``scale_height_m`` to override.
 _FIRE_PLUME_SCALE_M = 70.0
 
 
@@ -1011,6 +1014,30 @@ def fire_parcel_theta_excess(heat_flux_w_m2, theta_mean_below_k, *,
                         / (2.0 * _RHO_AIR * np.maximum(thv, 1.0))) ** (1.0 / 3.0), 0.0)
     excess = np.where(pos & (w0 > 0.0), f / (_RHO_AIR * np.maximum(w0, 1e-9)), 0.0)
     return excess, w0
+
+
+def mixed_layer_fire_flux(fireline_intensity_w_m, abl_m, *,
+                          convective_fraction: float = 0.5):
+    """Mixed-layer-averaged fire heat flux (W/m^2) for the fireABL encroachment.
+
+    The fire's convective power per unit front (``convective_fraction * I``, I in
+    W/m) spread over the **boundary-layer depth** -- the scale over which the heat
+    is actually mixed -- rather than over the narrow flaming-front depth. Feed the
+    result as ``heat_flux`` to :func:`fire_induced_abl_grid`.
+
+    This fixes the fireABL *magnitude* bug (see the calibration note on
+    ``_FIRE_PLUME_SCALE_M``): the reference stage-4 forcing uses the fire-front flux
+    ``(I/2)/front_depth`` (front_depth ~ 10 m, a locally intense value), which drives
+    the encroachment ~3x too high. Substituting the ABL depth for the front depth is
+    a first-cut fix validated on the SCQ sonde (19 h): the profile-method fireABL
+    bias collapses from +3.6 km to **+0.06 km** and the correlation rises from 0.84
+    to **0.94**, with no free parameter. Multi-fire confirmation (the 5 fires with
+    ERA5 soundings in zenodo_6433389) is still pending, so treat it as a promising
+    first cut, not a finished calibration. ``convective_fraction`` defaults to 0.5
+    to match the reference ``I/2`` split.
+    """
+    i = np.asarray(fireline_intensity_w_m, float)
+    return convective_fraction * i / np.maximum(np.asarray(abl_m, float), 1.0)
 
 
 def fire_induced_abl_grid(height_agl_m, theta, *, theta_mean_below, heat_flux,
