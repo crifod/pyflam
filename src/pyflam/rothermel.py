@@ -92,15 +92,55 @@ class SurfaceKernel:
         phi = 5.275 * self.beta ** -0.3 * np.where(t > 0.0, t, 0.0) ** 2
         return np.where(t > 0.0, phi, 0.0)
 
-    def rate_of_spread(self, wind_midflame=0.0, slope=0.0):
-        return self.r0 * (1.0 + self.wind_factor(wind_midflame)
-                          + self.slope_factor(slope))
+    def effective_wind_limit(self):
+        """Maximum reliable effective wind speed (ft/min) -- Rothermel (1972) eq. 87.
 
-    def behavior(self, *, wind_midflame=0.0, slope=0.0) -> FireBehavior:
-        """Full scalar fire behavior for one (wind, slope) pair."""
+        ``U_max = 0.9 * I_R`` (I_R in Btu/ft^2/min). Above this the wind/slope factor
+        is empirically unreliable, so BehavePlus/FlamMap cap the combined factor here;
+        pyflam does the same via :meth:`limit_combined_factor`. Prevents the Rothermel
+        wind factor's power-law from running the spread rate to unphysical values on
+        steep-slope / high-wind cells in high-SAV fuels.
+        """
+        return 0.9 * self.reaction_intensity
+
+    def limit_combined_factor(self, phi_combined):
+        """Cap the combined wind+slope factor at the effective-wind limit.
+
+        Inverts the Rothermel wind factor to the effective wind that ``phi_combined``
+        implies, and where that exceeds :meth:`effective_wind_limit` returns the factor
+        at the limit instead. Array-safe; a no-op for degenerate/nonburnable kernels.
+        """
+        phi = np.asarray(phi_combined, dtype=float)
+        if self.c <= 0.0 or self.b <= 0.0 or self.reaction_intensity <= 0.0:
+            return phi
+        u = np.where(phi > 0.0,
+                     (phi * self.beta_ratio ** self.e / self.c) ** (1.0 / self.b), 0.0)
+        u_max = self.effective_wind_limit()
+        phi_max = self.c * u_max ** self.b * self.beta_ratio ** -self.e
+        return np.where(u > u_max, phi_max, phi)
+
+    def rate_of_spread(self, wind_midflame=0.0, slope=0.0, *, effective_wind_limit=False):
+        phi = self.wind_factor(wind_midflame) + self.slope_factor(slope)
+        if effective_wind_limit:
+            phi = self.limit_combined_factor(phi)
+        return self.r0 * (1.0 + phi)
+
+    def behavior(self, *, wind_midflame=0.0, slope=0.0,
+                 effective_wind_limit=False) -> FireBehavior:
+        """Full scalar fire behavior for one (wind, slope) pair.
+
+        ``effective_wind_limit`` (default off) caps the combined wind+slope factor at
+        the Rothermel 0.9*I_R limit (BehavePlus/FlamMap). Left off by default because
+        the classic limit over-restricts low-intensity fuels at modest wind (Andrews,
+        Cruz & Rothermel 2013); enable it for FlamMap parity or to tame the high-wind /
+        steep-slope singularity in high-SAV fuels.
+        """
         phi_w = float(self.wind_factor(wind_midflame))
         phi_s = float(self.slope_factor(slope))
-        ros = self.r0 * (1.0 + phi_w + phi_s)
+        phi_eff = phi_w + phi_s
+        if effective_wind_limit:
+            phi_eff = float(self.limit_combined_factor(phi_eff))
+        ros = self.r0 * (1.0 + phi_eff)
         fli = self.heat_per_unit_area * ros / 60.0
         return FireBehavior(
             rate_of_spread=ros,
