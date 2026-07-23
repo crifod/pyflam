@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Rothermel effective wind-speed limit** (opt-in). `SurfaceKernel` gains
+  `effective_wind_limit()` (0.9·I_R, Rothermel 1972 eq. 87) and
+  `limit_combined_factor()`, and `rate_of_spread`/`behavior`/`basic_fire_behavior`/
+  `spread_field` take `effective_wind_limit=` (default **False**). With it on, the
+  combined wind+slope factor is capped at the effective-wind limit as BehavePlus/
+  FlamMap do — taming the Rothermel wind-factor singularity that drives spread to
+  unphysical values on steep-slope / high-wind cells in high-SAV fuels (surfaced by
+  the Montale 2017 case). Left off by default because the classic 0.9·I_R limit
+  over-restricts low-intensity fuels at modest wind (Andrews, Cruz & Rothermel 2013),
+  which would change verified spread and the golden-master ROS values.
+
 ## [0.2.0] - 2026-07-21
 
 Pre-release for field testing against real recorded wildfires. Integrates the
