@@ -3,7 +3,8 @@
 Comparison of the Catalan fire service (GRAF / Bombers) pyroconvection-type product against
 the pyflam hybrid product over central Italy, plus the code change the comparison motivated.
 
-**Status: for evaluation.** Written 2026-07-26; extended the same day with §§7-10 after a
+**Status: for evaluation.** Start at **§12**, the standing synthesis of every difference
+found; §§1-11 are the working record. Written 2026-07-26; extended the same day with §§7-12 after a
 literature and sonde investigation. Two corrections are applied (§5 nodata separation, §9
 removal of the 600 m ABL gate). The **extent** divergence (§3.1) is now *explained* but not
 resolved; the **evening** divergence (§3.2) is half resolved, with the remaining half
@@ -182,6 +183,8 @@ classified stop being drawn as the lowest class. The 18Z panels go from "uniform
 ---
 
 ## 6. Open items for the follow-up evaluation
+
+*Superseded by §11 — kept as the record of what was open before the investigation in §§7-10.*
 
 1. **The extent gap (§3.1) is unexplained and is the substantive divergence.** The evening
    issue is now closed; this one is not. Priority.
@@ -422,7 +425,97 @@ than calibration against GRAF output, so model independence is preserved. Item 8
 calibrate against the campaign's *published measurements*, not against the GRAF product. **No threshold in
 this codebase has been altered to match the GRAF product**, and none should be.
 
-## 11. Provenance
+## 12. Synthesis — how pyflam differs from the GRAF model
+
+A standing summary of every difference established so far, organised by kind rather than by
+the order it was found. Sections 1-11 are the working record; this is the account to read
+first.
+
+### 12.1 The root difference
+
+**They classify a plume; we screen an atmosphere.** Everything consequential follows.
+
+Castellnou et al. (2022) sec. 2.4.1 lists the classifier's inputs: *ABL stability, plume
+characteristics (flattened / overshooting / pyroCu / pyroCb), plume stages (surface,
+penetration, deepening), and turbulence position on top of ABL.* Two of those four are
+observations of a real plume. The pyflam POTENTIAL map has neither -- it evaluates the ambient
+column and posits a pyroCu-capable fire in every cell. We implemented the atmospheric
+projection of a classifier whose discriminating inputs are the fire-side ones. That is why we
+saturate at midday and they do not, and no threshold adjustment reaches it.
+
+### 12.2 Variables they use and we lack
+
+| Variable | Role in the source method | pyflam |
+|:--|:--|:--|
+| Plume stage / characteristics | classification input | **unobtainable from NWP** — the core gap |
+| Plume updraft vertical speed | where updrafts stabilise | unobtainable (they derive it from balloon ascent) |
+| **Δθ** entrainment jump | sec. 2.1.2: *"assess the ability of a parcel to penetrate above ABL and achieve free convection"* | computed since 2026-07-26, **diagnostic only** |
+| **Δq** moisture jump | same clause | absent |
+| **FireCAPE** (Potter 2005) | critical variable, their Eq. 2 | computed since 2026-07-26, **diagnostic only** |
+| fireLCL, fireShear | in-fire counterparts of the ambient levels | absent; we have fireABL alone |
+
+### 12.3 Same quantity, different definition
+
+| | GRAF | pyflam | Measured effect |
+|:--|:--|:--|:--|
+| Ri_b critical value | 0.33 | 0.33 ✓ (1-D path was 0.25 — fixed) | — |
+| Ri_b search start | 400 m (in-plume indraft correction) | 200 m (Zhang, ambient column) | 18Z median ABL 404 vs 225 m |
+| ABL identification | height of maximum RH, *supplemented* by Ri_b | Ri_b alone | untested |
+| LCL | MetPy iterative, surface parcel | Bolton, surface parcel | negligible |
+
+### 12.4 Gates pyflam invented
+
+| Gate | Basis in the method | Status |
+|:--|:--|:--|
+| `ABL_MIN_M` = 600 m | none | **removed** — falsified by 5 of 8 campaign sondes at 202-391 m |
+| `rh_top_moist` 80 → 60 % | none; tuned to GRAF's class-4 fraction on 2026-07-15 | **in place**, and applies only to classes 3-4 — class 2 carries no moisture gate at all |
+| 10 MW/m fireline-intensity fuel gate | Tedim et al. 2018 | ours alone; no GRAF counterpart |
+
+### 12.5 Pipeline and presentation
+
+- **Order of operations.** They threshold at native 6.5 km; we interpolate the diagnostics to
+  2.2 km and threshold there. Affects class edges, not extent.
+- **Taxonomy.** Their scale is 1-4 with pyroCb = 1; ours 0-4 with pyroCb = 4 — inverted. They
+  have neither a surface-plume class nor a not-classified class, so **white on a GRAF map is
+  undefined**: it may mean no significant convection or no usable column. That is exactly the
+  conflation removed from pyflam in §5, and it means statements in §2 about both products
+  "agreeing on blank nights" rest on an assumption their legend does not license.
+- **Palette.** darkred / gold / yellow / lightgreen against ColorBrewer RdYlGn; selectable via
+  `PYROCONV_PALETTE=graf`. Cosmetic, but note gold and yellow are adjacent hues, so their
+  resilient/overshooting pair cannot be reliably separated by eye in a compressed image --
+  which is a limit on any visual reading of their published maps, including the ones in §3.
+
+### 12.6 Ranked by consequence
+
+1. **Missing fire-side inputs** — causes the 65-90 % vs isolated-patches extent gap.
+   Unresolved. Δθ and FireCAPE are the candidate proxies, but the penetration test is a no-op
+   today because the reference θ′ is 20 K against 0.1-13.1 K measured in-plume (§10.3).
+2. **Ambient vs in-fire levels** — causes the evening disagreement. At 18Z the ambient ABL is
+   230 m against a 1105 m LCL, so 98 % of columns exceed the overshooting threshold and fall
+   to convection plume, while GRAF reaches pyroCb.
+3. **The RH relaxation** — an uncalibrated deviation on classes 3-4, fitted to a single day and
+   never revisited.
+4. **Ri_b start height** — real, small.
+5. **Resampling order, palette, class numbering** — presentational.
+
+### 12.7 What remains unknown
+
+- Whether GRAF applies an additional mask or condition in their gridded product. Their
+  documented physics offers FireCAPE and the penetration test as candidates; we have no
+  confirmation.
+- Their time convention: panels are labelled `Z`, but a local reading would move the evening
+  comparison materially (§4).
+- Any quantitative GRAF field. The entire extent comparison is ordinal, read from an image.
+
+### 12.8 The one point of genuine corroboration
+
+Day 0: same peak hour (15Z), same class ceiling, same Apennine-crest band running east toward
+Marche. Two independent implementations of the same published ladder agreeing on structure and
+timing. **This is evidence precisely because pyflam has not been tuned to GRAF output**, and it
+is the reason item 8 must calibrate θ′ against the campaign's published *measurements* rather
+than against their maps.
+
+## 13. Provenance
 
 - GRAF map: `Tipus de piroconvecció - ICON-EU 26jul2026 00Z`, Bombers de la Generalitat de
   Catalunya, supplied as a WhatsApp image on 2026-07-26.

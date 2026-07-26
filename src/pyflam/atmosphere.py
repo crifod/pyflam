@@ -633,6 +633,34 @@ PYROCONVECTION_TYPE_COLOR = {
     "overshooting_pyrocu": "#fee08b", "resilient_pyrocu": "#f46d43",
     "deep_pyrocu_pyrocb": "#7f0000",
 }
+# The Catalan Bombers (GRAF) operational palette, sampled from their published
+# "Tipus de piroconvecció" legend bar (ICON-EU 26 Jul 2026 00Z) and rounded to the CSS named
+# colours it is built from: darkred / gold / yellow / lightgreen. Offered so a forecaster can
+# read the two products side by side without re-learning the key -- the class *names*
+# correspond one-to-one, only the integers run opposite (GRAF numbers pyroCb 1, pyflam 4).
+#
+# Their scale has no surface-plume class, so white is retained for it.
+#
+# Trade-off worth knowing before choosing this: gold and yellow are adjacent hues, so the
+# resilient/overshooting pair is markedly harder to tell apart than in the default
+# (ColorBrewer RdYlGn) palette, where they are orange-red against buff. That cost is real --
+# it is why the visual reading of GRAF's own maps cannot reliably separate those two classes.
+PYROCONVECTION_TYPE_COLOR_GRAF = {
+    "surface_plume": "#ffffff", "convection_plume": "#90ee90",
+    "overshooting_pyrocu": "#ffff00", "resilient_pyrocu": "#ffd700",
+    "deep_pyrocu_pyrocb": "#8b0000",
+}
+PYROCONVECTION_PALETTES = {"pyflam": PYROCONVECTION_TYPE_COLOR,
+                           "graf": PYROCONVECTION_TYPE_COLOR_GRAF}
+
+
+def pyroconvection_colors(palette: str = "pyflam") -> dict:
+    """Class -> hex colour map. ``palette`` is ``"pyflam"`` (default) or ``"graf"``."""
+    try:
+        return PYROCONVECTION_PALETTES[palette]
+    except KeyError:
+        raise ValueError(f"unknown palette {palette!r}; "
+                         f"expected one of {sorted(PYROCONVECTION_PALETTES)}") from None
 # Human-readable English labels for plots/reports (keys = PYROCONVECTION_TYPES).
 PYROCONVECTION_TYPE_LABEL = {
     "surface_plume": "Surface plume",

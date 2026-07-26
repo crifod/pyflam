@@ -21,6 +21,7 @@ Config via env (all optional):
   PYROCONV_ML_METHOD  surface_to_parcel | surface_to_abl | mid_layer  (default: surface_to_parcel)
   PYROCONV_SOURCE     hybrid | icon2i   (default: hybrid, auto-falls back to icon2i)
   PYROCONV_HOURS      subset of valid hours, e.g. "12" or "9,12,15" (default: all 8)
+  PYROCONV_PALETTE    pyflam | graf  (default: pyflam; "graf" = the Catalan Bombers key)
 Usage:  PYTHONPATH=src python tests/pyroconv_daily.py [YYYY-MM-DD] [run]
 
 SOURCE=hybrid (the default) takes the atmospheric profile from ICON-EU model levels -- the
@@ -45,8 +46,8 @@ from pyflam import units, fuel_models
 from pyflam.atmosphere import (
     equilibrium_moisture_content, relative_humidity_from_dewpoint,
     fetch_icon2i_mistral, fetch_icon_eu, ICON2I_PROFILE_FIELDS, ICON_EU_MODEL_LEVELS,
-    PYROCONVECTION_TYPES, PYROCONVECTION_TYPE_LEVEL, PYROCONVECTION_TYPE_COLOR,
-    PYROCONVECTION_TYPE_LABEL,
+    PYROCONVECTION_TYPES, PYROCONVECTION_TYPE_LEVEL,
+    PYROCONVECTION_TYPE_LABEL, pyroconvection_colors,
 )
 
 # Shared compute core (also used by the Streamlit GUI). Add the repo root to the
@@ -125,6 +126,10 @@ if os.environ.get("PYROCONV_HOURS"):
 # ICON-EU GRIB cache (per run; one subdir per forecast step).
 EU_CACHE = os.environ.get("PYROCONV_EU_CACHE") or f"/tmp/pyflam_iconeu/{STAMP}"
 # Tuscany province borders (ISTAT-derived, openpolis geojson-italy, EPSG:4326).
+# Class colour palette: "pyflam" (default, ColorBrewer RdYlGn) or "graf" (the Catalan
+# Bombers operational key, for side-by-side reading of the two products).
+PALETTE = os.environ.get("PYROCONV_PALETTE", "pyflam")
+COLORS = pyroconvection_colors(PALETTE)
 PROV_GEOJSON = (os.environ.get("PYROCONV_PROVINCES")
                 or "/Users/cristianofoderi/DATI/boundaries/limits_IT_provinces.geojson")
 
@@ -165,8 +170,7 @@ def render(cats, lat, lon, tag):
     flip = lat[0] > lat[-1]; ext = [lon.min(), lon.max(), lat.min(), lat.max()]
     # Index -1 (PYROCONV_NODATA) gets its own grey: a column the ladder could not run on is
     # not a quiet one, and must not borrow class 0's colour.
-    cmap = ListedColormap([NODATA_COLOR]
-                          + [PYROCONVECTION_TYPE_COLOR[t] for t in PYROCONVECTION_TYPES])
+    cmap = ListedColormap([NODATA_COLOR] + [COLORS[t] for t in PYROCONVECTION_TYPES])
     norm = BoundaryNorm(np.arange(-1.5, 5.5, 1), cmap.N)
     prov = _tuscany_provinces()
     fig, ax = plt.subplots(1, len(HOURS), figsize=(2.1*len(HOURS), 3.0),
@@ -183,7 +187,7 @@ def render(cats, lat, lon, tag):
                  else "ICON-2I 2.2 km")
     fig.suptitle(f"Pyroconvection type -- {TAG_TITLE.get(tag, tag)}\n{src_label} -- "
                  f"Tuscany -- VALID {DATE} (run {RUNDATE} {RUN:02d}Z)", fontsize=11)
-    leg = [Patch(facecolor=PYROCONVECTION_TYPE_COLOR[t], edgecolor="0.4",
+    leg = [Patch(facecolor=COLORS[t], edgecolor="0.4",
                  label=f"{PYROCONVECTION_TYPE_LEVEL[t]}  {PYROCONVECTION_TYPE_LABEL[t]}")
            for t in PYROCONVECTION_TYPES]
     leg.append(Patch(facecolor=NODATA_COLOR, edgecolor="0.4", label="n/c  not classifiable"))

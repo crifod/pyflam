@@ -33,7 +33,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 sys.path.insert(0, REPO)
 from pyflam.atmosphere import (PYROCONVECTION_TYPES, PYROCONVECTION_TYPE_LEVEL,
-                               PYROCONVECTION_TYPE_COLOR, PYROCONVECTION_TYPE_LABEL)
+                               PYROCONVECTION_TYPE_LABEL, pyroconvection_colors)
 from pyflam_gui.core.pyroconv import ABL_MIN_M, _REFERENCE_FIRE_FLUX_W_M2
 
 RUNDATE = sys.argv[1] if len(sys.argv) > 1 else datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -52,6 +52,10 @@ CACHE = os.environ.get("PYROCONV_CACHE") or f"/tmp/pyflam_icon2i/{RUNDT:%Y%m%d}{
 PROV_GEOJSON = (os.environ.get("PYROCONV_PROVINCES")
                 or "/Users/cristianofoderi/DATI/boundaries/limits_IT_provinces.geojson")
 SEA_COLOR = "#cfe4ef"
+# "pyflam" (default) or "graf" -- see atmosphere.pyroconvection_colors. Passed through to the
+# daily runner so the per-day panels and the stitched ones cannot disagree.
+PALETTE = os.environ.get("PYROCONV_PALETTE", "pyflam")
+COLORS = pyroconvection_colors(PALETTE)
 NODATA_COLOR = "0.92"                                     # land with no classifiable column
 # Colour range of the dry-pyrocloud decoupling ratio (fireABL / ABL). 1 = the reference fire
 # grows no boundary layer of its own above the ambient one; the daily product uses the same
@@ -104,7 +108,7 @@ def run_daily(valid):
     leave a day-row short and break the raster loaders below.
     """
     env = dict(os.environ, PYROCONV_OUT=OUT, PYROCONV_VALID=valid,
-               PYROCONV_HOURS=",".join(str(h) for h in HOURS))
+               PYROCONV_HOURS=",".join(str(h) for h in HOURS), PYROCONV_PALETTE=PALETTE)
     print(f"\n=== {valid} (forecast day +{(datetime.strptime(valid,'%Y-%m-%d')-RUNDT).days}) ===")
     subprocess.run([sys.executable, os.path.join(REPO, "tests", "pyroconv_daily.py"),
                     RUNDATE, str(RUN), valid], env=env, check=True)
@@ -163,8 +167,7 @@ def combined_figure(kind, path):
     # the ladder could not run on). The sea sentinel moved from -1 to -2 when the classifier
     # started emitting -1 for unclassifiable cells -- sharing the value would have painted
     # every collapsed evening column as sea.
-    colors = [SEA_COLOR, NODATA_COLOR] + [PYROCONVECTION_TYPE_COLOR[t]
-                                          for t in PYROCONVECTION_TYPES]
+    colors = [SEA_COLOR, NODATA_COLOR] + [COLORS[t] for t in PYROCONVECTION_TYPES]
     cmap = ListedColormap(colors)
     norm = BoundaryNorm(np.arange(-2.5, 5.5, 1), cmap.N)
     _, lat0, lon0 = load_stack(DAYS[0], kind)
@@ -197,7 +200,7 @@ def combined_figure(kind, path):
     fig.suptitle(f"Tuscany pyroconvection -- 3-day forecast -- {title}\n"
                  f"ICON-EU model levels + ICON-2I 2.2 km gate -- run {RUNDATE} {RUN:02d}Z",
                  fontsize=12)
-    leg = [Patch(facecolor=PYROCONVECTION_TYPE_COLOR[t], edgecolor="0.4",
+    leg = [Patch(facecolor=COLORS[t], edgecolor="0.4",
                  label=f"{PYROCONVECTION_TYPE_LEVEL[t]}  {PYROCONVECTION_TYPE_LABEL[t]}")
            for t in PYROCONVECTION_TYPES]
     leg.append(Patch(facecolor=NODATA_COLOR, edgecolor="0.4",
