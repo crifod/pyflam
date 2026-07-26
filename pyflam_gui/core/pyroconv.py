@@ -62,11 +62,26 @@ ML_FIT_MIN_PTS = 3
 # together paints unclassifiable ground as quiet, which is the opposite of an honest blank --
 # most visibly around sunset, when the mixed layer collapses and the whole domain drops out.
 PYROCONV_NODATA = -1
-# Reference convective heat flux (W/m^2) for the dry-pyrocloud fireABL diagnostic:
-# a fixed intense-fire flux applied to every cell (the "potential"/upper-bound
-# framing). The GRAF SCQ active-fire hours span ~120-280 W/m^2; 200 is the intense
-# end. This scales the fireABL height; treat the decoupling ratio qualitatively.
-_REFERENCE_FIRE_FLUX_W_M2 = 200.0
+# Reference plume potential-temperature excess (K) for the dry-pyrocloud fireABL diagnostic:
+# a fixed intense-fire forcing applied to every cell (the "potential"/upper-bound framing).
+#
+# Prescribed in kelvin, not derived from a heat flux. Until 2026-07-26 this was a 200 W/m^2
+# reference flux converted by ``fire_parcel_theta_excess``, which (a) omitted the specific heat
+# capacity and so returned J/kg rather than kelvin, overstating the scale ~88x, and (b) is a
+# mixed-layer *turbulence* similarity scale even when dimensionally correct -- a few tenths of
+# a kelvin, an order of magnitude below what a plume core actually is. No cell-averaged flux
+# reconciles the two: it spreads the fire's heat over ground that is mostly not burning.
+#
+# 10 K is the intense end of the only direct measurements available: the GRAF in-plume campaign
+# recorded 0.1-13.1 K (median 4.0) as the in-plume-minus-environment excess over the lowest
+# 200 m, across 10 soundings at 7 wildfires (Castellnou Ribau et al. 2025, AMT 18, 7805-7831).
+# The upper-bound framing takes the intense end, as the old flux comment intended.
+#
+# Treat the resulting decoupling ratio qualitatively. Even when forced with each fire's OWN
+# measured excess, the encroachment model reproduces observed fireABL at ~151 % relative error
+# on the 4 usable campaign observations (mean |error| 1156 m against observations of
+# 371-2850 m). The forcing is now on measured ground; the model it feeds is not yet skilful.
+_REFERENCE_THETA_EXCESS_K = 10.0
 
 # Profile path: the levels the ICON-2I open-data archive publishes below 500 hPa.
 PROFILE_LEVELS = (1000, 925, 850, 700, 500)
@@ -486,7 +501,7 @@ def profile_diagnostics(d, si, *, thresholds=None, shear=True,
                                    np.full(abl.shape, 50.0), np.maximum(abl, 200.0))
     fireabl = fire_induced_abl_grid(
         z_use, theta, theta_mean_below=theta_mean_below,
-        heat_flux=np.full(abl.shape, _REFERENCE_FIRE_FLUX_W_M2), blh=abl)
+        theta_excess=np.full(abl.shape, _REFERENCE_THETA_EXCESS_K), blh=abl)
     with np.errstate(invalid="ignore", divide="ignore"):
         decoupling = fireabl / np.where(abl > 0, abl, np.nan)
 
@@ -736,8 +751,7 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True)
         saturation_vapour_pressure_pa, bulk_richardson_abl_grid, parcel_mixing_depth_grid,
         lcl_height_bolton_m, relative_humidity_from_dewpoint, DEFAULT_PYROCONV_THRESHOLDS,
         shear_height_grid, shear_distance_grid, _EPSILON,
-        entrainment_jump_grid, fire_cape_grid, residual_layer_grid,
-        fire_parcel_theta_excess)
+        entrainment_jump_grid, fire_cape_grid, residual_layer_grid)
     th = thresholds or DEFAULT_PYROCONV_THRESHOLDS
 
     z, T, QV, P, U, V = d["z"], d["T"], d["QV"], d["P"], d["U"], d["V"]
@@ -813,10 +827,10 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True)
     from pyflam.atmosphere import fire_induced_abl_grid
     theta_mean_below = _layer_mean(z, theta,
                                    np.full(abl.shape, 50.0), np.maximum(abl, 200.0))
-    heat_flux = np.full(abl.shape, _REFERENCE_FIRE_FLUX_W_M2)
+    theta_excess = np.full(abl.shape, _REFERENCE_THETA_EXCESS_K)
     fireabl = fire_induced_abl_grid(
         z, theta, theta_mean_below=theta_mean_below,
-        heat_flux=heat_flux, blh=abl)
+        theta_excess=theta_excess, blh=abl)
     with np.errstate(invalid="ignore", divide="ignore"):
         decoupling = fireabl / np.where(abl > 0, abl, np.nan)
 
@@ -825,7 +839,6 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True)
     # commit changes no class. See docs/graf_vs_pyflam_2026-07-26.md for why they are the
     # candidates for the over-extent, and why gating on them is a separate decision.
     delta_theta = entrainment_jump_grid(z, theta, abl)
-    theta_excess, _ = fire_parcel_theta_excess(heat_flux, theta_mean_below)
     firecape = fire_cape_grid(z, thv, theta_excess=theta_excess)
     # Can the reference fire's parcel clear the capping jump at all? This is the penetration
     # test of Castellnou et al. (2022) sec.2.1.2, expressed as a ratio: >= 1 means the fire's

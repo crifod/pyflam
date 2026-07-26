@@ -15,9 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a parcel's *ability to penetrate above the ABL*; FireCAPE is Potter (2005), the CAPE of a
   fire-heated parcel (not surface CAPE, which this product still omits). Both are
   **diagnostic only** — exported as rasters, deliberately not wired into the ladder. The
-  obvious penetration gate θ′/Δθ ≥ 1 is currently a no-op (p10 = 5.5 over Tuscany) because
-  the reference fire's θ′ is 20 K against 0.1–13.1 K measured in-plume by the campaign;
-  calibrating θ′ is a precondition for using it.
+  obvious penetration gate θ′/Δθ ≥ 1 is a no-op over Tuscany (p10 = 2.7 even after the θ′
+  correction below), and the blocker is not the forcing: forced with each campaign fire's own
+  *measured* excess, the encroachment reproduces observed fireABL at ~151 % relative error
+  (n = 4, mean |error| 1156 m on observations of 371–2850 m). The gate cannot rest on a chain
+  with no demonstrated skill, so the next question is the encroachment model, not its input.
 - **Residual-layer depth** (`atmosphere.residual_layer_grid`) — references the parcel to the
   coldest level in the lower column rather than the surface, so the mixed-layer gradient stays
   well-posed after the convective layer decays. By day it reduces to the parcel mixing depth.
@@ -29,6 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Per-province decoupling metric** (`decoup_max`) in the provincial report and CSV.
 
 ### Changed
+
+- **The dry-pyrocloud reference fire is prescribed as a temperature excess, not a heat flux**
+  (`_REFERENCE_THETA_EXCESS_K = 10.0`, replacing `_REFERENCE_FIRE_FLUX_W_M2 = 200`), and
+  `fire_induced_abl_grid` accepts `theta_excess=` directly. Even dimensionally corrected, a
+  flux-derived theta* is an order of magnitude below the 0.1–13.1 K anomalies the GRAF
+  campaign measured inside real plumes, and no cell-averaged flux closes that gap — it spreads
+  the fire's heat over ground that is mostly not burning. 10 K is the intense end of those
+  measurements. This halves the decoupling diagnostic (27/07 15Z median 2.9 -> 2.08).
 
 - **`ABL_MIN_M` 600 m → 150 m.** The 600 m gate ("mixing too shallow to classify") had no
   basis in the source method — Castellnou et al. (2022) sec. 2.4.2 specifies the Rib procedure
@@ -46,6 +56,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   5-diagnostic ladder does run, and the report said otherwise.
 
 ### Fixed
+
+- **`fire_parcel_theta_excess` was dimensionally wrong.** It computed `F / (rho * w0)`, which
+  carries units of J/kg rather than kelvin — the specific heat capacity was absent from both
+  the velocity and the temperature scale — and the result was added straight to a potential
+  temperature in `fire_induced_abl_grid`. For a 200 W/m² flux it returned 20.1 K against a
+  correct 0.23 K, an overstatement of ~88×. Now the standard Deardorff scaling, with a
+  docstring warning that theta* is a mixed-layer *turbulence* scale of a few tenths of a
+  kelvin and must not be used as a plume's temperature excess.
 
 - **Unclassifiable columns are no longer drawn as class 0.** `classify_profile` allocated with
   `np.zeros` and left rejected cells at 0, which the legend renders as "Surface plume", so the

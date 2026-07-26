@@ -49,7 +49,7 @@ from pyflam.atmosphere import (
     PYROCONVECTION_TYPE_LABEL)
 from pyflam.fire_weather_history import (fire_weather_spinup, era5_daily_noon_history,
                                          blend_records)
-from pyflam_gui.core.pyroconv import read_icon2i_profile, ABL_MIN_M, _REFERENCE_FIRE_FLUX_W_M2
+from pyflam_gui.core.pyroconv import read_icon2i_profile, ABL_MIN_M, _REFERENCE_THETA_EXCESS_K
 
 RUNDATE = sys.argv[1] if len(sys.argv) > 1 else datetime.now(timezone.utc).strftime("%Y-%m-%d")
 RUN = int(sys.argv[2]) if len(sys.argv) > 2 else 0
@@ -392,7 +392,8 @@ decoupling and the Canadian fire-weather danger for each of the ten Tuscany prov
 ![decoupling]({os.path.basename(png_decoup)}){{width=100%}}
 
 The decoupling ratio fireABL / ABL is how high a reference intense fire
-({int(_REFERENCE_FIRE_FLUX_W_M2)} W/m^2 convective flux) would grow its own boundary layer by
+(a {_REFERENCE_THETA_EXCESS_K:.0f} K plume temperature excess -- the intense end of the GRAF in-plume
+measurements, 0.1-13.1 K) would grow its own boundary layer by
 *sensible heat alone*, divided by the ambient ABL. It is the **dry** counterpart to the two
 class maps (Castellnou et al. 2022; Castellnou Ribau et al. 2024): ratios well above 1 mark
 deep, hot, dry columns where a fire can decouple from the surface *even where the moist ladder

@@ -406,6 +406,59 @@ unclassifiable at 27/07 18Z before this work, the ABL gate accounted for roughly
 ill-posed gradient for the rest. Whether the classes now produced there agree with GRAF is a
 separate question, and untested.
 
+### 10.5 Item 8 — the fire θ-excess: a dimensional error, and a disqualified gate
+
+**The definitional question resolved first.** The campaign's `theta_excess_K` is
+mean(θ in-plume) − mean(θ environment) over the lowest 200 m — a measured plume-vs-ambient
+warm anomaly. `fire_parcel_theta_excess` predicts a temperature scale from a heat flux. They
+are the same quantity *by construction of the existing calibration*: step 5 of
+`scripts/ingest_inplume_sondes.py` substitutes the measured excess straight into the
+encroachment, "so no fire intensity or flux parameterisation is needed". Calibration was
+therefore admissible.
+
+**A dimensional error in the conversion.** The formula computed
+
+    theta' = F / (rho * w0)
+
+which carries units of **J/kg, not kelvin** — the specific heat capacity is absent from both
+the velocity and the temperature scale — and the result was added directly to a potential
+temperature in `fire_induced_abl_grid`. For F = 200 W/m² it returned **20.1 K** where the
+dimensionally correct Deardorff value is **0.23 K**, an overstatement of ~88×. The codebase had
+already sensed something wrong here — the note on `_FIRE_PLUME_SCALE_M` records that "the
+theta' FORM is the problem" — but attributed it to the choice of flux rather than to units.
+The end-to-end fireABL validation (bias −15 m, MAE 400 m, r = 0.91) carried "one global
+coefficient for the table's unit ambiguity", and r is invariant under constant rescaling, so
+the fix does not invalidate it; the production reference path applied no such coefficient.
+
+**Why calibrating the flux cannot work.** Even dimensionally corrected, θ* is the *turbulence*
+scale of a convectively mixed layer — a few tenths of a kelvin — while a plume core is a
+coherent buoyant structure the campaign measured at 0.1–13.1 K. No cell-averaged flux closes
+an order-of-magnitude gap, because it spreads the fire's heat over ground that is mostly not
+burning. The reference is therefore now **prescribed in kelvin** (`_REFERENCE_THETA_EXCESS_K
+= 10.0`, the intense end of the measurements), and `fire_induced_abl_grid` takes
+`theta_excess=` directly — the same route the campaign ingest already took.
+
+**The gate is disqualified, and not by θ′.** Forced with each fire's *own measured* excess —
+the best input obtainable — the encroachment reproduces observed fireABL at **151 % relative
+error** across the four usable observations:
+
+| Fire | measured θ′ | observed fireABL | predicted | error |
+|:--|--:|--:|--:|--:|
+| CasablancaIII10 | 4.38 K | 2850 m | 1769 m | 1081 m |
+| GranjaEscarp | 4.67 K | 1592 m | 1634 m | 42 m |
+| SantaAna | 9.86 K | 371 m | 1628 m | 1257 m |
+| Martorell | 2.63 K | 1002 m | 3247 m | 2245 m |
+
+You cannot calibrate the input of a model that does not track its output. **The blocker on the
+penetration gate is not an uncalibrated θ′ — it is that the fireABL chain has no demonstrated
+skill on the only data that can test it** (n = 4, mean |error| 1156 m on observations of
+371–2850 m). Item 3 stays diagnostic for that reason, and the next question is the encroachment
+model itself, not its forcing.
+
+Effect on the published diagnostic: θ′ 20.1 → 10.0 K halves it. At 27/07 15Z the decoupling
+median goes 2.9 → 2.08 and the penetration ratio 7.8 → 3.86 — still above 1 everywhere, so the
+gate would remain a no-op even now.
+
 ## 11. Revised open items
 
 | # | Item | Status |
@@ -417,7 +470,7 @@ separate question, and untested.
 | 5 | Define the ML gradient on the residual layer | **done, §10.4** — evening classifiable 48 → 81 % |
 | 6 | Re-run the GRAF comparison once the above are in | now unblocked |
 | 7 | Confirm the GRAF time convention (§4) | open, needs the authors |
-| 8 | **Calibrate the fire θ-excess** against the campaign's ten measured values; settle first whether the in-plume measurement and `fire_parcel_theta_excess` are the same quantity | open — **precondition for the penetration gate, §10.3** |
+| 8 | Calibrate the fire θ-excess against the campaign's measurements | **done, §10.5** — but it closed the question by *disqualifying* the penetration gate, not by enabling it |
 | 9 | Regenerate the published products: every figure and raster in `docs/forecast_2026-07-2{5,6}_3day*/` predates items 1-5 and the classes have since changed | open |
 
 Items 2 and 5 were corrections; 3 and 4 added physics taken from the published method rather

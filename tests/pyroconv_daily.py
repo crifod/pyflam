@@ -56,7 +56,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pyflam_gui.core.pyroconv import (
     read_icon2i_profile, profile_diagnostics, classify_profile, fli_grid,
     read_icon_eu, iconeu_diagnostics, regrid_diagnostics,
-    _REFERENCE_FIRE_FLUX_W_M2, ML_FIT_MIN_PTS, PYROCONV_NODATA, ABL_MIN_M,
+    _REFERENCE_THETA_EXCESS_K, ML_FIT_MIN_PTS, PYROCONV_NODATA, ABL_MIN_M,
     lcp_fields as _core_lcp_fields)
 
 warnings.simplefilter("ignore")
@@ -239,7 +239,7 @@ def render_decoupling(diags, lat, lon):
     src_label = ("ICON-EU model levels + ICON-2I 2.2 km gate" if EFFECTIVE_SOURCE == "hybrid"
                  else "ICON-2I 2.2 km")
     fig.suptitle(f"Dry-pyrocloud decoupling  fireABL / ABL  "
-                 f"(reference {int(_REFERENCE_FIRE_FLUX_W_M2)} W/m^2 fire -- DIAGNOSTIC, no class)\n"
+                 f"(reference fire: {_REFERENCE_THETA_EXCESS_K:.0f} K plume excess -- DIAGNOSTIC, no class)\n"
                  f"{src_label} -- Tuscany -- VALID {DATE} (run {RUNDATE} {RUN:02d}Z)", fontsize=11)
     cb = fig.colorbar(im, ax=ax, shrink=0.72, aspect=30, pad=0.01)
     cb.set_label("fireABL / ABL   (1 = no decoupling; higher = deeper dry decoupling)", fontsize=8)
@@ -380,7 +380,7 @@ measurements.""")
 "## Dry-pyrocloud decoupling -- DIAGNOSTIC (no class label)\n\n"
 f"![decoupling]({png_decoup}){{{{width=100%}}}}\n\n"
 "The **decoupling ratio** fireABL / ABL is how high a reference intense fire "
-f"({int(_REFERENCE_FIRE_FLUX_W_M2)} W/m^2 convective flux) would grow its own boundary layer "
+f"(a {_REFERENCE_THETA_EXCESS_K:.0f} K plume temperature excess, the intense end of the GRAF in-plume\nmeasurements) would grow its own boundary layer "
 "by *sensible heat alone*, divided by the ambient ABL. It is the **dry** counterpart to the "
 "moist class map above (Castellnou et al. 2022; Castellnou Ribau et al. 2024): values well "
 "above 1 mark deep, hot, dry columns where a fire can punch through and decouple from the "

@@ -1035,26 +1035,43 @@ _FIRE_PLUME_SCALE_M = 70.0
 
 def fire_parcel_theta_excess(heat_flux_w_m2, theta_mean_below_k, *,
                              scale_height_m: float = _FIRE_PLUME_SCALE_M):
-    """Fire-forced potential-temperature excess (K) -- the sensible-heat forcing.
+    """Convective velocity and temperature scales for a surface heat flux (Deardorff).
 
-    The temperature perturbation the fire's convective heat flux adds to the
-    sub-ABL mixed layer, via a convective-velocity scale (array-safe):
+    Mixed-layer similarity, array-safe:
 
-        ``w0     = (3 g F H / (2 rho theta_v))^(1/3)``   convective velocity (m/s)
-        ``theta' = F / (rho w0)``                        flux / (rho * velocity)
+        ``Q0     = F / (rho cp)``                    kinematic heat flux (K m/s)
+        ``w*     = (3 g Q0 H / (2 theta_v))^(1/3)``  convective velocity (m/s)
+        ``theta* = Q0 / w*``                         convective temperature scale (K)
 
-    ``heat_flux_w_m2`` is the cell-averaged convective heat flux (W/m^2), e.g.
-    from :func:`pyflam.pyroconvection.fire_heat_flux`; ``theta_mean_below_k`` is
-    the mean potential temperature of the sub-ABL mixed layer (K). Returns
-    ``(theta_excess_k, w0_ms)``. Zero flux gives zero excess (and w0 -> 0 is
-    handled so the excess is exactly 0, not a divide-by-zero).
+    ``heat_flux_w_m2`` is the cell-averaged convective heat flux (W/m^2), e.g. from
+    :func:`pyflam.pyroconvection.fire_heat_flux`; ``theta_mean_below_k`` is the mean
+    potential temperature of the sub-ABL mixed layer (K). Returns ``(theta_star_k, w_star_ms)``.
+    Zero flux gives zero excess (and w* -> 0 is handled, not a divide-by-zero).
+
+    **Corrected 2026-07-26 -- the specific heat capacity was missing.** The previous form
+    computed ``F / (rho w0)``, which carries units of J/kg, not kelvin, and was nonetheless
+    added straight to a potential temperature in :func:`fire_induced_abl_grid`. It overstated
+    the scale by ~88x: for F = 200 W/m^2 it returned 20.1 K where the dimensionally correct
+    value is 0.23 K.
+
+    **Do not use this as a fire plume's temperature excess.** theta* is the *turbulence*
+    scale of a convectively mixed layer -- a few tenths of a kelvin for any realistic
+    cell-averaged flux. A plume core is a coherent buoyant structure, not a turbulent
+    fluctuation: the GRAF campaign measured in-plume anomalies of 0.1-13.1 K (Castellnou
+    Ribau et al. 2025). The two differ by more than an order of magnitude, and no choice of
+    ``heat_flux_w_m2`` reconciles them, because a cell-averaged flux is the fire's heat spread
+    over ground that is mostly not burning. Prescribe the excess directly instead -- see
+    ``theta_excess`` on :func:`fire_induced_abl_grid`, which is also what the campaign ingest
+    (``scripts/ingest_inplume_sondes.py``) does deliberately, "so no fire intensity or flux
+    parameterisation is needed".
     """
     f = np.asarray(heat_flux_w_m2, float)
     thv = np.asarray(theta_mean_below_k, float)
     pos = f > 0.0
-    w0 = np.where(pos, (3.0 * _G * f * scale_height_m
-                        / (2.0 * _RHO_AIR * np.maximum(thv, 1.0))) ** (1.0 / 3.0), 0.0)
-    excess = np.where(pos & (w0 > 0.0), f / (_RHO_AIR * np.maximum(w0, 1e-9)), 0.0)
+    q0 = f / (_RHO_AIR * _CP_DRY)
+    w0 = np.where(pos, (3.0 * _G * q0 * scale_height_m
+                        / (2.0 * np.maximum(thv, 1.0))) ** (1.0 / 3.0), 0.0)
+    excess = np.where(pos & (w0 > 0.0), q0 / np.maximum(w0, 1e-9), 0.0)
     return excess, w0
 
 
@@ -1089,8 +1106,9 @@ def mixed_layer_fire_flux(fireline_intensity_w_m, abl_m, *,
     return convective_fraction * i / np.maximum(np.asarray(abl_m, float), 1.0)
 
 
-def fire_induced_abl_grid(height_agl_m, theta, *, theta_mean_below, heat_flux,
-                          blh, scale_height_m: float = _FIRE_PLUME_SCALE_M,
+def fire_induced_abl_grid(height_agl_m, theta, *, theta_mean_below, blh,
+                          heat_flux=None, theta_excess=None,
+                          scale_height_m: float = _FIRE_PLUME_SCALE_M,
                           min_m: float = _ABL_MIN_M, max_m: float | None = None):
     """Fire-induced boundary-layer top (m AGL) by fire-forced encroachment, gridded.
 
@@ -1131,7 +1149,17 @@ def fire_induced_abl_grid(height_agl_m, theta, *, theta_mean_below, heat_flux,
     th = np.asarray(theta, float)
     thm = np.asarray(theta_mean_below, float)
     blh = np.asarray(blh, float)
-    excess, _ = fire_parcel_theta_excess(heat_flux, thm, scale_height_m=scale_height_m)
+    if (heat_flux is None) == (theta_excess is None):
+        raise ValueError("pass exactly one of heat_flux= or theta_excess=")
+    if theta_excess is not None:
+        # Prescribed plume excess (K), the preferred route: the flux -> theta' similarity
+        # scaling returns a mixed-layer *turbulence* scale of a few tenths of a kelvin, an
+        # order of magnitude below the 0.1-13.1 K anomalies the GRAF campaign measured inside
+        # real plumes, and no cell-averaged flux closes that gap. The campaign ingest forces
+        # the encroachment with the measured excess for the same reason.
+        excess = np.asarray(theta_excess, float)
+    else:
+        excess, _ = fire_parcel_theta_excess(heat_flux, thm, scale_height_m=scale_height_m)
     target = thm + excess
 
     out = np.full(target.shape, np.nan)

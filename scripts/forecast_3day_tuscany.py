@@ -34,7 +34,7 @@ REPO = os.path.dirname(HERE)
 sys.path.insert(0, REPO)
 from pyflam.atmosphere import (PYROCONVECTION_TYPES, PYROCONVECTION_TYPE_LEVEL,
                                PYROCONVECTION_TYPE_LABEL, pyroconvection_colors)
-from pyflam_gui.core.pyroconv import ABL_MIN_M, _REFERENCE_FIRE_FLUX_W_M2
+from pyflam_gui.core.pyroconv import ABL_MIN_M, _REFERENCE_THETA_EXCESS_K
 
 RUNDATE = sys.argv[1] if len(sys.argv) > 1 else datetime.now(timezone.utc).strftime("%Y-%m-%d")
 RUN = int(sys.argv[2]) if len(sys.argv) > 2 else 0
@@ -255,7 +255,7 @@ def decoupling_figure(path):
             if c == 0:
                 axc.set_ylabel(f"{valid}\n(+{r}d)", fontsize=9)
     fig.suptitle("Tuscany dry-pyrocloud decoupling -- 3-day forecast -- fireABL / ABL "
-                 f"(reference {int(_REFERENCE_FIRE_FLUX_W_M2)} W/m^2 fire -- DIAGNOSTIC, no class)\n"
+                 f"(reference fire: {_REFERENCE_THETA_EXCESS_K:.0f} K plume excess -- DIAGNOSTIC, no class)\n"
                  f"ICON-EU model levels + ICON-2I 2.2 km gate -- run {RUNDATE} {RUN:02d}Z",
                  fontsize=12)
     cb = fig.colorbar(im, ax=ax, shrink=0.6, aspect=34, pad=0.01)
@@ -363,7 +363,8 @@ Read class *counts* as indicative.
 ![decoupling]({os.path.basename(png_decoup)}){{width=100%}}
 
 The **decoupling ratio** fireABL / ABL is how high a reference intense fire
-({int(_REFERENCE_FIRE_FLUX_W_M2)} W/m^2 convective flux) would grow its own boundary layer by
+(a {_REFERENCE_THETA_EXCESS_K:.0f} K plume temperature excess -- the intense end of the GRAF in-plume
+measurements, 0.1-13.1 K) would grow its own boundary layer by
 *sensible heat alone*, divided by the ambient ABL. It is the **dry** counterpart to the moist
 class maps above (Castellnou et al. 2022; Castellnou Ribau et al. 2024): values well above 1
 mark deep, hot, dry columns where a fire can punch through and decouple from the surface *even

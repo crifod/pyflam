@@ -335,7 +335,14 @@ def test_fireabl_is_bounded_by_the_sounding_not_extrapolated():
     This is the fix over the GRAF/WUR original: no linear extrapolation above the
     fitted layer, so the fireABL can never exceed the modelled column.
     """
-    fa = _fa_grid(5.0e4)                            # absurdly powerful fire
+    # Forced by a prescribed excess rather than a flux: the flux -> theta' scaling is a
+    # mixed-layer turbulence similarity form (a few tenths of a kelvin for any realistic
+    # flux), so no flux large enough to overshoot this column is physically meaningful.
+    # 500 K is unambiguously hotter than the whole profile, which is what is under test.
+    fa = fire_induced_abl_grid(
+        _column_to_grid(_FA_Z), _column_to_grid(_FA_TH),
+        theta_mean_below=np.full((2, 3), 305.0),
+        theta_excess=np.full((2, 3), 500.0), blh=np.full((2, 3), _FA_BLH))
     assert np.allclose(fa, _FA_Z[-1])              # capped at the profile top
 
 
