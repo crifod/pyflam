@@ -656,9 +656,16 @@ _KAPPA_DRY = _RD / _CP_DRY     # ~0.286
 _EPSILON = 0.622               # Rd/Rv
 
 # Bulk-Richardson ABL + profile diagnostics.
-_RIB_CRITICAL = 0.33           # Rib crossing that marks the ABL top
+_RIB_CRITICAL = 0.33           # Rib crossing that marks the ABL top (Zhang et al. 2014)
 _PARCEL_EXCESS_K = 0.5         # theta excess defining the parcel mixing depth
-_RIB_START_M = 200.0           # start height (AGL) for the Rib search
+# Start height (AGL) for the Rib search. Zhang et al. (2014) recommend 200 m, to clear the
+# surface layer without discarding a shallow ABL. Castellnou et al. (2022) sec.2.4.2 raise it
+# to ~400 m for their *in-plume* sondes, which are launched into the indraft converging on the
+# plume base (Charland & Clements 2013) -- a fire-specific correction. Ambient forecast columns
+# carry no indraft, so this path keeps Zhang's 200 m. The choice is not cosmetic: on the
+# 2026-07-26 00Z run it moves the median 18Z Tuscany ABL from 225 m (200 m start) to 404 m
+# (400 m start), though it barely changes how many columns are classifiable.
+_RIB_START_M = 200.0
 _ABL_MIN_M = 150.0             # plausibility clip on the diagnosed ABL depth
 _ABL_MAX_M = 4500.0
 # A shear *height* cannot be located from a handful of pressure levels: the
@@ -732,14 +739,21 @@ def theta_gradient(profile: "AtmosphericProfile", low_hpa: float, high_hpa: floa
 
 def bulk_richardson_abl_height(height_m, temperature_c, wind_u, wind_v, *,
                                pressure_hpa=None, surface_start_m: float = 400.0,
-                               rib_crit: float = 0.25) -> float:
+                               rib_crit: float = _RIB_CRITICAL) -> float:
     """ABL (mixing-layer) height (m) from the bulk Richardson number profile.
 
     Implements the Castellnou et al. (2022) procedure: compute the bulk Richardson
     number ``Rib(z) = (g/theta_s)(theta(z)-theta_s)(z-z_s) / (u^2+v^2)`` starting
-    from ``surface_start_m`` (~400 m AGL, to avoid the fire-indraft / surface
-    layer that contaminates the estimate; cf. Zhang et al. 2014) and return the
-    height where ``Rib`` first reaches ``rib_crit`` (~0.25), linearly interpolated.
+    from ``surface_start_m`` and return the height where ``Rib`` first reaches
+    ``rib_crit``, linearly interpolated.
+
+    The defaults are the paper's own (sec.2.4.2): ``rib_crit`` **0.33** after Zhang et al.
+    (2014), and a 400 m start. The 400 m is a *fire-sonde* correction -- Zhang recommends
+    200 m, and the paper raises it because its sondes are launched into the plume indraft,
+    which depresses the estimate (Charland & Clements 2013). This function is the in-plume
+    counterpart, so it keeps 400 m; :func:`bulk_richardson_abl_grid` runs on ambient forecast
+    columns with no indraft and keeps Zhang's 200 m. ``rib_crit`` was 0.25 here until
+    2026-07-26, which matched neither the paper nor the gridded path.
 
     ``height_m`` (AGL), ``temperature_c`` and the wind components are 1-D arrays at
     the same levels; pass ``pressure_hpa`` to use exact potential temperature,
@@ -1113,6 +1127,187 @@ def fire_induced_abl_grid(height_agl_m, theta, *, theta_mean_below, heat_flux,
     # the sounding clip cannot push it back under the ABL on a thin/degenerate column
     # (profile top below the ABL), where ``hi`` would otherwise win.
     return np.maximum(out, blh)
+
+
+def entrainment_jump_grid(height_agl_m, theta, abl_m, *,
+                          ml_lo_frac: float = 0.10, ml_hi_frac: float = 0.80,
+                          ez_frac: float = 0.15, ez_min_m: float = 100.0,
+                          samples: int = 5):
+    """Entrainment-zone potential-temperature jump ``delta-theta`` (K), gridded.
+
+    The step in ``theta`` across the entrainment zone, between the well-mixed layer and the
+    free atmosphere above the ABL top -- the ``d(theta)`` of mixed-layer (slab) theory
+    (Vila-Guerau de Arellano et al. 2015; Stull 1988), drawn as the ``theta jump`` in
+    Castellnou et al. (2022) Fig. 1c.
+
+    This is the quantity the source method names as the control on penetration:
+
+        *"The jumps at the entrainment zone between ABL and free atmosphere (dq, d-theta)
+        and lapse rates on the free atmosphere assess the ability of a parcel to penetrate
+        above ABL and achieve free convection."* -- Castellnou et al. (2022) sec.2.1.2
+
+    pyflam previously carried only the free-atmosphere lapse rate ``gamma_theta`` and no jump
+    at all, so nothing in the ladder expressed how hard it is to *get out of* the mixed layer
+    -- only how the plume fares once out. On a well-mixed summer afternoon that omission lets
+    essentially every column qualify, which is the mechanism behind the over-extent documented
+    in ``docs/graf_vs_pyflam_2026-07-26.md``.
+
+    In a real (non-slab) profile the jump is smeared over an entrainment zone of order
+    0.1-0.2 of the ABL depth rather than being a discontinuity, so it is measured as
+    ``theta`` at ``abl + max(ez_frac*abl, ez_min_m)`` minus the mixed-layer mean over
+    ``[ml_lo_frac, ml_hi_frac] * abl``. Both bounds are deliberately inside their layers:
+    starting the mean above the superadiabatic surface layer and ending it below the
+    entrainment zone keeps the two terms from sampling each other.
+
+    Returns a 2-D array (K), ``nan`` where the column cannot support the estimate. Values are
+    clipped at 0 from below: a negative jump is an unstable top, which mixed-layer theory does
+    not admit and which here signals a degenerate column rather than a physical state.
+    """
+    z = np.asarray(height_agl_m, float)
+    th = np.asarray(theta, float)
+    abl = np.asarray(abl_m, float)
+
+    lo = np.maximum(ml_lo_frac * abl, 20.0)
+    hi = np.maximum(ml_hi_frac * abl, lo + 50.0)
+    acc = np.zeros(abl.shape)
+    for i in range(samples):
+        acc = acc + _interp_profile_at(z, th, lo + (hi - lo) * (i / (samples - 1.0)))
+    th_ml = acc / samples
+
+    z_top = abl + np.maximum(ez_frac * abl, ez_min_m)
+    th_top = _interp_profile_at(z, th, z_top)
+
+    jump = th_top - th_ml
+    ok = np.isfinite(jump) & np.isfinite(abl) & (abl > 0)
+    return np.where(ok, np.maximum(jump, 0.0), np.nan)
+
+
+def _interp_profile_at(z, x, ztarget):
+    """Per-column linear interpolation of ``x(z)`` to a 2-D target height (nan-aware).
+
+    Level-major ``(nlev, ny, nx)`` stacks with ``z`` ascending on axis 0; targets outside the
+    usable span clamp to the nearest usable level. Shared by the entrainment-jump and
+    residual-layer diagnostics so they cannot drift apart in how they read a profile.
+    """
+    z = np.asarray(z, float)
+    x = np.asarray(x, float)
+    out = np.full(np.shape(ztarget), np.nan)
+    for k in range(z.shape[0] - 1):
+        z0, z1, x0, x1 = z[k], z[k + 1], x[k], x[k + 1]
+        span = z1 - z0
+        good = (np.isfinite(z0) & np.isfinite(z1) & np.isfinite(x0) & np.isfinite(x1)
+                & (np.abs(span) > 1e-6))
+        f = np.divide(ztarget - z0, span, out=np.zeros_like(out), where=good)
+        seg = np.isnan(out) & good & (ztarget >= z0) & (ztarget <= z1)
+        out = np.where(seg, x0 + np.clip(f, 0.0, 1.0) * (x1 - x0), out)
+
+    ok = np.isfinite(z) & np.isfinite(x)
+    any_ok = ok.any(axis=0)
+    i_lo = np.argmax(ok, axis=0)
+    i_hi = (ok.shape[0] - 1) - np.argmax(ok[::-1], axis=0)
+    take = lambda a, i: np.take_along_axis(a, i[None, ...], axis=0)[0]
+    z_lo, x_lo = take(z, i_lo), take(x, i_lo)
+    z_hi, x_hi = take(z, i_hi), take(x, i_hi)
+    out = np.where(np.isnan(out) & any_ok & (ztarget <= z_lo), x_lo, out)
+    out = np.where(np.isnan(out) & any_ok & (ztarget >= z_hi), x_hi, out)
+    return out
+
+
+def fire_cape_grid(height_agl_m, theta_v, *, theta_excess, top_m=None):
+    """FireCAPE (J/kg) -- convective available potential energy of a fire-heated parcel.
+
+    Potter (2005), as used by Castellnou et al. (2022) Eq. 2: the environmental CAPE
+    recomputed for a surface parcel carrying the fire's potential-temperature perturbation,
+
+        ``FireCAPE = g * integral[ (theta_parcel - theta_v(z)) / theta_v(z) ] dz``
+
+    over the layer where the heated parcel is positively buoyant. The parcel conserves
+    ``theta_v(surface) + theta_excess`` (dry ascent, no condensation -- the moist contribution
+    is deliberately excluded, matching the dry framing of the fireABL diagnostic), so this is
+    the *dry* fire CAPE, and only positive buoyancy is accumulated, as for ordinary CAPE.
+
+    ``theta_excess`` is the fire's perturbation (K), e.g. from
+    :func:`fire_parcel_theta_excess`. Returns a 2-D array; 0 where the parcel is nowhere
+    buoyant, ``nan`` where the column is unusable.
+
+    This closes the second of the two variables the source method computes and pyflam did not
+    (the other being the entrainment jump). Note it is *not* surface CAPE, which this product
+    deliberately omits -- the fire perturbation is what makes it meaningful for a plume.
+    """
+    z = np.asarray(height_agl_m, float)
+    thv = np.asarray(theta_v, float)
+    exc = np.asarray(theta_excess, float)
+
+    ok = np.isfinite(z) & np.isfinite(thv)
+    any_ok = ok.any(axis=0)
+    i_lo = np.argmax(ok, axis=0)
+    thv_sfc = np.take_along_axis(thv, i_lo[None, ...], axis=0)[0]
+    parcel = thv_sfc + exc
+
+    cape = np.zeros(np.shape(parcel))
+    for k in range(z.shape[0] - 1):
+        z0, z1, t0, t1 = z[k], z[k + 1], thv[k], thv[k + 1]
+        dz = z1 - z0
+        good = (np.isfinite(z0) & np.isfinite(z1) & np.isfinite(t0) & np.isfinite(t1)
+                & (dz > 0))
+        if top_m is not None:
+            good = good & (z1 <= top_m)
+        b0 = (parcel - t0) / np.where(good, np.maximum(t0, 1.0), 1.0)
+        b1 = (parcel - t1) / np.where(good, np.maximum(t1, 1.0), 1.0)
+        # trapezoid over the positive-buoyancy part of the layer only
+        both = good & (b0 > 0) & (b1 > 0)
+        cape = np.where(both, cape + _G * 0.5 * (b0 + b1) * dz, cape)
+        part = good & ((b0 > 0) ^ (b1 > 0))
+        frac = np.abs(b0) / np.maximum(np.abs(b0) + np.abs(b1), 1e-12)
+        cape = np.where(part, cape + _G * 0.5 * np.maximum(np.maximum(b0, b1), 0.0)
+                        * dz * np.where(b0 > 0, frac, 1.0 - frac), cape)
+    return np.where(any_ok, cape, np.nan)
+
+
+def residual_layer_grid(height_agl_m, theta, *, search_max_m: float = 3000.0,
+                        excess_k: float = _PARCEL_EXCESS_K, min_top_m: float = 200.0):
+    """Residual-layer top (m AGL) -- the well-mixed depth left over after the CBL decays.
+
+    After sunset the convective mixed layer collapses into a shallow stable layer, but the
+    air above it keeps the day's near-neutral profile: the *residual layer*
+    (Stull 1988, ch. 12). A surface-referenced parcel method finds only the shallow stable
+    layer and reports a depth of tens of metres; a least-squares mixed-layer gradient fitted
+    inside that depth has no levels to work with and returns ``nan``. That is what leaves the
+    evening hours unclassifiable even after the ABL floor is removed -- the ladder's stability
+    diagnostic is ill-posed in a regime the fire literature cares about, since the campaign of
+    Castellnou Ribau et al. (2025) sampled late-afternoon and evening fires.
+
+    Here the parcel is referenced not to the surface but to the **coldest level in the lower
+    column** -- the top of the nocturnal stable layer -- and the residual top is the first
+    height above it where ``theta`` exceeds that reference by ``excess_k``. By day the theta
+    minimum sits at the surface and this reduces to the ordinary parcel mixing depth, so the
+    same call is valid around the clock; only in the evening do the two separate.
+
+    Returns a 2-D array (m AGL); ``nan`` where no usable column exists.
+    """
+    z = np.asarray(height_agl_m, float)
+    th = np.asarray(theta, float)
+    usable = np.isfinite(z) & np.isfinite(th) & (z <= search_max_m)
+
+    big = np.where(usable, th, np.inf)
+    k_ref = np.argmin(big, axis=0)
+    take = lambda a: np.take_along_axis(a, k_ref[None, ...], axis=0)[0]
+    z_ref, th_ref = take(z), take(th)
+    target = th_ref + excess_k
+
+    out = np.full(z_ref.shape, np.nan)
+    for k in range(z.shape[0] - 1):
+        z0, z1, t0, t1 = z[k], z[k + 1], th[k], th[k + 1]
+        good = (np.isfinite(z0) & np.isfinite(z1) & np.isfinite(t0) & np.isfinite(t1)
+                & (z0 >= z_ref))
+        hit = np.isnan(out) & good & (t1 >= target)
+        denom = np.where(t1 != t0, t1 - t0, np.inf)
+        frac = np.clip((target - t0) / denom, 0.0, 1.0)
+        out = np.where(hit, z0 + frac * (z1 - z0), out)
+
+    z_top = np.max(np.where(usable, z, -np.inf), axis=0)
+    out = np.where(np.isnan(out) & (z_top > -np.inf), z_top, out)
+    return np.where(usable.any(axis=0), np.maximum(out, min_top_m), np.nan)
 
 
 def shear_height_grid(height_agl_m, wind_u, wind_v, *, zmin: float = 200.0,

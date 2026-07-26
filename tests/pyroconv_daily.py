@@ -55,13 +55,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pyflam_gui.core.pyroconv import (
     read_icon2i_profile, profile_diagnostics, classify_profile, fli_grid,
     read_icon_eu, iconeu_diagnostics, regrid_diagnostics,
-    _REFERENCE_FIRE_FLUX_W_M2,
+    _REFERENCE_FIRE_FLUX_W_M2, ML_FIT_MIN_PTS, PYROCONV_NODATA, ABL_MIN_M,
     lcp_fields as _core_lcp_fields)
 
 warnings.simplefilter("ignore")
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 HOURS = [0, 3, 6, 9, 12, 15, 18, 21]
+NODATA_COLOR = "#d9d9d9"        # land with no classifiable column (PYROCONV_NODATA)
 LON0, LON1, LAT0, LAT1 = 9.6, 12.5, 42.2, 44.6
 FLI_GATE_KW = 1.0e4
 # Short titles per variant; the potential map is an unconditional atmospheric upper
@@ -162,8 +163,11 @@ def render(cats, lat, lon, tag):
     import rasterio; from rasterio.transform import from_origin
     os.makedirs(RASTERDIR, exist_ok=True)
     flip = lat[0] > lat[-1]; ext = [lon.min(), lon.max(), lat.min(), lat.max()]
-    cmap = ListedColormap([PYROCONVECTION_TYPE_COLOR[t] for t in PYROCONVECTION_TYPES])
-    norm = BoundaryNorm(np.arange(-0.5, 5.5, 1), cmap.N)
+    # Index -1 (PYROCONV_NODATA) gets its own grey: a column the ladder could not run on is
+    # not a quiet one, and must not borrow class 0's colour.
+    cmap = ListedColormap([NODATA_COLOR]
+                          + [PYROCONVECTION_TYPE_COLOR[t] for t in PYROCONVECTION_TYPES])
+    norm = BoundaryNorm(np.arange(-1.5, 5.5, 1), cmap.N)
     prov = _tuscany_provinces()
     fig, ax = plt.subplots(1, len(HOURS), figsize=(2.1*len(HOURS), 3.0),
                            constrained_layout=True, squeeze=False)
@@ -182,7 +186,8 @@ def render(cats, lat, lon, tag):
     leg = [Patch(facecolor=PYROCONVECTION_TYPE_COLOR[t], edgecolor="0.4",
                  label=f"{PYROCONVECTION_TYPE_LEVEL[t]}  {PYROCONVECTION_TYPE_LABEL[t]}")
            for t in PYROCONVECTION_TYPES]
-    fig.legend(handles=leg, loc="lower center", ncol=5, fontsize=8.5, frameon=False,
+    leg.append(Patch(facecolor=NODATA_COLOR, edgecolor="0.4", label="n/c  not classifiable"))
+    fig.legend(handles=leg, loc="lower center", ncol=6, fontsize=8.5, frameon=False,
                title="Pyroconvection class (0 = lowest activity -> 4 = highest)",
                bbox_to_anchor=(0.5, -0.12))
     png = os.path.join(OUTDIR, f"pyroconv_tuscany_{MODEL_TAG}_{tag}_{DATE}.png")
@@ -239,10 +244,50 @@ def render_decoupling(diags, lat, lon):
     return png
 
 
-def build_pdf(png_pot, png_gate, ladders, n_levels, png_decoup=None):
+def build_pdf(png_pot, png_gate, ladders, n_levels, png_decoup=None, ml_fit_support=None):
     md = os.path.join(OUTDIR, f"pyroconv_{MODEL_TAG}_{DATE}.md")
     pdf = os.path.join(OUTDIR, f"pyroconv_tuscany_{MODEL_TAG}_{DATE}.pdf")
     ladder_txt = ", ".join(ladders) if ladders else "none (no classifiable cell)"
+    # The fifth (shear) diagnostic is available only where the profile resolves a
+    # shear-maximum height: the ICON-EU model levels do, ICON-2I's 5 pressure levels do not,
+    # and classify_profile(ladder="adaptive") decides that per cell. So report which case this
+    # run actually hit -- asserting the pressure-level answer would misdescribe every hybrid
+    # run, where the full ladder does run and class 4 does carry its shear clause.
+    has_shear = "shear" in ladders
+    if has_shear and len(ladders) > 1:
+        shear_para = (
+            "**Ladder actually used for this run: `{lad}`.** The fifth diagnostic -- the distance "
+            "from the ABL/LCL to the height of maximum wind shear -- resolved over part of the "
+            "domain only, so the full 5-diagnostic ladder ran there and the reduced one "
+            "elsewhere. That clause is a *necessary* condition for the top class, so class 4 is "
+            "somewhat **easier** to reach in the cells that fell back than in the ones that did "
+            "not. Treat class 4 as an alert to inspect the column, not as a calibrated "
+            "probability.")
+    elif has_shear:
+        shear_para = (
+            "**Ladder actually used for this run: `{lad}`.** The full 5-diagnostic method ran: the "
+            "model levels resolved a shear-maximum height, so class 4 additionally required that "
+            "maximum to sit within 0.30 ABL of the ABL/LCL -- a *necessary* condition the reduced "
+            "ladders omit. Class 4 here therefore carries its shear clause; it remains an alert "
+            "to inspect the column rather than a calibrated probability.")
+    else:
+        shear_para = (
+            "**Ladder actually used for this run: `{lad}`.** The full method has a fifth "
+            "diagnostic -- the distance from the ABL/LCL to the height of maximum wind shear -- "
+            "which this source cannot resolve, so the reduced ladder runs. The shear clause is a "
+            "*necessary* condition for the top class, so omitting it makes class 4 somewhat "
+            "**easier** to reach here than in the full method. Treat class 4 as an alert to "
+            "inspect the column, not as a calibrated probability.")
+    shear_para = shear_para.format(lad=ladder_txt)
+    if has_shear and len(ladders) > 1:
+        shear_row = ("| Shear-maximum distance / ABL | <= 0.30 | Required for class 4 where the "
+                     "shear height resolved -- **applied over part of the domain** (see Method) |")
+    elif has_shear:
+        shear_row = ("| Shear-maximum distance / ABL | <= 0.30 | Required for class 4 -- "
+                     "**resolved and applied throughout this run** |")
+    else:
+        shear_row = ("| Shear-maximum distance / ABL | <= 0.30 | Required for class 4 **in the "
+                     "5-diagnostic ladder only** (not resolvable here -- see Method) |")
     if EFFECTIVE_SOURCE == "hybrid":
         src_title = "ICON-EU model levels + ICON-2I 2.2 km gate"
         heights_txt = ("per-cell heights from the ICON-EU model-level heights (HHL)")
@@ -253,15 +298,25 @@ def build_pdf(png_pot, png_gate, ladders, n_levels, png_decoup=None):
             "Column is pyroCu-capable (bias ~-0.4e-4 K/m vs radiosondes) |")
         forcing_txt = (
             "Forcing: atmosphere from ICON-EU 6.5 km native model levels (DWD open data, "
-            "CC-BY), lowest ~24 levels; ~{n} inside the mixed layer here, regridded to the "
+            "CC-BY), lowest ~24 levels; ~{n} inside the mixed layer here (land, 12-15Z), "
+            "regridded to the "
             "ICON-2I 2.2 km grid. Surface fields and fuel gate from ICON-2I 2.2 km "
             "(MISTRAL / AgenziaItaliaMeteo). Classifier: pyflam.pyroconvection_type "
             "(bulk-Richardson ABL, Bolton LCL, measured mixed-layer dtheta/dz, cap "
             "gamma-theta, ABL-top RH; no surface CAPE)."
         ).format(n=n_levels)
+        sup_txt = (
+            f"Over the classified land the fit is supported in **{100.0 * ml_fit_support:.0f}%** "
+            f"of columns at peak of day (i.e. that share holds at least {ML_FIT_MIN_PTS} levels "
+            "inside the layer; the rest return a nan gradient and leave the class map, which is "
+            "also what thins the evening panels)."
+            if ml_fit_support is not None else
+            "The share of columns supporting the fit was not recorded for this run.")
         ml_para = (
 """The **mixed-layer stability** here is a genuine measurement, not a proxy. The ICON-EU
-native model levels put ~10 levels inside the mixed layer (this run: {n} median), so the
+native model levels put ~10 levels inside the mixed layer (this run: {n} median over land at
+12-15Z, when the layer is mature -- the night and evening counts are far lower, but nothing is
+classified then). """ + sup_txt + """ So the
 mixed-layer dtheta/dz is a real least-squares fit across those levels. Validated against
 IGRA radiosondes (JJA 12Z, period of record), the model-level fit cuts the gradient bias to
 ~-0.4e-4 K/m (from ~-4.7e-4 on ICON-2I's 5 pressure levels) and the Rib ABL bias to ~-70 m
@@ -351,12 +406,7 @@ gamma-theta is taken over ABL+200 m to ABL+1200 m.
 
 {ml_para}
 
-**Ladder actually used for this run: `{ladder_txt}`.** The full method has a fifth
-diagnostic -- the distance from the ABL/LCL to the height of maximum wind shear -- which
-this product does not yet compute, so the four-diagnostic ladder runs. The shear clause is a
-*necessary* condition for the top class, so omitting it makes class 4 somewhat **easier** to
-reach here than in the full method. Treat class 4 as an alert to inspect the column, not as a
-calibrated probability.
+{shear_para}
 
 The classes express atmospheric predisposition **given a fire of sufficient power**;
 in the gated panel that power is computed, not assumed. They are paper-informed
@@ -391,9 +441,9 @@ thresholds, not locally validated ones.
 | Cap gamma-theta (ABL+200 m -> ABL+1200 m) | <= 4.2e-3 K/m (weak cap) | Permits deepening to pyroCb |
 | Cap gamma-theta | >= 4.8e-3 K/m (strong cap) | Inhibits deepening (resilient at most) |
 | RH at the ABL top (mean, ABL +/- 150 m) | >= 60% | Required for classes 3 and 4 (was 80%; relaxed for dry fire weather) |
-| Shear-maximum distance / ABL | <= 0.30 | Required for class 4 **in the 5-diagnostic ladder only** (not resolvable here -- see Method) |
+{shear_row}
 | Fireline intensity (fuel gate, gated panel) | >= 10 MW/m | Minimum fire power for any pyroCu (Tedim et al. 2018) |
-| ABL depth | < 600 m | Held at surface plume (mixing too shallow) |
+| ABL depth | < {int(ABL_MIN_M)} m | Not classifiable (implausible depth). No 600 m gate: it had no basis in Castellnou et al. (2022) and discarded 5 of the 8 campaign fires -- removed 2026-07-26 |
 | Usable pressure levels | < 4 | Cell not classified |
 
 ## Reference cases (Castellnou et al. 2022, Table 1)
@@ -425,6 +475,40 @@ Province borders: ISTAT-derived (openpolis geojson-italy). Generated by tests/py
         return None
 
 
+PEAK_ML_HOURS = (12, 15)          # mature mixed layer -- the regime the fit claim is about
+
+
+def ml_fit_resolution(diags):
+    """Peak-of-day mixed-layer resolution: ``(median levels, support fraction | None)``.
+
+    The report quotes this to justify the hybrid path ("the model levels put ~N inside the
+    mixed layer, so dtheta/dz is measured, not proxied"), and both the hour and the
+    statistic have to match that claim:
+
+    * **Hours.** Reading a single hour -- 00Z, as this once did -- samples the collapsed
+      nocturnal layer and returns ~1, understating the resolution in the very sentence meant
+      to establish it, on hours nobody classifies. Averaging the whole daytime span is no
+      better: the growth (09Z), mature (12-15Z) and collapse (18Z) phases are different
+      regimes, and their median describes no hour that occurred -- at 18Z the count is
+      bimodal (collapsed columns against still-mixed ones), so a central value there is a
+      number about nothing. The mature window is the regime the gradient claim concerns.
+    * **Statistic.** The median says what a typical column has; the claim rests on the
+      *worst-supported* ones, because a column below :data:`ML_FIT_MIN_PTS` returns a nan
+      slope and drops out of the class map. ``ml_fit_support`` -- the share of land columns
+      clearing that floor -- is what licenses the word "measured", and it is also the
+      mechanism behind the evening coverage collapse. Both are reported.
+
+    ``ml_fit_support`` is ``None`` on the ICON-2I pressure-level path, which proxies the
+    gradient rather than fitting it. Falls back to all rendered hours when PYROCONV_HOURS
+    excludes the peak window.
+    """
+    idx = [i for i, h in enumerate(HOURS) if h in PEAK_ML_HOURS] or list(range(len(diags)))
+    n = int(np.median([diags[i]["n_levels"] for i in idx]))
+    sup = [diags[i].get("ml_fit_support") for i in idx]
+    sup = [s for s in sup if s is not None]
+    return n, (float(np.mean(sup)) if sup else None)
+
+
 def export_diagnostics(diags, lat, lon):
     """Write the per-hour profile diagnostics (ABL, LCL, ML dtheta/dz, cap, RH-top).
 
@@ -438,8 +522,13 @@ def export_diagnostics(diags, lat, lon):
     dlon = float(abs(lon[1] - lon[0])); dlat = float(abs(lat[1] - lat[0]))
     tr = from_origin(lon.min() - dlon / 2, lat.max() + dlat / 2, dlon, dlat)
     for hi, hour in enumerate(HOURS):
+        # The last four exist only on the model-level (hybrid) path; the ICON-2I pressure-level
+        # fallback does not produce them, so missing keys are skipped rather than fatal.
         for name in ("abl", "parcel_ml", "lcl", "lcl_ratio", "ml_grad", "gamma", "rh_top",
-                     "fireabl", "decoupling"):
+                     "fireabl", "decoupling",
+                     "residual_ml", "delta_theta", "firecape", "penetration"):
+            if name not in diags[hi]:
+                continue
             arr = np.asarray(diags[hi][name], "float32")
             arr = arr if flip else arr[::-1]
             path = os.path.join(RASTERDIR, f"diag_{name}_{hour:02d}Z.tif")
@@ -522,8 +611,9 @@ def main():
     png_gate = render(np.stack(gate), lat, lon, "gated") if gate else png_pot
     png_decoup = render_decoupling(diags, lat, lon)
     export_diagnostics(diags, lat, lon)
-    pdf = build_pdf(png_pot, png_gate, sorted(ladders), diags[0]["n_levels"],
-                    png_decoup=png_decoup)
+    n_lev, support = ml_fit_resolution(diags)
+    pdf = build_pdf(png_pot, png_gate, sorted(ladders), n_lev,
+                    png_decoup=png_decoup, ml_fit_support=support)
     print(f"OK {DATE} {RUN:02d}Z [ladder={','.join(sorted(ladders))}]: {png_pot}"
           + (f" | {pdf}" if pdf else ""))
 

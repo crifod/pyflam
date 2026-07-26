@@ -34,7 +34,34 @@ import numpy as np
 STD_LEVEL_HEIGHT_M = {1000: 110.0, 850: 1457.0, 700: 3012.0, 500: 5574.0}
 DEFAULT_LEVELS = (850, 700, 500)
 FLI_GATE_KW = 1.0e4              # 10 MW/m minimum fire power for any pyroCu
-ABL_MIN_M = 600.0               # below this ABL depth, held at surface plume
+# Plausibility floor on the diagnosed ABL, matching the Rib solver's own clip
+# (``atmosphere._ABL_MIN_M``). It guards against a near-zero depth turning LCL/ABL into a
+# meaningless quotient; it is deliberately **not** a discriminating gate.
+#
+# It was 600 m until 2026-07-26, held there as "mixing too shallow to classify". That had no
+# basis in the source method -- Castellnou et al. (2022) sec.2.4.2 specifies the Rib procedure
+# (Ri_b > 0.33, search from ~400 m AGL) and imposes no minimum depth -- and it is contradicted
+# by the campaign's own data: of the eight ambient sondes released beside real pyroconvective
+# wildfires (Castellnou Ribau et al. 2025, AMT 18, 7805-7831; Zenodo 15264835), five sit at an
+# ambient ABL of 202-391 m and would have been discarded unclassified, though their fires grew
+# observed fire-induced boundary layers of 451-2850 m. A gate that rejects the regime the
+# instrument campaign was built to sample cannot be defended, so it is gone.
+#
+# Removing it does not resurrect the collapsed evening hours on its own: the mixed-layer
+# gradient stays undefined where there is no mixed layer to fit, and those columns remain
+# PYROCONV_NODATA. That is the honest outcome -- see docs/graf_vs_pyflam_2026-07-26.md.
+ABL_MIN_M = 150.0
+# Levels a least-squares mixed-layer dtheta/dz needs inside the layer. A hard floor, not a
+# preference: below it :func:`_masked_lin_slope` returns nan, ``valid`` goes False and the cell
+# drops out of the class map entirely -- which is why the *share of columns clearing it*, and
+# not the typical level count, is what says whether the gradient is measured or unsupported.
+ML_FIT_MIN_PTS = 3
+# Sentinel for "this column could not be classified" -- no usable profile, a non-finite
+# diagnostic, or an ABL below the mixing floor. Distinct from class 0 (surface plume), which
+# is a *diagnosis*: the ladder ran and found no significant cloud development. Folding the two
+# together paints unclassifiable ground as quiet, which is the opposite of an honest blank --
+# most visibly around sunset, when the mixed layer collapses and the whole domain drops out.
+PYROCONV_NODATA = -1
 # Reference convective heat flux (W/m^2) for the dry-pyrocloud fireABL diagnostic:
 # a fixed intense-fire flux applied to every cell (the "potential"/upper-bound
 # framing). The GRAF SCQ active-fire hours span ~120-280 W/m^2; 200 is the intense
@@ -286,7 +313,7 @@ def _layer_mean(z, x, zlo, zhi, samples: int = 5):
     return acc / samples
 
 
-def _masked_lin_slope(z, x, mask, min_pts: int = 3):
+def _masked_lin_slope(z, x, mask, min_pts: int = ML_FIT_MIN_PTS):
     """Per-cell least-squares slope dx/dz over the masked levels (vectorised).
 
     ``z``/``x``/``mask`` are ``(nlev, ny, nx)``. Returns a 2-D slope, ``nan`` where a
@@ -481,7 +508,10 @@ def profile_diagnostics(d, si, *, thresholds=None, shear=True,
     return dict(abl=abl, lcl=lcl, lcl_ratio=ratio, ml_grad=ml_grad, gamma=gamma,
                 rh_top=rh_top, shear_dist=shear_dist, valid=valid,
                 parcel_ml=parcel_ml, fireabl=fireabl, decoupling=decoupling,
-                n_levels=n_levels)
+                n_levels=n_levels,
+                # No least-squares fit on this path -- the ML gradient is a mixing-depth
+                # proxy, so there is no fit support to report.
+                ml_fit_support=None)
 
 
 def classify_profile(diag, *, fli=None, fli_gate_kw=FLI_GATE_KW, ladder="adaptive",
@@ -495,6 +525,17 @@ def classify_profile(diag, *, fli=None, fli_gate_kw=FLI_GATE_KW, ladder="adaptiv
     plume below ``fli_gate_kw`` -- pass it for the *expected* map, omit it for the
     *potential* upper bound.
 
+    ``abl_min_m`` is a plausibility floor, not a depth gate -- see :data:`ABL_MIN_M` for why
+    the 600 m version was removed. Callers wanting a stricter floor pass their own.
+
+    Cells that cannot be classified -- no usable profile, a non-finite diagnostic, or an ABL
+    below ``abl_min_m`` -- come back as :data:`PYROCONV_NODATA`, **not** as class 0. The two
+    say different things: class 0 is a diagnosis (the ladder ran and found a surface plume),
+    nodata is its absence. They shared the value 0 until now, which drew unclassifiable ground
+    in the "no significant convection" colour; around sunset the mixed layer collapses across
+    the whole domain, so the map read as a forecast of a quiet evening when it was really an
+    empty one. A fuel-gated cell below ``fli_gate_kw`` stays class 0 -- that *is* a diagnosis.
+
     Also returns the ladder actually used, so the product can state it.
     """
     from pyflam.atmosphere import (
@@ -505,7 +546,7 @@ def classify_profile(diag, *, fli=None, fli_gate_kw=FLI_GATE_KW, ladder="adaptiv
     ml, gamma, rh_top = diag["ml_grad"], diag["gamma"], diag["rh_top"]
     sd, valid = diag["shear_dist"], diag["valid"]
     ny, nx = abl.shape
-    out = np.zeros((ny, nx), np.int16)
+    out = np.full((ny, nx), PYROCONV_NODATA, np.int16)
     used = set()
 
     for a in range(ny):
@@ -681,7 +722,11 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True)
 
     Same output dict as :func:`profile_diagnostics` (``abl``, ``parcel_ml``, ``lcl``,
     ``lcl_ratio``, ``ml_grad``, ``gamma``, ``rh_top``, ``shear_dist``, ``valid``,
-    ``n_levels``), so :func:`classify_profile` consumes it unchanged. The default
+    ``n_levels``), so :func:`classify_profile` consumes it unchanged. ``n_levels`` is the
+    **land-only** median count of model levels inside the mixed layer, and
+    ``ml_fit_support`` the share of land columns holding at least ``ML_FIT_MIN_PTS`` of
+    them -- the number that says whether the gradient is measured, since columns below the
+    floor return a nan slope and leave the class map. The default
     ``ml_method="fit_in_ml"`` is the genuine least-squares mixed-layer gradient, which is
     only trustworthy *because* this is the model-level path (many levels inside the ML);
     the pressure-level path cannot use it (see :func:`profile_diagnostics`).
@@ -690,7 +735,9 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True)
         theta_kelvin, specific_humidity_from_rh, virtual_potential_temperature,
         saturation_vapour_pressure_pa, bulk_richardson_abl_grid, parcel_mixing_depth_grid,
         lcl_height_bolton_m, relative_humidity_from_dewpoint, DEFAULT_PYROCONV_THRESHOLDS,
-        shear_height_grid, shear_distance_grid, _EPSILON)
+        shear_height_grid, shear_distance_grid, _EPSILON,
+        entrainment_jump_grid, fire_cape_grid, residual_layer_grid,
+        fire_parcel_theta_excess)
     th = thresholds or DEFAULT_PYROCONV_THRESHOLDS
 
     z, T, QV, P, U, V = d["z"], d["T"], d["QV"], d["P"], d["U"], d["V"]
@@ -712,8 +759,30 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True)
     parcel_ml = parcel_mixing_depth_grid(z, theta, theta_sfc)
     lcl = lcl_height_bolton_m(T2m, Td2m, ps)
 
-    in_ml = (z >= 80.0) & (z <= parcel_ml[None, ...])
+    # Item 5 -- the residual layer. By day this equals parcel_ml (the theta minimum is at the
+    # surface); after the CBL decays it is the depth of the layer that retains the day's
+    # near-neutral profile, while parcel_ml collapses to the shallow nocturnal stable layer.
+    # Fitting the mixed-layer gradient inside a collapsed parcel depth has no levels to work
+    # with and returns nan, which is what left the evening hours unclassifiable. Fitting it
+    # over the residual layer is well-posed around the clock.
+    resid_ml = residual_layer_grid(z, theta)
+    fit_depth = np.where(np.isfinite(resid_ml), np.maximum(parcel_ml, resid_ml), parcel_ml)
+
+    in_ml = (z >= 80.0) & (z <= fit_depth[None, ...])
     n_in_ml = in_ml.sum(0)
+    # Summarise the fit's support over LAND only. The summer Tyrrhenian carries a shallow,
+    # stably stratified marine layer -- a different regime, and one the fuel gate never
+    # classifies -- so a whole-grid median understates the resolution on the ground the
+    # product is actually about (today: land 14 levels vs sea 6 at 12Z). ``ml_fit_support``
+    # is the share of land columns clearing ML_FIT_MIN_PTS; it, not the median, is what
+    # licenses calling the gradient measured, since the columns below the floor are dropped.
+    frl = d.get("frland")
+    land = (np.asarray(frl, float) >= 0.5) if frl is not None else np.ones(n_in_ml.shape, bool)
+    if not land.any():
+        land = np.ones(n_in_ml.shape, bool)
+    n_land = n_in_ml[land]
+    n_levels_land = int(np.median(n_land))
+    ml_fit_support = float(np.mean(n_land >= ML_FIT_MIN_PTS))
     if ml_method == "fit_in_ml":
         ml_grad = _masked_lin_slope(z, theta, in_ml)
     elif ml_method == "surface_to_parcel":
@@ -744,16 +813,32 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True)
     from pyflam.atmosphere import fire_induced_abl_grid
     theta_mean_below = _layer_mean(z, theta,
                                    np.full(abl.shape, 50.0), np.maximum(abl, 200.0))
+    heat_flux = np.full(abl.shape, _REFERENCE_FIRE_FLUX_W_M2)
     fireabl = fire_induced_abl_grid(
         z, theta, theta_mean_below=theta_mean_below,
-        heat_flux=np.full(abl.shape, _REFERENCE_FIRE_FLUX_W_M2), blh=abl)
+        heat_flux=heat_flux, blh=abl)
     with np.errstate(invalid="ignore", divide="ignore"):
         decoupling = fireabl / np.where(abl > 0, abl, np.nan)
 
+    # Items 3-4: the two variables the source method computes and pyflam did not. Both are
+    # DIAGNOSTIC for now -- exposed and exported, but not yet wired into the ladder, so this
+    # commit changes no class. See docs/graf_vs_pyflam_2026-07-26.md for why they are the
+    # candidates for the over-extent, and why gating on them is a separate decision.
+    delta_theta = entrainment_jump_grid(z, theta, abl)
+    theta_excess, _ = fire_parcel_theta_excess(heat_flux, theta_mean_below)
+    firecape = fire_cape_grid(z, thv, theta_excess=theta_excess)
+    # Can the reference fire's parcel clear the capping jump at all? This is the penetration
+    # test of Castellnou et al. (2022) sec.2.1.2, expressed as a ratio: >= 1 means the fire's
+    # theta excess exceeds the entrainment-zone jump it has to cross.
+    with np.errstate(invalid="ignore", divide="ignore"):
+        penetration = theta_excess / np.where(delta_theta > 0, delta_theta, np.nan)
+
     return dict(abl=abl, lcl=lcl, lcl_ratio=ratio, ml_grad=ml_grad, gamma=gamma,
                 rh_top=rh_top, shear_dist=shear_dist, valid=valid,
-                parcel_ml=parcel_ml, fireabl=fireabl, decoupling=decoupling,
-                n_levels=int(np.median(n_in_ml)))
+                parcel_ml=parcel_ml, residual_ml=resid_ml, fireabl=fireabl,
+                decoupling=decoupling, delta_theta=delta_theta, firecape=firecape,
+                penetration=penetration,
+                n_levels=n_levels_land, ml_fit_support=ml_fit_support)
 
 
 def regrid_to(field, lat_src, lon_src, lat_dst, lon_dst):
@@ -784,9 +869,12 @@ def regrid_diagnostics(diag, lat_src, lon_src, lat_dst, lon_dst, *, abl_min_m=AB
     rather than interpolating a boolean. ``n_levels`` is carried through unchanged.
     """
     fields = ("abl", "lcl", "lcl_ratio", "ml_grad", "gamma", "rh_top", "parcel_ml",
-              "shear_dist", "fireabl", "decoupling")
-    out = {k: regrid_to(diag[k], lat_src, lon_src, lat_dst, lon_dst) for k in fields}
+              "shear_dist", "fireabl", "decoupling", "residual_ml", "delta_theta",
+              "firecape", "penetration")
+    out = {k: regrid_to(diag[k], lat_src, lon_src, lat_dst, lon_dst)
+           for k in fields if k in diag}
     out["valid"] = (np.isfinite(out["abl"]) & np.isfinite(out["lcl_ratio"])
                     & np.isfinite(out["ml_grad"]) & (out["abl"] >= abl_min_m))
     out["n_levels"] = diag["n_levels"]
+    out["ml_fit_support"] = diag.get("ml_fit_support")
     return out

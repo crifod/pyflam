@@ -9,6 +9,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Entrainment jump and FireCAPE** (`atmosphere.entrainment_jump_grid`,
+  `atmosphere.fire_cape_grid`) — the two variables Castellnou et al. (2022) compute and
+  pyflam did not. Δθ across the entrainment zone is what sec. 2.1.2 names as the control on
+  a parcel's *ability to penetrate above the ABL*; FireCAPE is Potter (2005), the CAPE of a
+  fire-heated parcel (not surface CAPE, which this product still omits). Both are
+  **diagnostic only** — exported as rasters, deliberately not wired into the ladder. The
+  obvious penetration gate θ′/Δθ ≥ 1 is currently a no-op (p10 = 5.5 over Tuscany) because
+  the reference fire's θ′ is 20 K against 0.1–13.1 K measured in-plume by the campaign;
+  calibrating θ′ is a precondition for using it.
+- **Residual-layer depth** (`atmosphere.residual_layer_grid`) — references the parcel to the
+  coldest level in the lower column rather than the surface, so the mixed-layer gradient stays
+  well-posed after the convective layer decays. By day it reduces to the parcel mixing depth.
+  Evening classifiable land over Tuscany rises 48 → 81 %. The depth it returns still looks too
+  shallow to be a true residual layer; see `docs/graf_vs_pyflam_2026-07-26.md`.
+- **Dry-pyrocloud decoupling map** in the 3-day Tuscany product, alongside the fuel-gated and
+  potential class maps: a continuous fireABL/ABL panel, 3 days × 8 hours from 00Z of the run
+  day, with a daytime summary table carrying the classifiable-area share.
+- **Per-province decoupling metric** (`decoup_max`) in the provincial report and CSV.
+
+### Changed
+
+- **`ABL_MIN_M` 600 m → 150 m.** The 600 m gate ("mixing too shallow to classify") had no
+  basis in the source method — Castellnou et al. (2022) sec. 2.4.2 specifies the Rib procedure
+  and imposes no minimum depth — and is contradicted by the campaign's own sondes: five of the
+  eight ambient profiles released beside real pyroconvective wildfires sit at 202–391 m and
+  were being discarded unclassified, though their fires grew observed fire-induced boundary
+  layers of 451–2850 m. Now a plausibility floor matching the Rib solver's own clip, not a
+  discriminating gate.
+- **Mixed-layer level count** is now the land-only median over the 12–15Z mature window, with
+  a companion `ml_fit_support` (share of land columns clearing `ML_FIT_MIN_PTS`). It was read
+  from hour 0, which sampled the collapsed nocturnal layer and reported ~1 level in the very
+  sentence meant to establish the hybrid path's resolution; the honest figure is ~13.
+- The daily report's ladder paragraph and shear threshold row are derived from the ladder
+  actually used, instead of asserting the pressure-level answer. On the hybrid path the full
+  5-diagnostic ladder does run, and the report said otherwise.
+
+### Fixed
+
+- **Unclassifiable columns are no longer drawn as class 0.** `classify_profile` allocated with
+  `np.zeros` and left rejected cells at 0, which the legend renders as "Surface plume", so the
+  map could not distinguish *no significant convection* from *could not classify*. At 18Z on
+  the 2026-07-26 run this painted 99.2 % of land as quiet when 0.0 % of it was a genuine
+  surface-plume diagnosis. Rejected cells now carry `PYROCONV_NODATA` (−1) and render grey; a
+  fuel-gated cell below 10 MW/m stays class 0, which *is* a diagnosis.
+- **`bulk_richardson_abl_height` used Ri_c = 0.25**, matching neither Castellnou et al. (2022)
+  (0.33, after Zhang et al. 2014) nor pyflam's own gridded path. The 200 vs 400 m search start
+  is retained as a deliberate split — 400 m is a fire-sonde correction for plume indraft, 200 m
+  (Zhang) is right for ambient forecast columns — and both constants now carry the reasoning.
+- **The 3-day PDF built without its figures.** `build_report` passed pandoc an absolute `.md`
+  path while the image links are basenames, so they resolved against the repo root and the
+  build silently produced a text-only PDF.
+
 - **Rothermel effective wind-speed limit** (opt-in). `SurfaceKernel` gains
   `effective_wind_limit()` (0.9·I_R, Rothermel 1972 eq. 87) and
   `limit_combined_factor()`, and `rate_of_spread`/`behavior`/`basic_fire_behavior`/

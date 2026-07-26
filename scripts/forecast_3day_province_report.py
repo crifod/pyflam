@@ -4,9 +4,12 @@ Wraps ``scripts/forecast_3day_tuscany.py`` (the tested hybrid pipeline: one 00Z 
 three valid days, ICON-EU model levels + ICON-2I 2.2 km gate) and adds, in a
 **separate output folder**:
 
-  * the two figure series it already makes -- POTENTIAL and FUEL-GATED, 3 days x 8 hours;
+  * the three figure series it makes -- POTENTIAL, FUEL-GATED and the dry-pyrocloud
+    DECOUPLING diagnostic -- 3 days x 8 hours, one complete 24 h cycle per day always
+    starting at 00Z of the run day, on the Tuscany domain with ISTAT province borders;
   * a **per-province pyroconvection potential-metrics** table (zonal statistics of the
-    class + diagnostic rasters over the ten Tuscany provinces, per valid day); and
+    class + diagnostic rasters over the ten Tuscany provinces, per valid day, including
+    the peak daytime fireABL/ABL decoupling ratio); and
   * a **per-province FWI** table -- the full Canadian FWI System: the codes
     (FFMC / DMC / DC), the indices (ISI / BUI) and the final index (FWI) -- driven by an
     ERA5 spin-up of the slow drought codes (:func:`pyflam.fire_weather_history.fire_weather_spinup`,
@@ -46,7 +49,7 @@ from pyflam.atmosphere import (
     PYROCONVECTION_TYPE_LABEL)
 from pyflam.fire_weather_history import (fire_weather_spinup, era5_daily_noon_history,
                                          blend_records)
-from pyflam_gui.core.pyroconv import read_icon2i_profile
+from pyflam_gui.core.pyroconv import read_icon2i_profile, ABL_MIN_M, _REFERENCE_FIRE_FLUX_W_M2
 
 RUNDATE = sys.argv[1] if len(sys.argv) > 1 else datetime.now(timezone.utc).strftime("%Y-%m-%d")
 RUN = int(sys.argv[2]) if len(sys.argv) > 2 else 0
@@ -81,9 +84,16 @@ def fwi_danger(v):
 
 # --------------------------------------------------------------------------- base run
 def run_base_pipeline():
-    """Produce the potential/gated figures + class/diagnostic rasters (unless present)."""
+    """Produce the potential/gated/decoupling figures + class/diagnostic rasters."""
     if os.environ.get("SKIP_BASE_RUN") == "1":
         print(f"[report] SKIP_BASE_RUN=1 -> reusing {BASE_OUT}")
+        missing = [p for p in (f"forecast_3day_potential_{RUNDATE}.png",
+                               f"forecast_3day_gated_{RUNDATE}.png",
+                               f"forecast_3day_decoupling_{RUNDATE}.png")
+                   if not os.path.exists(os.path.join(BASE_OUT, p))]
+        if missing:
+            sys.exit(f"SKIP_BASE_RUN=1 but {BASE_OUT} is missing {', '.join(missing)} "
+                     f"(a base run predating the decoupling series?). Re-run without it.")
         return
     print(f"[report] running base 3-day pipeline -> {BASE_OUT}")
     subprocess.run([sys.executable, os.path.join(HERE, "forecast_3day_tuscany.py"),
@@ -130,13 +140,26 @@ def load_diag(valid, name, hour):
         return d.read(1)
 
 
+def classifiable(valid, hour):
+    """Mask of columns the classifier accepted, rebuilt from the diagnostic rasters.
+
+    Same definition as ``pyroconv.regrid_diagnostics``. The decoupling ratio is a bare
+    fireABL/ABL quotient and stays finite in rejected columns, so it must be masked with
+    this before any zonal statistic is taken.
+    """
+    abl = load_diag(valid, "abl", hour)
+    return (np.isfinite(abl) & np.isfinite(load_diag(valid, "lcl_ratio", hour))
+            & np.isfinite(load_diag(valid, "ml_grad", hour)) & (abl >= ABL_MIN_M))
+
+
 # --------------------------------------------------------------------- pyroconv metrics
 def pyroconv_metrics(gdf, lbl):
     """Per-province, per-day pyroconvection potential metrics from the class rasters.
 
     For each province the peak-of-day (09-18Z) statistics: the highest potential and
     gated class reached, the maximum daytime areal coverage of pyroCu (class >= 2) and of
-    deep pyroCu/pyroCb (class == 4), and the noon column diagnostics (LCL/ABL, ABL depth,
+    deep pyroCu/pyroCb (class == 4), the peak daytime dry-pyrocloud decoupling ratio
+    (fireABL/ABL, diagnostic), and the noon column diagnostics (LCL/ABL, ABL depth,
     ABL-top RH) averaged over the province's classified land.
     """
     dt_idx = [HOURS.index(h) for h in DAYTIME]
@@ -148,6 +171,8 @@ def pyroconv_metrics(gdf, lbl):
         lcl_ratio = load_diag(valid, "lcl_ratio", NOON)
         abl = load_diag(valid, "abl", NOON)
         rh_top = np.stack([load_diag(valid, "rh_top", h) for h in DAYTIME])
+        decoup = np.stack([np.where(classifiable(valid, h), load_diag(valid, "decoupling", h),
+                                    np.nan) for h in DAYTIME])
         for i, name in enumerate(gdf["prov_name"]):
             pm = (lbl == i + 1)
             land = pm & (pot[noon_i] >= 0)                  # classified land in the province
@@ -156,16 +181,22 @@ def pyroconv_metrics(gdf, lbl):
             def cover(stack, thr):                          # max daytime %area with class >= thr
                 return max(100.0 * ((stack[h] >= thr) & land).sum() / n for h in dt_idx)
 
-            pot_peak = int(max((pot[h][land].max(initial=0)) for h in dt_idx))
-            gate_peak = int(max((gate[h][land].max(initial=0)) for h in dt_idx))
+            # -1 (nodata) never wins a max against a real class, so a peak of -1 means the
+            # province had no classifiable column at any daytime hour -- report it as such
+            # rather than letting it read as class 0.
+            pot_peak = int(max((pot[h][land].max(initial=-1)) for h in dt_idx))
+            gate_peak = int(max((gate[h][land].max(initial=-1)) for h in dt_idx))
             lr = float(np.nanmean(np.where(land, lcl_ratio, np.nan)))
             ab = float(np.nanmean(np.where(land, abl, np.nan)))
             rht = float(np.nanmin(np.where(land[None], rh_top, np.nan)))
+            dc = np.where(land[None], decoup, np.nan)
+            dcm = float(dc[np.isfinite(dc)].max()) if np.isfinite(dc).any() else float("nan")
             rows.append(dict(
                 province=name, day=valid,
                 pot_peak=pot_peak, pot_pyroCu=round(cover(pot, 2), 1),
                 pot_deep=round(cover(pot, 4), 1),
                 gate_peak=gate_peak, gate_pyroCu=round(cover(gate, 2), 1),
+                decoup_max=round(dcm, 1),
                 lcl_abl=round(lr, 2), abl_m=round(ab, 0), rh_top_min=round(rht, 0)))
     return rows
 
@@ -311,22 +342,23 @@ def md_table(rows, cols, headers, aligns):
     return "\n".join([head, sep] + body)
 
 
-def build_report(pyro_rows, fwi_rows, spin, spin_method, png_pot, png_gate):
+def build_report(pyro_rows, fwi_rows, spin, spin_method, png_pot, png_gate, png_decoup):
     md = os.path.join(REPORT_OUT, f"forecast_3day_provinces_{RUNDATE}.md")
     pdf = os.path.join(REPORT_OUT, f"forecast_3day_provinces_{RUNDATE}.pdf")
     classes = ", ".join(f"{k} {PYROCONVECTION_TYPE_LABEL[k]}" for k in sorted(PYROCONVECTION_TYPE_LABEL))
     pyro_md = md_table(
         pyro_rows,
         ["province", "day", "pot_peak", "pot_pyroCu", "pot_deep", "gate_peak", "gate_pyroCu",
-         "lcl_abl", "abl_m", "rh_top_min"],
+         "decoup_max", "lcl_abl", "abl_m", "rh_top_min"],
         ["Province", "Day", "Pot peak", "Pot %pyroCu", "Pot %deep", "Gate peak", "Gate %pyroCu",
-         "LCL/ABL", "ABL m", "RH-top min"],
-        [":--", ":--", "--:", "--:", "--:", "--:", "--:", "--:", "--:", "--:"])
+         "Decoup max", "LCL/ABL", "ABL m", "RH-top min"],
+        [":--", ":--", "--:", "--:", "--:", "--:", "--:", "--:", "--:", "--:", "--:"])
     fwi_md = md_table(
         fwi_rows,
         ["province", "day", "ffmc", "dmc", "dc", "isi", "bui", "fwi", "danger"],
         ["Province", "Day", "FFMC", "DMC", "DC", "ISI", "BUI", "FWI", "Danger"],
         [":--", ":--", "--:", "--:", "--:", "--:", "--:", "--:", ":--"])
+    hours_txt = ", ".join(f"{h:02d}Z" for h in HOURS)
     with open(md, "w") as f:
         f.write(f"""---
 title: "Tuscany Pyroconvection + FWI -- 3-Day Provincial Forecast -- run {RUNDATE} {RUN:02d}Z"
@@ -338,12 +370,14 @@ fontsize: 8pt
 ## Overview
 
 Three valid days from the single **{RUNDATE} {RUN:02d}Z** run (day 0, +1, +2), using the
-day+1/+2 forecast steps in the same ICON-EU + ICON-2I datasets. The atmospheric
-pyroconvection classification is the hybrid product (ICON-EU native model levels for the
-profile -- bulk-Richardson ABL, Bolton LCL, measured mixed-layer dtheta/dz, cap gamma-theta,
-ABL-top RH -- with the 10 MW/m fuel gate on ICON-2I's 2.2 km surface fields over the Tuscany
-.lcp fuels). Two map series follow; per-province tables summarise both the pyroconvection
-potential and the Canadian fire-weather danger for each of the ten Tuscany provinces.
+day+1/+2 forecast steps in the same ICON-EU + ICON-2I datasets. Each day is a complete 24 h
+cycle, 3-hourly, **starting at 00Z of the run day** ({hours_txt}); panels are the Tuscany
+domain with ISTAT province borders. The atmospheric pyroconvection classification is the
+hybrid product (ICON-EU native model levels for the profile -- bulk-Richardson ABL, Bolton
+LCL, measured mixed-layer dtheta/dz, cap gamma-theta, ABL-top RH -- with the 10 MW/m fuel
+gate on ICON-2I's 2.2 km surface fields over the Tuscany .lcp fuels). Three map series
+follow; per-province tables summarise the pyroconvection potential, the dry-pyrocloud
+decoupling and the Canadian fire-weather danger for each of the ten Tuscany provinces.
 
 ## Fuel-gated pyroconvection (expected)
 
@@ -353,13 +387,28 @@ potential and the Canadian fire-weather danger for each of the ten Tuscany provi
 
 ![potential]({os.path.basename(png_pot)}){{width=100%}}
 
+## Dry-pyrocloud decoupling -- DIAGNOSTIC (no class label)
+
+![decoupling]({os.path.basename(png_decoup)}){{width=100%}}
+
+The decoupling ratio fireABL / ABL is how high a reference intense fire
+({int(_REFERENCE_FIRE_FLUX_W_M2)} W/m^2 convective flux) would grow its own boundary layer by
+*sensible heat alone*, divided by the ambient ABL. It is the **dry** counterpart to the two
+class maps (Castellnou et al. 2022; Castellnou Ribau et al. 2024): ratios well above 1 mark
+deep, hot, dry columns where a fire can decouple from the surface *even where the moist ladder
+scores low*. Like the potential map it assumes a fire everywhere (a fixed reference flux), so
+it is an upper bound and not a calibrated class -- no dry/moist LCL split is applied. Columns
+the classifier rejects (ABL below {int(ABL_MIN_M)} m, or no usable profile) are left blank.
+
 ## Per-province pyroconvection potential metrics
 
 Peak-of-day (09-18Z) statistics per province. *Pot peak* / *Gate peak* are the highest
 class reached (0 surface plume -> 4 deep pyroCu/pyroCb); *%pyroCu* is the maximum daytime
-areal coverage of class >= 2 (pyrocumulus), *%deep* of class 4. LCL/ABL, ABL depth and the
-minimum ABL-top RH are the noon column diagnostics over the province's classified land.
-Classes: {classes}.
+areal coverage of class >= 2 (pyrocumulus), *%deep* of class 4. *Decoup max* is the peak
+daytime fireABL/ABL ratio over the province -- read it alongside the classes, since a high
+ratio with a low class is the dry-decoupling case the moist ladder does not score. LCL/ABL,
+ABL depth and the minimum ABL-top RH are the noon column diagnostics over the province's
+classified land. Classes: {classes}.
 
 {pyro_md}
 
@@ -392,6 +441,9 @@ this report in the same folder.
 
 
 def main():
+    if RUN != 0:
+        sys.exit(f"run {RUN:02d}Z: this product starts at 00Z of the run day, so day 0 would be "
+                 f"missing its first {RUN} h. Use the 00Z run.")
     os.makedirs(REPORT_OUT, exist_ok=True)
     run_base_pipeline()
 
@@ -407,17 +459,19 @@ def main():
 
     write_csv(os.path.join(REPORT_OUT, f"pyroconv_metrics_{RUNDATE}.csv"), pyro_rows,
               ["province", "day", "pot_peak", "pot_pyroCu", "pot_deep", "gate_peak",
-               "gate_pyroCu", "lcl_abl", "abl_m", "rh_top_min"])
+               "gate_pyroCu", "decoup_max", "lcl_abl", "abl_m", "rh_top_min"])
     write_csv(os.path.join(REPORT_OUT, f"fwi_provinces_{RUNDATE}.csv"), fwi_rows,
               ["province", "day", "ffmc", "dmc", "dc", "isi", "bui", "fwi", "danger"])
 
-    # bring the two figure series into the separate folder so the report is self-contained
+    # bring the three figure series into the separate folder so the report is self-contained
     png_pot = os.path.join(REPORT_OUT, f"forecast_3day_potential_{RUNDATE}.png")
     png_gate = os.path.join(REPORT_OUT, f"forecast_3day_gated_{RUNDATE}.png")
+    png_decoup = os.path.join(REPORT_OUT, f"forecast_3day_decoupling_{RUNDATE}.png")
     shutil.copyfile(os.path.join(BASE_OUT, f"forecast_3day_potential_{RUNDATE}.png"), png_pot)
     shutil.copyfile(os.path.join(BASE_OUT, f"forecast_3day_gated_{RUNDATE}.png"), png_gate)
+    shutil.copyfile(os.path.join(BASE_OUT, f"forecast_3day_decoupling_{RUNDATE}.png"), png_decoup)
 
-    md, pdf = build_report(pyro_rows, fwi_rows, spin, spin_method, png_pot, png_gate)
+    md, pdf = build_report(pyro_rows, fwi_rows, spin, spin_method, png_pot, png_gate, png_decoup)
     print(f"\nOK 3-day provincial report -> {REPORT_OUT}")
     for p in (md, pdf,
               os.path.join(REPORT_OUT, f"pyroconv_metrics_{RUNDATE}.csv"),
