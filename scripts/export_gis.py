@@ -83,6 +83,14 @@ gdf = gpd.GeoDataFrame(recs, crs=CRS)
 shp = os.path.join(gis, "isochrones_30min.shp")
 gdf.to_file(shp)                          # writes .shp/.shx/.dbf/.prj/.cpg
 print("wrote isochrones_30min.shp  (%d isochrones)" % len(gdf))
+
+# ---- ignition point shapefile (regenerated so it tracks the current run) ------
+from shapely.geometry import Point
+ign_gdf = gpd.GeoDataFrame(
+    [{"lat": R.LAT, "lon": R.LON, "row": int(ign[0]), "col": int(ign[1]),
+      "start_cest": "2026-07-03 14:00", "geometry": Point(xy[0], xy[1])}], crs=CRS)
+ign_gdf.to_file(os.path.join(gis, "ignition.shp"))
+print("wrote ignition.shp  (%.5f, %.5f)" % (R.LAT, R.LON))
 print("\nAll GIS layers in:", gis)
 for f in sorted(os.listdir(gis)):
     print("  ", f)
