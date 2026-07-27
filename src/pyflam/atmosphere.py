@@ -1320,6 +1320,56 @@ def fire_cape_grid(height_agl_m, theta_v, *, theta_excess, top_m=None):
     return np.where(any_ok, cape, np.nan)
 
 
+def max_rh_abl_grid(height_agl_m, relative_humidity, *, zmin: float = 150.0,
+                    zmax: float = 4000.0, min_drop_pct: float = 2.0, smooth: int = 1):
+    """ABL height (m AGL) as the height of maximum relative humidity -- the GRAF criterion.
+
+    Castellnou Ribau et al. (2025, AMT 18, 7805-7831) sec. 2.6 define the boundary-layer top
+    this way rather than by a Richardson crossing:
+
+        *"The height of the maximum RH value is used as a criterion to estimate the height of
+        the atmospheric boundary layer. This criterion is based on the observation that
+        specific humidity tends to be well mixed in the convective boundary layer... temperature
+        decreases with height, leading to an increase in relative humidity with altitude,
+        reaching a peak at the inversion level. Above this inversion, the air becomes drier and
+        warmer, resulting in a decrease in RH."*
+
+    It is a *moisture* criterion where :func:`bulk_richardson_abl_grid` is a *dynamic* one, and
+    on the campaign's own sondes the two disagree by 0.5x to 4.7x -- enough to move a column
+    across class boundaries. Provided so the two definitions can be compared rather than
+    conflated; the classifier still uses the Rib depth by default.
+
+    The peak is sought between ``zmin`` (above the surface layer, where a shallow morning
+    moisture maximum would otherwise win) and ``zmax``. A column qualifies only if RH falls by
+    at least ``min_drop_pct`` somewhere above the peak -- without that guard a profile whose RH
+    rises monotonically to the top of the data returns its top level, which is not an inversion.
+    ``smooth`` is a running-mean half-width in levels, for noisy sonde data; model profiles need
+    none. Returns ``nan`` where no qualifying peak exists.
+
+    Note the source applies this *visually* on a plotted profile, with a human rejecting
+    spurious maxima. This is the automated analogue and will not always agree with a hand
+    reading.
+    """
+    z = np.asarray(height_agl_m, float)
+    rh = np.asarray(relative_humidity, float)
+    if smooth > 1:
+        k = np.ones(smooth) / smooth
+        rh = np.apply_along_axis(lambda a: np.convolve(a, k, mode="same"), 0, rh)
+
+    win = (z >= zmin) & (z <= zmax) & np.isfinite(rh) & np.isfinite(z)
+    cand = np.where(win, rh, -np.inf)
+    kmax = np.argmax(cand, axis=0)
+    peak_rh = np.take_along_axis(cand, kmax[None, ...], axis=0)[0]
+    peak_z = np.take_along_axis(np.where(np.isfinite(z), z, np.nan), kmax[None, ...], axis=0)[0]
+
+    # the peak must be followed by a real decrease aloft, else it is not an inversion
+    above = z > peak_z[None, ...]
+    rh_above = np.where(above & np.isfinite(rh), rh, np.inf)
+    drop = peak_rh - np.min(rh_above, axis=0)
+    ok = win.any(axis=0) & np.isfinite(peak_z) & (drop >= min_drop_pct)
+    return np.where(ok, peak_z, np.nan)
+
+
 def residual_layer_grid(height_agl_m, theta, *, search_max_m: float = 3000.0,
                         excess_k: float = _PARCEL_EXCESS_K, min_top_m: float = 200.0):
     """Residual-layer top (m AGL) -- the well-mixed depth left over after the CBL decays.
@@ -1364,6 +1414,149 @@ def residual_layer_grid(height_agl_m, theta, *, search_max_m: float = 3000.0,
     z_top = np.max(np.where(usable, z, -np.inf), axis=0)
     out = np.where(np.isnan(out) & (z_top > -np.inf), z_top, out)
     return np.where(usable.any(axis=0), np.maximum(out, min_top_m), np.nan)
+
+
+_LV = 2.501e6                  # J kg-1, latent heat of vaporisation at 0 C
+# Tory & Kepert (2021) PFT constants. eq 31 is their operational reduction of eq 25 with
+# rho_0 = 0.755 kg/m3 folded in: PFT[GW] = 0.3 * z_fc[km]^2 * U_ML[m/s] * dtheta_fc[K].
+_PFT_C = 0.3
+_PFT_CLOUD_TOP_C = -20.0       # conservative electrification level (their assumption 5)
+_PFT_BUOY_BUFFER_K = 0.5       # dtheta_b, for evaporative loss to entrained dry air
+_PFT_HEAT_TO_MOISTURE = 15.0   # K per g/kg, the fire's heat:moisture ratio (assumption 4)
+
+
+def _moist_lapse_rate(temp_k, pressure_pa):
+    """Saturated (pseudo)adiabatic lapse rate, K/m. Array-safe."""
+    t = np.asarray(temp_k, float)
+    p = np.asarray(pressure_pa, float)
+    es = saturation_vapour_pressure_pa(t)
+    qs = _EPSILON * es / np.maximum(p - (1.0 - _EPSILON) * es, 1.0)
+    num = 1.0 + _LV * qs / (_RD * t)
+    den = 1.0 + _LV ** 2 * qs * _EPSILON / (_CP_DRY * _RD * t ** 2)
+    return _G / _CP_DRY * num / den
+
+
+def pyrocb_firepower_threshold_grid(height_agl_m, temperature_k, pressure_pa,
+                                    spec_humidity, wind_u, wind_v, *,
+                                    surface_pressure_pa,
+                                    buoyancy_buffer_k: float = _PFT_BUOY_BUFFER_K,
+                                    cloud_top_temp_c: float = _PFT_CLOUD_TOP_C,
+                                    heat_to_moisture: float = _PFT_HEAT_TO_MOISTURE,
+                                    beta_max: float = 0.12, beta_steps: int = 60):
+    """PyroCb Firepower Threshold (GW), gridded -- Tory & Kepert (2021) eq 31.
+
+    The minimum **total** firepower that, in this atmosphere, lifts a fire plume to where
+    free moist convection can carry it to the electrification level. Smaller values favour
+    pyroCb. Returns a dict with ``pft_gw`` and its three drivers ``z_fc_m``,
+    ``delta_theta_fc_k`` and ``u_ml_ms``, plus the mixed-layer state used.
+
+        PFT[GW] = 0.3 * z_fc[km]^2 * U_ML[m/s] * dtheta_fc[K]
+
+    The procedure follows their section 4b-4c rather than the earlier inversion in
+    :func:`pyrocb_firepower_threshold`, which targeted the **LCL** and used a bulk
+    Brunt-Vaisala stability. Those are not the paper's quantities: ``z_fc`` is the
+    *free-convection* height, 3.5-4.8 km in their worked cases against a ~1.5 km LCL, and
+    ``dtheta_fc`` is a parcel-vs-mixed-layer potential-temperature difference, not a
+    stability. Scoring the LCL understates PFT by orders of magnitude.
+
+    Steps, per column:
+
+    1. **Mixed layer.** ``theta_ML``/``q_ML`` are height-weighted means up to the ML-LCL
+       (weighted because entrained mass flux grows linearly with height, their eqs 15-16),
+       found by iterating the ML depth until the ML-LCL sits inside it.
+    2. **Saturation-point curve** (Tory et al. 2018). For a fire buoyancy increment
+       ``beta``, the plume parcel carries ``theta_SP = (1 + beta) theta_ML`` and
+       ``q_SP = q_ML + beta theta_ML / heat_to_moisture`` (their eqs 29-30, with the
+       assumed 15 K per 1 g/kg fire heat-to-moisture ratio). Its saturation point is the
+       height at which that parcel condenses.
+    3. **Free-convection height.** The smallest ``beta`` whose moist adiabat from the
+       saturation point stays warmer than the environment -- by ``buoyancy_buffer_k``, the
+       allowance for evaporative cooling by entrained dry air -- all the way to the
+       ``cloud_top_temp_c`` level. ``z_fc`` is that saturation-point height and
+       ``dtheta_fc = beta theta_ML``.
+    4. **Wind.** ``U_ML`` is the magnitude of the *vector* mean wind between the surface and
+       ``z_fc`` (their step 5) -- not the 10 m wind.
+
+    ``nan`` where no ``beta <= beta_max`` produces a buoyant cloud: the column cannot make a
+    pyroCb at any firepower, which is a stronger statement than a large threshold.
+
+    Scale check against their published cases: Black Saturday 1000 LST (z_fc 4.8 km,
+    U_ML 20 m/s, dtheta_fc 9 K) gives 1244 GW against their stated 1240. Real events run
+    ~100 GW (Chisholm afternoon) to ~1240 GW (Black Saturday morning), with Sir Ivan at
+    ~300 GW described as near the upper limit for most wildfires. Compare against a fire's
+    **total** power -- Byram intensity times head-fire length, as they do (100 MW/m over a
+    5 km front = 500 GW) -- not against an intensity.
+    """
+    z = np.asarray(height_agl_m, float)
+    T = np.asarray(temperature_k, float)
+    p = np.asarray(pressure_pa, float)
+    q = np.asarray(spec_humidity, float)
+    u, v = np.asarray(wind_u, float), np.asarray(wind_v, float)
+    ps = np.asarray(surface_pressure_pa, float)
+    shape = ps.shape
+
+    # --- 1. mixed layer: iterate depth until the ML-LCL sits inside it
+    depth = np.full(shape, 500.0)
+    theta = theta_kelvin(T - 273.15, p / 100.0)
+    for _ in range(6):
+        w = (z <= depth[None, ...]) & np.isfinite(theta) & np.isfinite(q)
+        # linear-in-height weighting: entrained mass flux grows with height (eqs 15-16)
+        wt = np.where(w, np.maximum(z, 1.0), 0.0)
+        tot = np.maximum(wt.sum(0), 1e-9)
+        th_ml = (wt * np.where(w, theta, 0.0)).sum(0) / tot
+        q_ml = (wt * np.where(w, q, 0.0)).sum(0) / tot
+        t_sfc = th_ml * (ps / 100000.0) ** _KAPPA_DRY
+        e = q_ml * ps / (_EPSILON + (1.0 - _EPSILON) * q_ml)
+        td = 243.5 * np.log(np.maximum(e, 1.0) / 611.2) / (17.67 - np.log(np.maximum(e, 1.0) / 611.2))
+        depth = np.clip(lcl_height_bolton_m(t_sfc, td + 273.15, ps), 100.0, 5000.0)
+
+    # --- 2-3. walk the saturation-point curve for the critical beta
+    z_fc = np.full(shape, np.nan)
+    dth_fc = np.full(shape, np.nan)
+    for beta in np.linspace(0.0, beta_max, beta_steps)[1:]:
+        todo = ~np.isfinite(z_fc)
+        if not todo.any():
+            break
+        th_p = (1.0 + beta) * th_ml
+        q_p = q_ml + beta * th_ml / heat_to_moisture * 1e-3      # g/kg -> kg/kg
+        t_p = th_p * (ps / 100000.0) ** _KAPPA_DRY
+        e = q_p * ps / (_EPSILON + (1.0 - _EPSILON) * q_p)
+        le = np.log(np.maximum(e, 1.0) / 611.2)
+        td = 243.5 * le / (17.67 - le)
+        z_sp = lcl_height_bolton_m(t_p, td + 273.15, ps)
+        t_sp = t_p - _G / _CP_DRY * z_sp                          # dry ascent to the SP
+        p_sp = ps * np.maximum(t_sp / np.maximum(t_p, 1.0), 1e-6) ** (1.0 / _KAPPA_DRY)
+
+        # moist ascent from the SP; must beat the environment by the buffer up to the
+        # cloud-top level, else this beta is not enough
+        tp, pp, zp = t_sp.copy(), p_sp.copy(), z_sp.copy()
+        ok = np.ones(shape, bool)
+        reached = np.zeros(shape, bool)
+        for k in range(z.shape[0]):
+            zk = z[k]
+            step = zk - zp
+            adv = step > 0
+            if not adv.any():
+                continue
+            tp = np.where(adv, tp - _moist_lapse_rate(tp, pp) * np.maximum(step, 0.0), tp)
+            pp = np.where(adv, pp * np.exp(-_G * np.maximum(step, 0.0) / (_RD * np.maximum(tp, 1.0))), pp)
+            zp = np.where(adv, zk, zp)
+            env = T[k]
+            above_sp = adv & np.isfinite(env)
+            ok &= ~(above_sp & ~reached & (tp < env + buoyancy_buffer_k))
+            reached |= above_sp & (env <= cloud_top_temp_c + 273.15)
+        good = todo & ok & reached
+        z_fc = np.where(good, z_sp, z_fc)
+        dth_fc = np.where(good, beta * th_ml, dth_fc)
+
+    # --- 4. vector-mean wind between the surface and z_fc
+    inlay = (z <= np.where(np.isfinite(z_fc), z_fc, 0.0)[None, ...]) & np.isfinite(u) & np.isfinite(v)
+    n = np.maximum(inlay.sum(0), 1)
+    u_ml = np.hypot((np.where(inlay, u, 0.0)).sum(0) / n, (np.where(inlay, v, 0.0)).sum(0) / n)
+
+    pft = _PFT_C * (z_fc / 1000.0) ** 2 * u_ml * dth_fc
+    return dict(pft_gw=pft, z_fc_m=z_fc, delta_theta_fc_k=dth_fc, u_ml_ms=u_ml,
+                theta_ml_k=th_ml, q_ml=q_ml, ml_depth_m=depth)
 
 
 def shear_height_grid(height_agl_m, wind_u, wind_v, *, zmin: float = 200.0,
@@ -2245,10 +2438,27 @@ def fetch_icon2i_mistral(date, run: int = 0, *, cache_dir: str = ".",
 
 ICON_EU_BASE = "https://opendata.dwd.de/weather/nwp/icon-eu/grib"
 
-# ICON-EU has 74 model levels; the lowest ~24 span the surface to ~4 km (level 74 is
-# the lowest, ~10 m AGL, level 51 ~4 km). HHL is a *half*-level height field, so the
-# full level k needs half levels k and k+1 -- hence the +1 fetched below.
-ICON_EU_MODEL_LEVELS = tuple(range(74, 50, -1))     # ascending in height (74 -> 51)
+# ICON-EU has 74 model levels; level 74 is the lowest (~10 m AGL). HHL is a *half*-level
+# height field, so the full level k needs half levels k and k+1 -- hence the +1 fetched below.
+#
+# Measured half-level heights over Tuscany (m MSL, terrain ~300 m): 51 = 4407, 48 = 5291,
+# 45 = 6177, 42 = 7066, 39 = 7958, 36 = 8851 -- roughly 295 m per level in this range.
+#
+# The set ran 74..51 (surface to ~4 km) until 2026-07-27, which is ample for the ABL
+# diagnostics but stops at about +2 C over Tuscany in summer. The PyroCb Firepower Threshold
+# (:func:`pyrocb_firepower_threshold_grid`) needs the profile up to the **-20 C** cloud-top
+# level that Tory & Kepert (2021) use as the electrification criterion -- near 7.4 km here --
+# so it returned nan in every column on the shorter stack.
+#
+# 74..39 (~8 km MSL) proved too tight: over Tuscany on 2026-07-27 the stack top sat at
+# -20.3 C at the median, so 29 % of land columns could not be tested at all -- and that 29 %
+# matched the nan fraction exactly, i.e. every failure was "cannot see high enough" rather
+# than "cannot make pyroCb". Extended again to 74..36 (~8.9 km MSL, ~-26 C) for real margin.
+#
+# Cost: 39 levels rather than 24, so ~235 MB per step against ~148 MB, or ~5.6 GB for a
+# 3-day 8-hourly run. Callers that only need the ABL diagnostics can pass the shorter range
+# to :func:`fetch_icon_eu` and skip the upper fifteen.
+ICON_EU_MODEL_LEVELS = tuple(range(74, 35, -1))     # ascending in height (74 -> 36)
 ICON_EU_MODEL_VARS = ("T", "QV", "U", "V", "P")
 ICON_EU_SURFACE_VARS = ("T_2M", "TD_2M", "PS", "U_10M", "V_10M")
 
@@ -2268,7 +2478,7 @@ def fetch_icon_eu(date, run: int = 0, step: int = 0, *, cache_dir: str = ".",
     ``force``. Returns ``{local_name: path}`` -- ``"{VAR}{level}"`` for model levels,
     ``"HHL{level}"`` for the half-level heights, and the bare variable name otherwise.
 
-    One step is ~200 MB (24 levels x 5 vars). The daily hybrid product fetches 8 steps
+    One step is ~222 MB (36 levels x 5 vars). The daily hybrid product fetches 8 steps
     per run (~1.6 GB), against ~2.6 GB for the ICON-2I product; ICON-EU serves one small
     file per level/step rather than whole-domain blobs.
     """

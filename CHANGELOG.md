@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **PyroCb Firepower Threshold, gridded** (`atmosphere.pyrocb_firepower_threshold_grid`) —
+  Tory & Kepert (2021) eq 31 with their full section 4b–4c procedure: height-weighted mixed
+  layer iterated until the ML-LCL sits inside it, the Tory et al. (2018) saturation-point curve
+  at 15 K per g kg⁻¹, a new pseudoadiabat solver, the β-walk to the free-convection height, the
+  0.5 K buoyancy buffer, and the vector-mean wind to z_fc. Reproduces five of six published
+  manual analyses exactly (Black Saturday 1244 vs 1240 GW, Sedgerly Rd 12 vs 12 GW). Exported
+  as a raster with `z_fc`, `delta_theta_fc`, `u_ml`; **never gated on** — the authors state the
+  absolute values are unverified and recommend the field for relative threat. The earlier
+  scalar `pyrocb_firepower_threshold` targeted the LCL with a bulk stability, which are not the
+  paper's quantities and understate PFT by orders of magnitude.
+- **ABL by maximum relative humidity** (`atmosphere.max_rh_abl_grid`) — the criterion
+  Castellnou Ribau et al. (2025) sec. 2.6 actually use, a moisture rather than a dynamic one.
+  Across 59 ambient campaign sondes it agrees with the bulk-Richardson depth to 9 % on
+  well-mixed columns but runs 3.8× deeper on collapsed ones, and on the Tuscany grid it moves
+  the 18Z median LCL/ABL from 4.37 to 0.55 — convection plume to resilient pyroCu. Provided for
+  comparison; the classifier still uses the Rib depth pending a hand check against plotted
+  profiles, since the source applies the criterion visually.
+- `ICON_EU_MODEL_LEVELS` extended 74→51 to **74→36** (~4 km → ~8.9 km). The PFT needs the
+  profile to the −20 °C electrification level; on the short stack every column returned nan,
+  and an intermediate 74→39 still left 29 % untestable. ~148 → ~235 MB per step.
+
 - **Entrainment jump and FireCAPE** (`atmosphere.entrainment_jump_grid`,
   `atmosphere.fire_cape_grid`) — the two variables Castellnou et al. (2022) compute and
   pyflam did not. Δθ across the entrainment zone is what sec. 2.1.2 names as the control on

@@ -751,7 +751,8 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True)
         saturation_vapour_pressure_pa, bulk_richardson_abl_grid, parcel_mixing_depth_grid,
         lcl_height_bolton_m, relative_humidity_from_dewpoint, DEFAULT_PYROCONV_THRESHOLDS,
         shear_height_grid, shear_distance_grid, _EPSILON,
-        entrainment_jump_grid, fire_cape_grid, residual_layer_grid)
+        entrainment_jump_grid, fire_cape_grid, residual_layer_grid,
+        pyrocb_firepower_threshold_grid)
     th = thresholds or DEFAULT_PYROCONV_THRESHOLDS
 
     z, T, QV, P, U, V = d["z"], d["T"], d["QV"], d["P"], d["U"], d["V"]
@@ -846,11 +847,24 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True)
     with np.errstate(invalid="ignore", divide="ignore"):
         penetration = theta_excess / np.where(delta_theta > 0, delta_theta, np.nan)
 
+    # PyroCb Firepower Threshold (Tory & Kepert 2021 eq 31) -- the minimum TOTAL firepower
+    # this column needs for pyroCb, in GW. DIAGNOSTIC: exported, never gated on. The authors
+    # state the absolute values are unverified and recommend the field for *relative* threat,
+    # and comparing it to a fire needs a total power (Byram intensity x head-fire length, or
+    # their appendix D area-burned form), which this product does not compute per cell.
+    #
+    # Needs the profile up to the -20 C electrification level, which is why
+    # ICON_EU_MODEL_LEVELS reaches ~8.9 km; on a shallower stack every column returns nan.
+    pft = pyrocb_firepower_threshold_grid(z, T, d["P"], d["QV"], U, V,
+                                          surface_pressure_pa=ps)
+
     return dict(abl=abl, lcl=lcl, lcl_ratio=ratio, ml_grad=ml_grad, gamma=gamma,
                 rh_top=rh_top, shear_dist=shear_dist, valid=valid,
                 parcel_ml=parcel_ml, residual_ml=resid_ml, fireabl=fireabl,
                 decoupling=decoupling, delta_theta=delta_theta, firecape=firecape,
                 penetration=penetration,
+                pft_gw=pft["pft_gw"], z_fc=pft["z_fc_m"],
+                delta_theta_fc=pft["delta_theta_fc_k"], u_ml=pft["u_ml_ms"],
                 n_levels=n_levels_land, ml_fit_support=ml_fit_support)
 
 
@@ -883,7 +897,7 @@ def regrid_diagnostics(diag, lat_src, lon_src, lat_dst, lon_dst, *, abl_min_m=AB
     """
     fields = ("abl", "lcl", "lcl_ratio", "ml_grad", "gamma", "rh_top", "parcel_ml",
               "shear_dist", "fireabl", "decoupling", "residual_ml", "delta_theta",
-              "firecape", "penetration")
+              "firecape", "penetration", "pft_gw", "z_fc", "delta_theta_fc", "u_ml")
     out = {k: regrid_to(diag[k], lat_src, lon_src, lat_dst, lon_dst)
            for k in fields if k in diag}
     out["valid"] = (np.isfinite(out["abl"]) & np.isfinite(out["lcl_ratio"])

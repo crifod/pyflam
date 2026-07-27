@@ -465,13 +465,39 @@ gate would remain a no-op even now.
 |:--|:--|:--|
 | 1 | Remove the unfounded 600 m ABL gate | **done, §9** |
 | 2 | `bulk_richardson_abl_height` Ri_c 0.25 → 0.33; reconcile the 200/400 m start | **done, §10.1** |
-| 3 | Implement **Δθ** (entrainment jump) | **done as diagnostic, §10.2** — gate blocked on item 8 |
+| 3 | Implement **Δθ** (entrainment jump) | **done as diagnostic, §10.2** — gate blocked on the fireABL model's skill (§10.5), not on item 8 |
 | 4 | Implement **FireCAPE** (Potter 2005) | **done as diagnostic, §10.2** |
 | 5 | Define the ML gradient on the residual layer | **done, §10.4** — evening classifiable 48 → 81 % |
 | 6 | Re-run the GRAF comparison once the above are in | now unblocked |
 | 7 | Confirm the GRAF time convention (§4) | open, needs the authors |
 | 8 | Calibrate the fire θ-excess against the campaign's measurements | **done, §10.5** — but it closed the question by *disqualifying* the penetration gate, not by enabling it |
-| 9 | Regenerate the published products: every figure and raster in `docs/forecast_2026-07-2{5,6}_3day*/` predates items 1-5 and the classes have since changed | open |
+| 9 | Regenerate the published products | **2026-07-26 done** (items 1-5 and 8; 48 class rasters unchanged, 96 θ′-dependent diagnostics updated). `docs/forecast_2026-07-25_3day*/` still predates everything, and there is still no provincial report for 26 July |
+| 10 | **The decoupling ratio is dominated by its denominator in the evening** — see below | open |
+
+### 11.1 Item 10 — the decoupling ratio's collapsing denominator
+
+Flagged after the item-8 regeneration. The dry-pyrocloud diagnostic is fireABL / ambient ABL,
+and removing the 600 m gate (item 1) admitted exactly the columns with the smallest
+denominators. The two changes push the ratio in opposite directions, and the denominator wins:
+
+| max decoupling ratio | before items 1-8 | after |
+|:--|--:|--:|
+| 26/07 18Z | 9.1 | **19.1** |
+| 27/07 18Z | 9.7 | **19.4** |
+| 28/07 18Z | 11.8 | **18.1** |
+
+The maxima roughly **doubled even though θ′ halved**, because the median 18Z ambient ABL is
+now ~230 m rather than the ≥600 m the gate used to enforce. The 18Z rows also read 100 % at
+both ratio thresholds — no longer the small-denominator artefact corrected earlier, since the
+classifiable share is now 47-82 % rather than 0.6-49 %, but the ratios themselves are being set
+by a shallow ambient depth rather than by fire behaviour.
+
+This is the same ambient-versus-in-fire depth problem as the evening class divergence (§12.6
+item 2), surfacing in the dry diagnostic. It does not invalidate the θ′ correction, which moved
+in the right direction and onto measured ground. It does mean **the evening decoupling panels
+must not be read as fire behaviour** until the denominator question is settled — the candidates
+being a fire-relevant depth in place of the ambient one, or reporting fireABL directly rather
+than as a ratio.
 
 Items 2 and 5 were corrections; 3 and 4 added physics taken from the published method rather
 than calibration against GRAF output, so model independence is preserved. Item 8 would
@@ -513,7 +539,7 @@ saturate at midday and they do not, and no threshold adjustment reaches it.
 |:--|:--|:--|:--|
 | Ri_b critical value | 0.33 | 0.33 ✓ (1-D path was 0.25 — fixed) | — |
 | Ri_b search start | 400 m (in-plume indraft correction) | 200 m (Zhang, ambient column) | 18Z median ABL 404 vs 225 m |
-| ABL identification | height of maximum RH, *supplemented* by Ri_b | Ri_b alone | untested |
+| ABL identification | height of maximum RH, *supplemented* by Ri_b | Ri_b alone | **1.09x on well-mixed columns, 3.8-9.4x on collapsed ones — §14** |
 | LCL | MetPy iterative, surface parcel | Bolton, surface parcel | negligible |
 
 ### 12.4 Gates pyflam invented
@@ -568,7 +594,88 @@ timing. **This is evidence precisely because pyflam has not been tuned to GRAF o
 is the reason item 8 must calibrate θ′ against the campaign's published *measurements* rather
 than against their maps.
 
-## 13. Provenance
+## 14. The ABL definition — the evening divergence, explained
+
+Established 2026-07-27 from the full campaign dataset (Zenodo 17886250, 61 ambient sondes,
+2021-2025) and the AMT supplement.
+
+### 14.1 They do not define the ABL the way we do
+
+Castellnou Ribau et al. (2025) sec. 2.6:
+
+> *"The height of the maximum RH value is used as a criterion to estimate the height of the
+> atmospheric boundary layer. This criterion is based on the observation that specific humidity
+> tends to be well mixed in the convective boundary layer... reaching a peak at the inversion
+> level. Above this inversion, the air becomes drier and warmer, resulting in a decrease in RH."*
+
+A **moisture** criterion, where `bulk_richardson_abl_grid` is a **dynamic** one. Implemented as
+`atmosphere.max_rh_abl_grid` for comparison; the classifier still uses the Rib depth.
+
+### 14.2 The two agree when mixed and diverge when collapsed
+
+Across 59 ambient campaign sondes with both definitions resolvable:
+
+| Rib regime | n | max-RH / Rib |
+|:--|--:|--:|
+| Rib < 300 m (collapsed, stable) | 36 | **3.83x** |
+| Rib 300-800 m | 14 | 1.85x |
+| Rib > 800 m (well mixed) | 9 | **1.09x** |
+
+corr(log Rib, log ratio) = -0.41. The same split appears on the ICON-EU Tuscany grid:
+
+| 27/07 | Rib | max-RH | ratio | LCL/Rib | LCL/max-RH |
+|:--|--:|--:|--:|--:|--:|
+| 15Z (well mixed) | 1766 m | 2163 m | 1.14 | 1.00 | 0.86 |
+| 18Z (collapsed) | 225 m | **2198 m** | **9.37** | 4.37 | **0.55** |
+
+### 14.3 What it explains, and what it does not
+
+**The evening divergence (§3.2): explained.** At 18Z the median column moves from LCL/ABL 4.37
+-- far above the overshooting band, hence class 1 convection plume -- to **0.55**, inside the
+resilient-pyroCu band. That is GRAF's evening peak, produced by their own published definition
+with nothing tuned. The mechanism is visible in the numbers: the max-RH ABL is essentially
+unchanged from 15Z to 18Z (2163 -> 2198 m) because the *moisture* structure retains the
+daytime mixed layer after the thermal and dynamic structure has collapsed. It is, in effect,
+detecting the residual layer -- the same physics as item 5, reached by a different route.
+
+**The midday over-extent (§3.1): not explained.** At 15Z the definitions agree to 14 %, and the
+change moves the ratio *down* (1.00 -> 0.86), shifting overshooting toward resilient rather
+than reducing coverage. Consistent with §12.1: the midday gap is about fire-side conditioning,
+not the ABL.
+
+**Open item 10 is also implicated.** The decoupling ratio's collapsing denominator is a Rib
+artefact; a max-RH depth would not collapse at 18Z, so switching the denominator would remove
+most of that problem too.
+
+### 14.4 Caveat
+
+The source applies this criterion **visually**, with a human rejecting spurious maxima.
+`max_rh_abl_grid` is an automated analogue: it searches above a surface-layer floor and
+requires RH to fall by a set amount above the peak, without which a monotone profile returns
+its top level. On the campaign sondes it still picks implausibly low heights in a minority of
+columns. It should not be swapped into the classifier without a hand comparison against
+plotted profiles.
+
+## 15. Three definitional gaps -- the pattern to put to GRAF
+
+Each divergence traced to root cause has the same shape: **pyflam implements the atmospheric
+skeleton of the method, without the fire-side or observational inputs the method assumes.**
+
+| # | Gap | Consequence | Status |
+|:--|:--|:--|:--|
+| 1 | **ABL by max-RH** vs bulk Richardson | evening classes: convection plume vs resilient pyroCu | measured, §14 |
+| 2 | **In-fire levels** (fireLCL / fireABL / fireShear) vs ambient | our modelled fireABL reproduces the measured in-fire ratio in 5 of 7 sondes, but classes do not move because the cap clause dominates | measured, §12.2 |
+| 3 | **Fire-power conditioning** absent | midday coverage 65-90 % against isolated patches | unresolved, the larger gap |
+
+This pattern is a better opening with GRAF than any single number, because it is a question
+about *method*, not about their output: we have their published equations and their sondes, and
+what we lack is the fire-side data their classification consumes -- plume stage, plume updraft,
+and the fire behaviour (ROS, isochrones, FLI) their Table 2 lists as fire-service inputs.
+Neither the AMT supplement nor the Zenodo record publishes those; the radiosonde archive is
+profiles only. **That is the specific thing worth asking them for**, and it is a smaller and
+more answerable request than their gridded product.
+
+## 16. Provenance
 
 - GRAF map: `Tipus de piroconvecció - ICON-EU 26jul2026 00Z`, Bombers de la Generalitat de
   Catalunya, supplied as a WhatsApp image on 2026-07-26.
