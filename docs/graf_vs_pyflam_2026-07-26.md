@@ -799,7 +799,78 @@ portal's fire-level label attributes the 25th's behaviour to a 24th profile. Tes
 the 25 July sondes, which are separate Table S1 rows. It is the only fire with per-sonde
 types (Castellnou et al. 2022), so it is the one worth doing properly.
 
-## 19. Provenance
+## 21. Fuel load for the firepower estimate -- two routes reconciled
+
+Appendix D's firepower needs `w_a`, the fine fuel available for burning. Tory & Kepert give
+1.25-4 kg/m2 (Australian eucalypt) and use 9.4 for Chisholm (boreal). A 3.2x band is wider than
+the margins it is used to judge -- for Santa Coloma de Queralt it spanned the entire distance
+between clearing and not clearing its threshold -- so it had to be pinned.
+
+### 21.1 A route that does not work
+
+Deriving `w_a` from the portal's published flame length via Byram (`FLI = 258 L^2.17`, then
+`w_a = FLI / (H ROS)`) **fails**, and fails worst on the fires that matter. The relation is
+calibrated for surface flames of roughly 0.5-5 m; the portal reports 15-60 m plume heights for
+the plume-dominated fires, and extrapolating gives 92-1863 MW/m against the 4-50 MW/m
+Castellnou et al. (2022) actually observed. Inverted, that yields fuel loads of 93-763 kg/m2
+against a real range near 2. Where ROS is also small (Guissona, 12 m/h) the division explodes.
+Only low-intensity fires land sensibly (Patagual 0.68, Junquillos 0.42 kg/m2).
+
+### 21.2 Two routes that agree
+
+**From observed fire behaviour.** Inverting Byram through *published* FLI rather than
+flame-length-derived FLI:
+
+| fire / moment | FLI | ROS | w_a |
+|:--|--:|--:|--:|
+| Martorell M12 (pyroCu) | 11 MW/m | 1350 m/h | 1.96 kg/m2 |
+| SCQ51 (pyroCb) | 18 MW/m | 3300 m/h | 1.31 kg/m2 |
+| SCQ31 (pyroCu peak) | 47 MW/m | 3300 m/h | 3.42 kg/m2 |
+| campaign mean | 8.5 MW/m | 1500 m/h | 1.36 kg/m2 |
+
+Range 1.31-3.64, median ~2.0 kg/m2.
+
+**From the fuel models.** Scott & Burgan loads for Mediterranean shrub and timber-understory
+fuels, taking the **full grass/shrub load** -- 1h + 10h + live herb + live woody, not just the
+fine dead and herbaceous components -- and applying an **empirical +30 % Mediterranean-basin
+adjustment**:
+
+| model | full load | +30 % |
+|:--|--:|--:|
+| SH2 | 1.70 | **2.21** |
+| SH5 | 1.93 | **2.51** |
+| SH7 | 2.73 | **3.56** |
+| TU5 | 2.47 | **3.21** |
+
+The two routes land on the same value from independent directions.
+
+> **Provenance of the +30 %.** This is an empirical adjustment from operational use in the
+> Mediterranean basin (C. Foderi), not part of Scott & Burgan, applied as an upper bound on the
+> model load. It is recorded as a stated assumption rather than folded into a constant, because
+> it is a local calibration and should travel with that caveat.
+
+### 21.3 What was wrong in the first cross-check
+
+An earlier version of this analysis reported Scott & Burgan giving 0.2-0.9 kg/m2 and concluded
+the models understate Mediterranean fuel by 3x. That was an error on this side, twice over: the
+sum omitted the 10h and live-woody components that carry most of the load in shrub fuels, and a
+tons/acre conversion was applied to loads already stored in lb/ft2. Corrected, the models do not
+conflict with the fire-behaviour route -- they corroborate it.
+
+### 21.4 Effect
+
+`w_a = 2.0 kg/m2` (band 1.5-2.5) is now used in `docs/graf_fire_firepower_join.csv`,
+sourced from two agreeing routes rather than an assumed range. Uncertainty falls from 3.2x to
+about +/-25 %, and the consequence is to **close** the escape hatch rather than widen it:
+
+* **Guissona** 350 GW (262-438) against a 139 GW threshold -- clears comfortably, as an observed
+  pyroCb should.
+* **Santa Coloma de Queralt** ~26-33 GW against 66 GW -- still short by ~2x, and the narrowed
+  band no longer spans the boundary. The fuel load is no longer a candidate explanation; the
+  remaining one is that burn ratio is an hourly average while the pyroCb-generating head fire is
+  a short burst, which appendix D acknowledges ("averaged over the time period dt").
+
+## 22. Provenance
 
 - GRAF map: `Tipus de piroconvecció - ICON-EU 26jul2026 00Z`, Bombers de la Generalitat de
   Catalunya, supplied as a WhatsApp image on 2026-07-26.
