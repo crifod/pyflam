@@ -53,6 +53,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **ABL depth now uses the maximum-RH criterion, floored at the bulk-Richardson depth**
+  (`iconeu_diagnostics(abl_method="maxrh_floored")`, the new default; `"rib"` restores the
+  previous behaviour). This is the criterion the source method uses — Castellnou Ribau et al.
+  (2025) sec. 2.6 identify the boundary-layer top as the height of maximum relative humidity,
+  "supplemented with numerical calculations using the bulk Richardson number" — with that
+  supplement applied as a **floor** rather than a veto: a moisture maximum below the
+  dynamically diagnosed mixing top is not a capping inversion, which is the one failure mode
+  the automated maximum exhibits. An inversion-corroboration rule was tried and is strictly
+  worse (it rejects good picks along with bad, accepting only 42 % of columns).
+
+  **This changes every class in the product.** Against 26 ambient campaign sondes at
+  GRAF-labelled fires it lifts within-one-class agreement from 11/26 to 16/26 and cuts the
+  mean bias from +1.81 to +1.38; on the Tuscany grid at 15Z the ABL median goes 1863 → 2229 m
+  and land at ≥ pyroCu falls 85.7 % → 76.7 %. Two caveats travel with it: **exact agreement
+  does not improve** (2/26 either way) — the ladder remains well over a class hot and the
+  residual is fire-side conditioning, not the ABL — and the score is **in-sample**, since the
+  same 26 sondes were used to choose among the candidate rules. `abl_rib` is exported
+  alongside `abl` so the two can be compared in any product.
+
+  The ICON-2I pressure-level path is unchanged: a maximum-RH pick is meaningless on five
+  levels.
+
 - **The dry-pyrocloud reference fire is prescribed as a temperature excess, not a heat flux**
   (`_REFERENCE_THETA_EXCESS_K = 10.0`, replacing `_REFERENCE_FIRE_FLUX_W_M2 = 200`), and
   `fire_induced_abl_grid` accepts `theta_excess=` directly. Even dimensionally corrected, a

@@ -563,7 +563,7 @@ def export_diagnostics(diags, lat, lon):
         for name in ("abl", "parcel_ml", "lcl", "lcl_ratio", "ml_grad", "gamma", "rh_top",
                      "fireabl", "decoupling",
                      "residual_ml", "delta_theta", "firecape", "penetration",
-                     "pft_gw", "z_fc", "delta_theta_fc", "u_ml"):
+                     "pft_gw", "z_fc", "delta_theta_fc", "u_ml", "abl_rib"):
             if name not in diags[hi]:
                 continue
             arr = np.asarray(diags[hi][name], "float32")

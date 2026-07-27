@@ -732,7 +732,8 @@ def read_icon_eu(files, bbox, levels):
         orog=orog)
 
 
-def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True):
+def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True,
+                       abl_method="maxrh_floored"):
     """Profile diagnostics from an ICON-EU model-level stack (:func:`read_icon_eu`).
 
     Same output dict as :func:`profile_diagnostics` (``abl``, ``parcel_ml``, ``lcl``,
@@ -750,7 +751,7 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True)
         theta_kelvin, specific_humidity_from_rh, virtual_potential_temperature,
         saturation_vapour_pressure_pa, bulk_richardson_abl_grid, parcel_mixing_depth_grid,
         lcl_height_bolton_m, relative_humidity_from_dewpoint, DEFAULT_PYROCONV_THRESHOLDS,
-        shear_height_grid, shear_distance_grid, _EPSILON,
+        shear_height_grid, shear_distance_grid, _EPSILON, max_rh_abl_grid,
         entrainment_jump_grid, fire_cape_grid, residual_layer_grid,
         pyrocb_firepower_threshold_grid)
     th = thresholds or DEFAULT_PYROCONV_THRESHOLDS
@@ -769,8 +770,29 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True)
     theta_sfc = theta_kelvin(T2m - 273.15, ps / 100.0)
     thv_s = virtual_potential_temperature(theta_sfc, q_s)
 
-    abl = bulk_richardson_abl_grid(z, thv, U, V, theta_v_surface=thv_s,
-                                   wind_u_surface=U10, wind_v_surface=V10)
+    abl_rib = bulk_richardson_abl_grid(z, thv, U, V, theta_v_surface=thv_s,
+                                       wind_u_surface=U10, wind_v_surface=V10)
+    # ABL depth. Default "maxrh_floored": the maximum-RH criterion the source method uses
+    # (Castellnou Ribau et al. 2025 sec. 2.6), floored at the bulk-Richardson depth -- the
+    # "supplement with the bulk Richardson number" of that section, applied as a floor rather
+    # than a veto. A moisture maximum *below* the dynamically diagnosed mixing top is not a
+    # capping inversion, and rejecting those is what an analyst does by eye when reading the
+    # plotted profile; it is the only failure mode the automated maximum exhibits.
+    #
+    # Against the 26 ambient campaign sondes at GRAF-labelled fires this lifts within-one-class
+    # agreement from 11/26 to 16/26 and cuts the mean bias from +1.81 to +1.38 (docs/
+    # graf_vs_pyflam_2026-07-26.md sec. 17, 21). Two caveats travel with that: exact agreement
+    # does not improve (2/26 either way) -- the ladder remains well over a class hot, and the
+    # residual is fire-side conditioning, not the ABL -- and the score is in-sample, since the
+    # same 26 sondes were used to compare the candidate rules. Pass ``abl_method="rib"`` for
+    # the previous behaviour.
+    if abl_method == "maxrh_floored":
+        z_rh = max_rh_abl_grid(z, RH)
+        abl = np.where(np.isfinite(z_rh) & (z_rh >= abl_rib), z_rh, abl_rib)
+    elif abl_method == "rib":
+        abl = abl_rib
+    else:
+        raise ValueError(f"unknown abl_method {abl_method!r}; expected 'maxrh_floored' or 'rib'")
     parcel_ml = parcel_mixing_depth_grid(z, theta, theta_sfc)
     lcl = lcl_height_bolton_m(T2m, Td2m, ps)
 
@@ -858,7 +880,8 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True)
     pft = pyrocb_firepower_threshold_grid(z, T, d["P"], d["QV"], U, V,
                                           surface_pressure_pa=ps)
 
-    return dict(abl=abl, lcl=lcl, lcl_ratio=ratio, ml_grad=ml_grad, gamma=gamma,
+    return dict(abl=abl, abl_rib=abl_rib, lcl=lcl, lcl_ratio=ratio, ml_grad=ml_grad,
+                gamma=gamma,
                 rh_top=rh_top, shear_dist=shear_dist, valid=valid,
                 parcel_ml=parcel_ml, residual_ml=resid_ml, fireabl=fireabl,
                 decoupling=decoupling, delta_theta=delta_theta, firecape=firecape,
@@ -897,7 +920,8 @@ def regrid_diagnostics(diag, lat_src, lon_src, lat_dst, lon_dst, *, abl_min_m=AB
     """
     fields = ("abl", "lcl", "lcl_ratio", "ml_grad", "gamma", "rh_top", "parcel_ml",
               "shear_dist", "fireabl", "decoupling", "residual_ml", "delta_theta",
-              "firecape", "penetration", "pft_gw", "z_fc", "delta_theta_fc", "u_ml")
+              "firecape", "penetration", "pft_gw", "z_fc", "delta_theta_fc", "u_ml",
+              "abl_rib")
     out = {k: regrid_to(diag[k], lat_src, lon_src, lat_dst, lon_dst)
            for k in fields if k in diag}
     out["valid"] = (np.isfinite(out["abl"]) & np.isfinite(out["lcl_ratio"])

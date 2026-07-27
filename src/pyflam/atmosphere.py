@@ -1370,6 +1370,59 @@ def max_rh_abl_grid(height_agl_m, relative_humidity, *, zmin: float = 150.0,
     return np.where(ok, peak_z, np.nan)
 
 
+def inversion_height_grid(height_agl_m, theta, *, zmin: float = 150.0,
+                          zmax: float = 4000.0, min_grad: float = 2.0e-3):
+    """Height (m AGL) of the strongest potential-temperature gradient -- the capping inversion.
+
+    A structural marker independent of both the Richardson and maximum-RH criteria, used to
+    corroborate them (:func:`corroborated_abl_grid`). Returns ``nan`` where no layer in the
+    window reaches ``min_grad``, i.e. where there is no inversion worth calling a cap.
+    """
+    z = np.asarray(height_agl_m, float)
+    th = np.asarray(theta, float)
+    dz = np.diff(z, axis=0)
+    grad = np.divide(np.diff(th, axis=0), dz, out=np.full_like(dz, np.nan),
+                     where=np.abs(dz) > 1e-6)
+    mid = 0.5 * (z[:-1] + z[1:])
+    win = (mid >= zmin) & (mid <= zmax) & np.isfinite(grad)
+    cand = np.where(win, grad, -np.inf)
+    k = np.argmax(cand, axis=0)
+    best = np.take_along_axis(cand, k[None, ...], axis=0)[0]
+    hgt = np.take_along_axis(np.where(np.isfinite(mid), mid, np.nan), k[None, ...], axis=0)[0]
+    return np.where(win.any(axis=0) & (best >= min_grad), hgt, np.nan)
+
+
+def corroborated_abl_grid(height_agl_m, theta, relative_humidity, rib_abl_m, *,
+                          tol_frac: float = 0.35, **maxrh_kwargs):
+    """ABL depth using the maximum-RH criterion **where an inversion corroborates it**.
+
+    Castellnou Ribau et al. (2025) sec. 2.6 identify the boundary-layer top as the height of
+    maximum relative humidity, and state that they *"supplement this visually-based approach
+    with numerical calculations using the bulk Richardson number"* -- the two are meant to be
+    used together, not chosen between. That matters because the criterion is applied by a human
+    reading a plotted profile, who discards spurious maxima; an automated maximum does not, and
+    picks near-surface moisture peaks in a minority of columns.
+
+    Here the maximum-RH height is accepted only when it sits within ``tol_frac`` of the
+    strongest theta gradient in the column (:func:`inversion_height_grid`) -- the inversion it
+    is supposed to be detecting. Where the two disagree, or where no inversion is resolvable,
+    the bulk-Richardson depth is used instead. Returns ``(abl_m, from_max_rh)`` so a caller can
+    report what fraction of the domain each criterion supplied.
+
+    The tolerance is deliberately loose: the two markers measure different things (a moisture
+    maximum sits at the inversion *base*, the gradient maximum inside it), so this tests
+    agreement of structure, not of value.
+    """
+    z = np.asarray(height_agl_m, float)
+    rib = np.asarray(rib_abl_m, float)
+    z_rh = max_rh_abl_grid(z, relative_humidity, **maxrh_kwargs)
+    z_inv = inversion_height_grid(z, theta)
+    with np.errstate(invalid="ignore"):
+        agree = (np.isfinite(z_rh) & np.isfinite(z_inv)
+                 & (np.abs(z_rh - z_inv) <= tol_frac * np.maximum(z_inv, 1.0)))
+    return np.where(agree, z_rh, rib), agree
+
+
 def residual_layer_grid(height_agl_m, theta, *, search_max_m: float = 3000.0,
                         excess_k: float = _PARCEL_EXCESS_K, min_top_m: float = 200.0):
     """Residual-layer top (m AGL) -- the well-mixed depth left over after the CBL decays.
