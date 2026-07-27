@@ -669,13 +669,57 @@ skeleton of the method, without the fire-side or observational inputs the method
 
 This pattern is a better opening with GRAF than any single number, because it is a question
 about *method*, not about their output: we have their published equations and their sondes, and
-what we lack is the fire-side data their classification consumes -- plume stage, plume updraft,
-and the fire behaviour (ROS, isochrones, FLI) their Table 2 lists as fire-service inputs.
-Neither the AMT supplement nor the Zenodo record publishes those; the radiosonde archive is
-profiles only. **That is the specific thing worth asking them for**, and it is a smaller and
-more answerable request than their gridded product.
+what we lacked was the fire-side data their classification consumes.
 
-## 16. Provenance
+**Correction (2026-07-27): most of that data is already public.** The statement above --
+written when neither the AMT supplement nor the Zenodo archive carried fire behaviour -- was
+wrong. The **Wildfire Data Portal** (wildfiredataportal.eu, EWED/ODET, EU co-funded) publishes
+it per fire; see §16. What genuinely remains unavailable is the *plume-side* observation --
+plume stage and plume updraft speed -- which is derived from the in-plume sondes and the
+analyst's reading, not tabulated. That is the narrower thing to ask about.
+
+## 16. The Wildfire Data Portal -- the fire-side data, and the firepower distribution
+
+`wildfiredataportal.eu` exposes a REST catalogue (`/wp-json/wp/v2/fire`) of **27 fires**, of
+which **23 carry populated fire behaviour**: start hour (UTC), surface affected, rate of spread
+mean/max, **burn ratio mean/max in ha/h**, flame lengths head and flanks, torching fraction and
+spotting distance, plus a perimeter KMZ and, per fire, a run of the Wageningen **CLASS**
+mixed-layer model -- which makes that collaboration concrete rather than inferred.
+
+Burn ratio in ha/h is exactly the `dA/dt` of Tory & Kepert's appendix D, so firepower follows
+without any assumption of our own:
+
+    FP = alpha * h * w_a * dA/dt,   alpha = 0.7, h = 15 MJ/kg, w_a = 1.25-4 kg/m2
+
+| Fire | burn ratio | firepower (w_a 1.25-4) |
+|:--|--:|--:|
+| Guissona | 6000 ha/h | 219-700 GW |
+| Varnavas | 2750 ha/h | 100-321 GW |
+| Katsimidi | 2000 ha/h | 73-233 GW |
+| Pauls, El Valle 2 | ~780 ha/h | 28-91 GW |
+| Santa Coloma de Queralt | 450 ha/h | 16-53 GW |
+| Martorell | 90 ha/h | 3.3-10.5 GW |
+| Rojals (prescribed) | 0.2 ha/h | ~0 GW |
+
+Against published PFTs of 12-1240 GW and our Tuscany field at 17-166 GW, the distribution
+straddles the decision boundary rather than sitting to one side -- which is what a useful
+conditioning variable should do, and is the quantity the POTENTIAL map lacks entirely.
+
+**Guissona is excluded from any fit**: its 6000 ha/h is internally inconsistent with a reported
+ROS max of 12 m/h, and being the largest firepower in the set it would otherwise dominate.
+**Rojals** is a natural negative control -- a 0.97 ha prescribed burn at ~0 GW that should clear
+no threshold in any column.
+
+`docs/graf_fire_firepower_join.csv` joins this to the sonde archive: 22 sonde-fire pairs over 15
+distinct fires, each with date, start hour, area, ROS, burn ratio, firepower bounds and the
+sonde-derived Rib ABL / max-RH ABL / LCL. The §14 regime split reappears across these 15
+independent fires -- Rib pinned at 200-350 m in most rows while max-RH runs 300-3120 m.
+
+Remaining for the falsifiable PFT test: the column above sonde apex (631-7555 m here) spliced
+from ERA5 or ICON to reach the -20 C level. Dates and coordinates are known for every row, so
+that step is mechanical.
+
+## 17. Provenance
 
 - GRAF map: `Tipus de piroconvecció - ICON-EU 26jul2026 00Z`, Bombers de la Generalitat de
   Catalunya, supplied as a WhatsApp image on 2026-07-26.
