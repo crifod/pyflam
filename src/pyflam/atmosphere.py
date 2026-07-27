@@ -1495,11 +1495,29 @@ def pyrocb_firepower_threshold_grid(height_agl_m, temperature_k, pressure_pa,
     ps = np.asarray(surface_pressure_pa, float)
     shape = ps.shape
 
-    # --- 1. mixed layer: iterate depth until the ML-LCL sits inside it
-    depth = np.full(shape, 500.0)
+    # --- 1. mixed layer: iterate depth until the ML-LCL sits inside it.
+    #
+    # The window is measured from each column's own lowest usable level, not from 0 m. A
+    # gridded profile starts within ~10 m of the ground and the distinction is immaterial,
+    # but a radiosonde ascent can begin well above it -- the GRAF campaign's Guissona sonde
+    # starts at 840 m AGL -- and an absolute `z <= 500` window then selects *no* levels,
+    # making theta_ML nan and every subsequent beta fail. That produced a nan PFT which read
+    # as "no firepower suffices" when it actually meant "the mixed layer was never sampled".
     theta = theta_kelvin(T - 273.15, p / 100.0)
+    usable = np.isfinite(theta) & np.isfinite(q) & np.isfinite(z)
+    z_base = np.min(np.where(usable, z, np.inf), axis=0)
+    z_base = np.where(np.isfinite(z_base), z_base, 0.0)
+    depth = np.full(shape, 500.0)
     for _ in range(6):
-        w = (z <= depth[None, ...]) & np.isfinite(theta) & np.isfinite(q)
+        w = usable & (z <= (z_base + depth)[None, ...])
+        # Empty window (a coarse profile whose first level already clears the ML-LCL): fall
+        # back to the lowest usable level so the column still yields a mixed-layer state.
+        if not w.any():
+            w = usable & (z <= (z_base + 1e-6)[None, ...])
+        else:
+            empty = ~w.any(axis=0)
+            if empty.any():
+                w = w | (usable & empty[None, ...] & (z <= (z_base + 1e-6)[None, ...]))
         # linear-in-height weighting: entrained mass flux grows with height (eqs 15-16)
         wt = np.where(w, np.maximum(z, 1.0), 0.0)
         tot = np.maximum(wt.sum(0), 1e-9)
