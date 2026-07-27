@@ -566,9 +566,11 @@ saturate at midday and they do not, and no threshold adjustment reaches it.
 
 ### 12.6 Ranked by consequence
 
-1. **Missing fire-side inputs** — causes the 65-90 % vs isolated-patches extent gap.
-   Unresolved. Δθ and FireCAPE are the candidate proxies, but the penetration test is a no-op
-   today because the reference θ′ is 20 K against 0.1-13.1 K measured in-plume (§10.3).
+1. **Missing fire-side inputs** — causes the 65-90 % vs isolated-patches extent gap, now
+   measured independently of their maps as a **+1.4 to +1.8 class bias** against labelled
+   fires (§17). Unresolved. Δθ and FireCAPE are the candidate proxies; the penetration test
+   is a no-op at the reference θ′ (§10.3), and firepower is now computable per fire (§16)
+   but has not yet been made to condition the classification.
 2. **Ambient vs in-fire levels** — causes the evening disagreement. At 18Z the ambient ABL is
    230 m against a 1105 m LCL, so 98 % of columns exceed the overshooting threshold and fall
    to convection plume, while GRAF reaches pyroCb.
@@ -578,6 +580,9 @@ saturate at midday and they do not, and no threshold adjustment reaches it.
 5. **Resampling order, palette, class numbering** — presentational.
 
 ### 12.7 What remains unknown
+
+*(Partly superseded: §16 shows the fire behaviour data is public, and §17 measures the extent
+gap against labels rather than against their maps.)*
 
 - Whether GRAF applies an additional mask or condition in their gridded product. Their
   documented physics offers FireCAPE and the penetration test as candidates; we have no
@@ -719,7 +724,82 @@ Remaining for the falsifiable PFT test: the column above sonde apex (631-7555 m 
 from ERA5 or ICON to reach the -20 C level. Dates and coordinates are known for every row, so
 that step is mechanical.
 
-## 17. Provenance
+## 17. Ladder validation against GRAF's observed fire classes
+
+The strongest result here, and the one that no longer depends on reading their maps.
+
+The Wildfire Data Portal labels every fire with GRAF's own observed pyroconvection class.
+Running the pyflam ladder on each ambient campaign sonde and comparing to that label gives a
+direct test of the classifier against ground truth on real fires -- 26 sondes, ~15 distinct
+fires.
+
+| ABL definition | exact | within 1 class | **mean bias** |
+|:--|--:|--:|--:|
+| bulk Richardson (current default) | 2/26 (8 %) | 11/26 (42 %) | **+1.81** |
+| max-RH (theirs, §14) | 2/26 (8 %) | 16/26 (62 %) | **+1.38** |
+
+The error is systematic, not scattered: fires observed as *Convective plume* are repeatedly
+classified 4 (Vilanova de Meia, Vega Honda, Junquillos, Granyena, San Patricio). The single
+Deep pyroCu/pyroCb fire is classified correctly, which is what an over-predicting classifier
+does.
+
+**This converts §3.1 from an eyeball comparison against a JPEG into a measured defect.** The
+midday over-extent is not an artefact of comparing the wrong panel or misreading their
+colours -- the ladder runs 1.4 to 1.8 classes hot against labelled fires.
+
+**It independently supports §14.** Their ABL definition cuts the bias by 0.43 classes and
+lifts within-1 agreement from 42 % to 62 %, tested against labels rather than against their
+product. It helps materially; it does not close the gap.
+
+### 17.1 Why the bias is a lower bound
+
+Three caveats, of which the first *strengthens* the finding:
+
+1. **The label is the fire's peak class; the sonde samples one phase.** Predicting high scores
+   as correct against a peak label while being wrong about that moment. The measured +1.81 /
+   +1.38 therefore **understates** the true over-prediction.
+2. **The POTENTIAL framing explains part of it, but not enough.** Our ungated classification
+   assumes a pyroCu-capable fire, so over-prediction on a 0.97 ha prescribed burn is by
+   construction. But Granyena (6.9-22 GW), Vega Honda (6.2-19.8 GW) and Junquillos
+   (1.5-4.7 GW) were substantial fires observed as convective plumes, and we call them class 4.
+3. **n = 26 sondes but only ~15 distinct fires** -- San Patricio x3, Pauls x3, Granyena x2 --
+   so the effective sample is smaller than it looks.
+
+## 18. PFT against firepower on real fires -- inconclusive, and why
+
+With firepower from §16 and PFT from the spliced sonde + ERA5 column:
+
+| observed class | n | clears its PFT |
+|:--|--:|--:|
+| Surface plume | 3 | 0 |
+| Convective plume | 8 | 0 |
+| PyroCu / Overshooting / Resilient | 9 | 0 |
+| **Deep pyroCu / pyroCb (Guissona)** | 1 | **YES** -- 139 GW against 219-700 GW |
+
+19 correct negatives, 1 correct positive, 0 false positives. That reads well, but the test is
+weak: with one positive case it cannot demonstrate sensitivity, and a threshold that rarely
+fires achieves the same score trivially.
+
+Two methodological traps were found and fixed in the course of running it, both of which had
+produced wrong conclusions:
+
+* **ERA5 time.** The first run built every request from the *fire's start hour* and spliced it
+  onto a sonde launched hours later -- 4 h for Martorell, 6 h for SCQ, 5 h for Manuel
+  Rodriguez. Rebuilt at each sonde's own launch datetime from Table S1. This alone removed the
+  run's only false positive (Granyena).
+* **Mixed-layer window.** `pyrocb_firepower_threshold_grid` averaged over an absolute
+  `z <= 500 m`, which selects no levels on a sonde starting at 840 m AGL (Guissona), returning
+  a nan PFT that reads as "no firepower suffices". Guissona was reported on that basis as a
+  false negative of the method; it is not -- corrected, it clears its threshold, as an observed
+  pyroCb should.
+
+**Santa Coloma de Queralt remains unresolved.** Its sonde is from 24 July at 19:17, but
+Castellnou Fig. 6d places the pyroCb on the **25th** (SCQ51); the 24th was the pyroCu day. The
+portal's fire-level label attributes the 25th's behaviour to a 24th profile. Testing SCQ needs
+the 25 July sondes, which are separate Table S1 rows. It is the only fire with per-sonde
+types (Castellnou et al. 2022), so it is the one worth doing properly.
+
+## 19. Provenance
 
 - GRAF map: `Tipus de piroconvecció - ICON-EU 26jul2026 00Z`, Bombers de la Generalitat de
   Catalunya, supplied as a WhatsApp image on 2026-07-26.
