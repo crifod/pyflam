@@ -808,3 +808,31 @@ types (Castellnou et al. 2022), so it is the one worth doing properly.
   on all three days.
 - Method: Castellnou et al. (2022), *JGR-Atmos*; dry-pyrocloud diagnostic after Castellnou
   Ribau et al. (2024).
+
+## 20. Product reproducibility -- a hard operational limit
+
+Found while regenerating after the physics corrections. **DWD retains ICON-EU open data for
+about 24 hours.** On 2026-07-27 the 25 and 26 July 00Z runs both return HTTP 404; only the
+current day is fetchable.
+
+The consequence is that a hybrid product can only be regenerated **on the day it was made**.
+After that its rasters are frozen, whatever is later found wrong with the physics that produced
+them. Specifically:
+
+| product | state |
+|:--|:--|
+| `docs/forecast_2026-07-25_3day*/` | predates every correction; source data gone; **cannot be regenerated** |
+| `docs/forecast_2026-07-26_3day/` | carries the θ′ and nodata corrections, but predates the PFT wiring, so it has no `pft_gw` rasters; source data gone |
+| `docs/forecast_2026-07-27_3day/` | first product with the complete corrected physics |
+
+This is not a filing inconvenience. It means **published pyflam products carry the physics of
+the day they were run and cannot be brought forward**, so any error found later is permanent in
+the archive. Two implications worth acting on:
+
+* Products should record the commit they were generated at, so a reader can tell which
+  corrections they predate. Nothing in the current output does this.
+* Where a product matters beyond the day, the *inputs* need archiving alongside it -- the ICON
+  GRIB cache is ~8 GB per 3-day run, which is the real cost of reproducibility here.
+
+Until then the safe reading is that anything under `docs/forecast_2026-07-2{5,6}_*` is a
+historical artefact of superseded physics, not a current forecast.
