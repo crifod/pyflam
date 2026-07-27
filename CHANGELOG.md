@@ -116,6 +116,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Pre-release for field testing against real recorded wildfires. Integrates the
 fire-weather / FWI pipeline and the new dry-pyrocloud fire-induced boundary layer.
 
+> **Correction notice (2026-07-27).** The fireABL physics described below was
+> dimensionally wrong at release. `fire_parcel_theta_excess` computed `F / (rho * w0)`,
+> which carries units of J/kg rather than kelvin, and the result was added directly to a
+> potential temperature — overstating the plume excess by ~88×. The "recalibrated forcing"
+> credited below to `mixed_layer_fire_flux` was, in effect, a ~1/88 global coefficient
+> standing in for the missing specific heat capacity; that is why the validation quoted
+> "one global coefficient for the table's unit ambiguity" and why `r = 0.91` held while the
+> absolute scale did not. The `≤2.5 m` agreement with the reference pipeline reproduced the
+> reference's own error rather than validating the physics.
+>
+> Corrected in [Unreleased]. With `cp` restored the chain needs **no fitted coefficient**:
+> a 10 MW/m fire over a 1500 m ABL now yields θ′ = 1.31 K against 131 K before, inside the
+> 0.1–13.1 K band measured in real plumes by the GRAF campaign, and the resulting fireABL
+> tracks observed plume tops to a mean error of ~675 m across the campaign sondes. Anything
+> derived from the 0.2.0 fireABL magnitudes — including published decoupling rasters — should
+> be regenerated.
+
 ### Added
 
 - **Dry-pyrocloud fire-induced boundary layer.** `atmosphere.fire_induced_abl_grid`
