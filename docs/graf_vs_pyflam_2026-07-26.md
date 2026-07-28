@@ -870,6 +870,94 @@ about +/-25 %, and the consequence is to **close** the escape hatch rather than 
   remaining one is that burn ratio is an hourly average while the pyroCb-generating head fire is
   a short burst, which appendix D acknowledges ("averaged over the time period dt").
 
+## 21. The heat-impulse term: identified, and not yet usable
+
+The single most consequential threshold in the ladder is `lcl_ratio_overshoot_max = 1.60`, an
+upper bound on LCL/ABL with no citation in Castellnou et al. (2022). It terminates **16 of the
+26** labelled campaign sondes before any later gate is consulted -- more classifications than
+every other diagnostic combined.
+
+### 21.1 What it actually is
+
+The MARI reference port, which is where the value comes from, says so in a comment on that
+branch:
+
+> *"LCL sopra ABL ma non troppo lontano; **richiede un impulso di calore del fuoco, non
+> ricavabile dal solo ERA5**."*
+> -- the LCL above the ABL but not too far, which requires a heat impulse from the fire, not
+> obtainable from ERA5 alone.
+
+So 1.60 is not a geometric fact about the atmosphere. It is a **stand-in for the fire-power
+term**, placed where the fire-side data was missing, by an author who knew that is what he was
+doing. The same port heads its threshold block *"soglie operative iniziali"* -- initial
+operational thresholds -- and says of the cap pair *"non sono soglie universali"*.
+
+### 21.2 It is uncited and it works
+
+Tested against the observed classes on the adaptive ladder:
+
+| ceiling | exact | within 1 | bias |
+|--:|--:|--:|--:|
+| **1.60 (current)** | **11/26** | 20/26 | **-0.08** |
+| 3.00 | 9/26 | 21/26 | +0.04 |
+| 5.00 | 9/26 | 22/26 | +0.08 |
+| removed | 4/26 | 21/26 | +0.58 |
+
+Removing it collapses exact agreement and pushes the ladder half a class hot. The labels come
+from a 2025-26 publication and the value from an earlier port, so this behaves as out-of-sample
+corroboration rather than a fit.
+
+It misclassifies individual events -- Santa Coloma de Queralt, an observed pyroCb, sits at ratio
+12.8 and is called class 1 -- but raising the ceiling to admit it costs seven other fires. The
+ladder is trading errors, not simply making one.
+
+### 21.3 The explicit fire-power term does not beat it
+
+pyflam now has every piece needed to replace the proxy with the physics: a PyroCb Firepower
+Threshold verified against 5 of 6 published worked cases (§18), fuel load pinned to
+~1.5 kg/m2 by three independent routes (§20), and head-fire length measured from 20 fires.
+Substituting that chain for the ceiling, on the 22 sondes carrying a label, a spliced PFT and
+portal firepower:
+
+| variant | exact | within 1 | bias |
+|:--|--:|--:|--:|
+| **ceiling 1.60, no firepower gate** | **10/22** | 19/22 | **-0.36** |
+| ceiling removed, firepower vs PFT instead | 9/22 | 19/22 | -0.50 |
+| ceiling 1.60 *and* firepower gate | 9/22 | 19/22 | -0.50 |
+| ceiling 5.00 + firepower gate | 9/22 | 19/22 | -0.50 |
+
+**Every variant using the explicit term is worse than the crude proxy.** The ladder is already
+slightly cold on this subset, and the firepower gate suppresses further because almost nothing
+clears its threshold. A poorly estimated physical term loses to a well-behaved empirical one.
+
+### 21.4 Why the chain is too noisy, and what would fix it
+
+In the order worth attacking:
+
+1. **Firepower is a fire-level constant.** `burn_ratio_max` is the peak *hourly* figure for the
+   whole event, applied to a sonde from one moment. The plume a sonde samples may be an order
+   of magnitude weaker than the fire's peak hour. **The portal publishes hourly isochrones and
+   perimeter KMZs, so per-moment firepower is obtainable** -- match each sonde to the isochrone
+   interval containing its launch time. This is the single change most likely to move the
+   result.
+2. **The PFT is weakly validated** -- one clean positive (Guissona), no demonstrated
+   sensitivity, SCQ short by ~2x. A systematically biased threshold propagates into every class.
+3. **`w_a` and `L` are single values** (2.0 kg/m2, 700 m) across fires whose head-fire lengths
+   span 250-6100 m.
+
+### 21.5 Standing conclusion
+
+**`lcl_ratio_overshoot_max = 1.60` remains the best available implementation of the
+heat-impulse term** -- an uncited proxy that outperforms the derived physics built to replace
+it. That is not a comfortable result and it is not a permanent one, but it is the defensible
+position on the evidence, and it is a better place to argue from than not knowing which of the
+two is better.
+
+The corollary matters for how the rest of this document is read: several sections propose
+mechanisms that are better *motivated* than what they would replace. Motivation is not
+evidence. Every one of them should clear this bar -- 11/26 exact, -0.08 bias -- before it
+becomes a default.
+
 ## 22. Provenance
 
 - GRAF map: `Tipus de piroconvecció - ICON-EU 26jul2026 00Z`, Bombers de la Generalitat de
