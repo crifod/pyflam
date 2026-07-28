@@ -708,35 +708,76 @@ _SHEAR_MIN_LEVELS = 10
 class PyroconvThresholds:
     """Thresholds for the profile-based pyroconvection ladder.
 
-    Defaults follow the operational set used by the Castellnou-derived ICON-2I /
-    ERA5 products: a mixed layer is stable above ``ml_stable``; overshooting can
-    still occur in a slightly stable layer up to ``ml_overshoot_max``; a cap below
-    ``gamma_weak_cap`` lets a pyroCu deepen while one above ``gamma_strong_cap``
-    inhibits it (the paper brackets this with M11 at 4.2e-3 and SCQ41 at 5.1e-3);
-    classes 3-4 additionally require moist air at the ABL top and, where the shear
-    height is resolvable, a shear layer close to the ABL/LCL.
+    **Every field is annotated with its provenance**, in one of three grades, because the
+    defensibility of a classification is the defensibility of its weakest threshold and that
+    should be visible without archaeology:
+
+    * ``[PRIMARY]``  traceable to a peer-reviewed source, with the citation.
+    * ``[DERIVED]``  interpolated from a small number of published cases -- directionally
+      supported, but the exact value is a choice.
+    * ``[UNSOURCED]`` inherited from the reference (MARI) implementation with no citation
+      found in Castellnou et al. (2022) or its references. Retained because removing them
+      would change the ladder's structure, but they are **not** evidence and should not be
+      argued from.
+
+    No field is fitted to another group's product. One was -- ``rh_top_moist`` at 60 %, tuned
+    so the deep-pyroCb fraction matched the Catalan Bombers ICON-EU output for 2026-07-15 --
+    and it has been removed, because a threshold calibrated to a third party's forecast cannot
+    then be used as independent corroboration of it. See ``rh_top_moist`` below.
     """
 
-    # Castellnou et al. (2022) sec.2.4.1, after Liu & Liang (2010): unstable
-    # < 0.1e-3, stable > 1.1e-3, neutral in between. Neutral and unstable are both
-    # pyroCu-capable, so 1.1e-3 is the gate. (The 1.0e-3 used by the reference
-    # implementation is a transcription slip -- the paper says 1.1e-3.)
+    # [PRIMARY] Castellnou et al. (2022) sec. 2.4.1, after Liu & Liang (2010): unstable
+    # < 0.1e-3, stable > 1.1e-3, neutral between. Neutral and unstable are both pyroCu-capable,
+    # so 1.1e-3 is the gate. (The 1.0e-3 in the reference implementation is a transcription
+    # slip -- the paper says 1.1e-3.)
     ml_stable: float = 1.1e-3
+
+    # [UNSOURCED] No counterpart in Castellnou et al. (2022), which admits overshooting on a
+    # non-stable mixed layer without an upper bound on the gradient. Inherited from the MARI
+    # port.
     ml_overshoot_max: float = 3.0e-3
+
+    # [DERIVED] The paper brackets the deepening cap with two cases: M11 at 4.2e-3 (resilient,
+    # did not deepen) against SCQ51 at 3.9e-3 (deep pyroCb). Two points, so the boundary is
+    # located to within about that interval and no better.
     gamma_weak_cap: float = 4.2e-3
+    # [DERIVED] Upper bracket from SCQ41 at 5.1e-3 (strong cap, inhibited). The 4.8e-3 used
+    # here sits inside the gap between that case and gamma_weak_cap; the paper does not give it.
     gamma_strong_cap: float = 4.8e-3
+
+    # [PRIMARY] Castellnou et al. (2022) sec. 2.4.1 conditions on LCL/ABL *above or below 1*:
+    # "Values >1 or <1 point to turbulence above or below ABL."
+    lcl_ratio_resilient_max: float = 1.00
+    # [UNSOURCED] The paper gives no upper bound on the overshooting band, nor a separate
+    # ratio ceiling for the deep class. Both are MARI-port values. They matter: together they
+    # decide how far above the condensation level a column may sit and still be classified.
     lcl_ratio_overshoot_max: float = 1.60
     lcl_ratio_deep_max: float = 1.10
-    lcl_ratio_resilient_max: float = 1.00
+
+    # [UNSOURCED] The paper requires the shear maximum to sit *near* the ABL/LCL for the top
+    # class but gives no numeric distance; 0.30 is the MARI port's.
     shear_distance_deep: float = 0.30
-    # RH at the ABL top required for classes 3-4 (resilient/deep). The reference (MARI)
-    # port used 80%, but that is too strict for dry Mediterranean fire weather -- on a
-    # well-mixed summer afternoon only ~1-2% of columns pass it, gating pyroCu/pyroCb out
-    # exactly in the regime where they occur. Lowered to 60% (validated against the Catalan
-    # Bombers ICON-EU product for 2026-07-15: 60% brings the deep-pyroCb fraction into
-    # agreement, e.g. 3.0% vs their 3.4% at 15Z, and its spatial pattern over the ranges).
-    rh_top_moist: float = 60.0
+
+    # [UNSOURCED, was FITTED] RH at the ABL top required for classes 3-4.
+    #
+    # Restored to the reference (MARI) port's 80 % on 2026-07-28. It had been lowered to 60 %,
+    # and the justification recorded in this file was that 60 % "brings the deep-pyroCb
+    # fraction into agreement" with the Catalan Bombers ICON-EU product for a single day
+    # (2026-07-15, 3.0 % against their 3.4 % at 15Z). That is a fit to a third party's
+    # forecast on one day, and it sits on the gate for the two classes that matter, so any
+    # later agreement with that product was partly manufactured. Removed for that reason, not
+    # because 80 % is better supported -- it is not, it is equally uncited.
+    #
+    # The consequence is real and should be seen rather than tuned away: at 80 % only a small
+    # fraction of well-mixed Mediterranean afternoons pass, so classes 3-4 become rare in
+    # exactly the regime where pyroconvection occurs. If that is wrong, the fix is a moisture
+    # criterion with a physical basis -- not a number chosen to match someone's map.
+    rh_top_moist: float = 80.0
+
+    # [UNSOURCED] Used by the scalar :func:`pyroconvection_score`, not by the ladder.
     residual_score: float = 35.0
+
+    # [PYFLAM] Plausibility clips on the diagnosed depth, not classification thresholds.
     min_abl_m: float = _ABL_MIN_M
     max_abl_m: float = _ABL_MAX_M
 

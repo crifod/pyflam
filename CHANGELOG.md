@@ -53,6 +53,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Removed a threshold fitted to a third party's forecast, and annotated the provenance of
+  every remaining one.** `PyroconvThresholds.rh_top_moist` was lowered from 80 % to 60 %
+  because that "brings the deep-pyroCb fraction into agreement" with the Catalan Bombers
+  ICON-EU product on a single day (2026-07-15). That is a fit to someone else's output, on the
+  gate governing classes 3 and 4, which means any subsequent agreement with that product was
+  partly manufactured. Restored to 80 % — not because 80 % is better supported (it is equally
+  uncited) but because a fitted value cannot serve as independent corroboration.
+
+  Consequence, visible rather than tuned away: at 27/07 15Z over Tuscany, class 3 falls
+  30.1 % → 14.4 % and class 4 falls **5.0 % → 0.5 %**; total ≥ pyroCu is unchanged at 85.7 %,
+  since demoted cells land in class 2. If that is wrong, the fix is a moisture criterion with a
+  physical basis, not a number chosen to match a map.
+
+  Every field in `PyroconvThresholds` now carries a provenance grade: `[PRIMARY]` (traceable to
+  a peer-reviewed source, with citation), `[DERIVED]` (interpolated from a small number of
+  published cases), or `[UNSOURCED]` (inherited from the MARI reference port with no citation
+  found). The audit found that only `ml_stable` and `lcl_ratio_resilient_max` are primary; the
+  two cap brackets rest on two cases each; and `ml_overshoot_max`, `lcl_ratio_overshoot_max`,
+  `lcl_ratio_deep_max` and `shear_distance_deep` have no source in Castellnou et al. (2022) at
+  all. They are retained because removing them would change the ladder's structure, but they
+  are marked as not evidence.
+
 - **`max_rh_abl_grid` added and available as `iconeu_diagnostics(abl_method="maxrh_floored")`,
   but the bulk-Richardson depth remains the default.** The maximum-RH height is the criterion
   the source method uses (Castellnou Ribau et al. 2025 sec. 2.6, "supplemented with numerical
