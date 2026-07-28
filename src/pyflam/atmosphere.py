@@ -1361,6 +1361,77 @@ def fire_cape_grid(height_agl_m, theta_v, *, theta_excess, top_m=None):
     return np.where(any_ok, cape, np.nan)
 
 
+def plume_entrainment_fraction(lcl_m, z_fc_m, *, beta: float = 0.6):
+    """Mass fraction of environment entrained between cloud base and free convection.
+
+    A bent-over Briggs plume has radius ``R = beta * z`` and mass flux proportional to
+    ``R^2 U``, so rising from ``z1`` to ``z2`` its mass grows by ``(z2/z1)^2`` and the
+    entrained share of the final mass is ``1 - (z1/z2)^2``. (``beta`` cancels; it is kept in
+    the signature because the *form* is Briggs's and the reader should see which plume model
+    is being assumed.)
+
+    The interval is not a free choice. It runs from the **LCL**, below which there is no
+    condensate to evaporate, to the **free-convection height** ``z_fc``
+    (:func:`pyrocb_firepower_threshold_grid`), above which the parcel is buoyant on its own
+    and no longer depends on surviving entrainment. Both ends are already diagnosed, so this
+    closes :func:`critical_rh_for_cloud_persistence` with no additional parameter.
+
+    Assumes a bent-over plume. For an upright plume in weak wind the geometry differs, and
+    this is the least-settled part of the moisture criterion.
+    """
+    z1 = np.asarray(lcl_m, float)
+    z2 = np.asarray(z_fc_m, float)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        chi = 1.0 - (z1 / np.where(z2 > 0, z2, np.nan)) ** 2
+    return np.clip(chi, 0.05, 1.0)
+
+
+def critical_rh_for_cloud_persistence(theta_excess_k, temp_k, pressure_pa, *,
+                                      mixing_fraction: float = 1.0):
+    """Minimum ambient RH (%) for a plume cloud to survive entrainment -- derived, not assumed.
+
+    A pyrocloud that has condensed keeps its buoyancy only if the liquid water it carries is
+    not evaporated away by the sub-saturated air it entrains. Saturating a mass fraction
+    ``mixing_fraction`` of environmental air costs the parcel
+
+        ``dq   = q_s(T, p) * (1 - RH/100)``      moisture deficit of the entrained air
+        ``dth  = (Lv/cp) * mixing_fraction * dq``  latent cooling paid to close it
+
+    and the cloud persists while the plume's own buoyancy excess covers that cost. Setting
+    ``dth = theta_excess`` and solving for RH gives the criterion returned here:
+
+        ``RH_crit = 100 * (1 - theta_excess * cp / (Lv * mixing_fraction * q_s(T, p)))``
+
+    ``mixing_fraction = 1`` is equal-mass mixing, the conservative limit and the usual choice
+    in the cloud-top entrainment instability literature (Randall 1980; Deardorff 1980).
+
+    **Why this replaces a fixed threshold.** The ladder inherited a constant 80 % RH at the ABL
+    top for classes 3-4, with no citation in Castellnou et al. (2022); it had at one point been
+    lowered to 60 % to match a third party's forecast. Neither is a physical statement. Tory &
+    Kepert (2021) point at this derivation themselves -- their footnote 10 notes the buoyancy
+    buffer "would ideally vary with evaporation potential of entrained air (e.g., the difference
+    in specific humidity between the plume parcel and the environment)", after Peterson et al.
+    (2017) on mid-tropospheric humidity as a pyroCb control.
+
+    The criterion is **not** a constant: it falls with height as ``q_s`` falls, and falls as the
+    fire gets stronger. Evaluated against the plume excesses the GRAF campaign measured
+    (0.1-13.1 K, median 4.0), the inherited constants correspond to particular fire strengths
+    rather than to atmospheric physics -- 80 % is roughly a 6-8 K plume at 1-2 km, and 60 % is
+    a ~13 K plume, at the very top of the observed range. That is why 60 % over-produced the
+    deep class.
+
+    Returns RH in percent, clipped to [0, 100]. A cloud in air already at 100 % RH loses nothing
+    to evaporation, so the criterion is always satisfiable in a saturated environment.
+    """
+    thx = np.asarray(theta_excess_k, float)
+    t = np.asarray(temp_k, float)
+    p = np.asarray(pressure_pa, float)
+    es = saturation_vapour_pressure_pa(t)
+    qs = _EPSILON * es / np.maximum(p - (1.0 - _EPSILON) * es, 1.0)
+    denom = _LV * max(mixing_fraction, 1e-6) * np.maximum(qs, 1e-9)
+    return np.clip(100.0 * (1.0 - thx * _CP_DRY / denom), 0.0, 100.0)
+
+
 def max_rh_abl_grid(height_agl_m, relative_humidity, *, zmin: float = 150.0,
                     zmax: float = 4000.0, min_drop_pct: float = 2.0, smooth: int = 1):
     """ABL height (m AGL) as the height of maximum relative humidity -- the GRAF criterion.

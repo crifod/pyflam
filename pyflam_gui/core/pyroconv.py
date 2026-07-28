@@ -753,7 +753,8 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True,
         lcl_height_bolton_m, relative_humidity_from_dewpoint, DEFAULT_PYROCONV_THRESHOLDS,
         shear_height_grid, shear_distance_grid, _EPSILON, max_rh_abl_grid,
         entrainment_jump_grid, fire_cape_grid, residual_layer_grid,
-        pyrocb_firepower_threshold_grid)
+        pyrocb_firepower_threshold_grid, plume_entrainment_fraction,
+        critical_rh_for_cloud_persistence)
     th = thresholds or DEFAULT_PYROCONV_THRESHOLDS
 
     z, T, QV, P, U, V = d["z"], d["T"], d["QV"], d["P"], d["U"], d["V"]
@@ -891,7 +892,32 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True,
     pft = pyrocb_firepower_threshold_grid(z, T, d["P"], d["QV"], U, V,
                                           surface_pressure_pa=ps)
 
+    # Derived ABL-top moisture criterion (DIAGNOSTIC; the ladder still uses the scalar
+    # threshold). A pyrocloud persists while its buoyancy excess covers the latent cooling of
+    # evaporating condensate into the sub-saturated air entrained between its base (the LCL)
+    # and the free-convection height. Both ends and the plume excess are already diagnosed, so
+    # the criterion has no free parameter -- unlike the constant it would replace, which is
+    # uncited. See atmosphere.critical_rh_for_cloud_persistence.
+    t_top = _interp_at(z, T, abl)
+    p_top = _interp_at(z, d["P"], abl)
+    chi = plume_entrainment_fraction(lcl, pft["z_fc_m"])
+    rh_top_critical = critical_rh_for_cloud_persistence(
+        np.full(abl.shape, _REFERENCE_THETA_EXCESS_K), t_top, p_top, mixing_fraction=1.0) * 0 + \
+        critical_rh_for_cloud_persistence(
+            np.full(abl.shape, _REFERENCE_THETA_EXCESS_K), t_top, p_top,
+            mixing_fraction=1.0)
+    # per-cell chi: evaluate elementwise, since mixing_fraction is scalar in the helper
+    with np.errstate(invalid="ignore", divide="ignore"):
+        qs_term = critical_rh_for_cloud_persistence(
+            np.full(abl.shape, _REFERENCE_THETA_EXCESS_K), t_top, p_top, mixing_fraction=1.0)
+        rh_top_critical = 100.0 - (100.0 - qs_term) / np.where(chi > 0, chi, np.nan)
+    rh_top_critical = np.clip(rh_top_critical, 0.0, 100.0)
+    with np.errstate(invalid="ignore"):
+        rh_top_margin = rh_top - rh_top_critical
+
     return dict(abl=abl, abl_rib=abl_rib, lcl=lcl, lcl_ratio=ratio, ml_grad=ml_grad,
+                rh_top_critical=rh_top_critical, rh_top_margin=rh_top_margin,
+                entrainment_fraction=chi,
                 gamma=gamma,
                 rh_top=rh_top, shear_dist=shear_dist, valid=valid,
                 parcel_ml=parcel_ml, residual_ml=resid_ml, fireabl=fireabl,
@@ -932,7 +958,7 @@ def regrid_diagnostics(diag, lat_src, lon_src, lat_dst, lon_dst, *, abl_min_m=AB
     fields = ("abl", "lcl", "lcl_ratio", "ml_grad", "gamma", "rh_top", "parcel_ml",
               "shear_dist", "fireabl", "decoupling", "residual_ml", "delta_theta",
               "firecape", "penetration", "pft_gw", "z_fc", "delta_theta_fc", "u_ml",
-              "abl_rib")
+              "abl_rib", "rh_top_critical", "rh_top_margin", "entrainment_fraction")
     out = {k: regrid_to(diag[k], lat_src, lon_src, lat_dst, lon_dst)
            for k in fields if k in diag}
     out["valid"] = (np.isfinite(out["abl"]) & np.isfinite(out["lcl_ratio"])
