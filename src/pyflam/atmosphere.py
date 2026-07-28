@@ -716,9 +716,15 @@ class PyroconvThresholds:
     * ``[DERIVED]``  interpolated from a small number of published cases -- directionally
       supported, but the exact value is a choice.
     * ``[UNSOURCED]`` inherited from the reference (MARI) implementation with no citation
-      found in Castellnou et al. (2022) or its references. Retained because removing them
-      would change the ladder's structure, but they are **not** evidence and should not be
-      argued from.
+      found in Castellnou et al. (2022) or its references. That port heads its own threshold
+      block *"soglie operative iniziali"* -- initial operational thresholds -- and says of the
+      cap pair *"non sono soglie universali"*. They are first guesses, by their author's own
+      account.
+
+    A grade is about **derivation**, not performance, and the two can disagree. Where a
+    threshold has been tested against observed outcomes the result is recorded beside it: an
+    uncited value that survives contact with data is a stronger thing to stand on than a cited
+    one that has never been checked. ``lcl_ratio_overshoot_max`` is the case in point.
 
     No field is fitted to another group's product. One was -- ``rh_top_moist`` at 60 %, tuned
     so the deep-pyroCb fraction matched the Catalan Bombers ICON-EU output for 2026-07-15 --
@@ -748,10 +754,34 @@ class PyroconvThresholds:
     # [PRIMARY] Castellnou et al. (2022) sec. 2.4.1 conditions on LCL/ABL *above or below 1*:
     # "Values >1 or <1 point to turbulence above or below ABL."
     lcl_ratio_resilient_max: float = 1.00
-    # [UNSOURCED] The paper gives no upper bound on the overshooting band, nor a separate
-    # ratio ceiling for the deep class. Both are MARI-port values. They matter: together they
-    # decide how far above the condensation level a column may sit and still be classified.
+    # [UNSOURCED, but CORROBORATED] The paper gives no upper bound on the overshooting band.
+    # 1.60 is the MARI port's, uncited -- and it decides more classifications than every other
+    # diagnostic combined: on the 26 ambient campaign sondes at labelled fires it terminates 16
+    # of 26 columns before any later gate is consulted.
+    #
+    # Tested against those labels on the adaptive ladder, it is nonetheless the best value
+    # available:
+    #
+    #     ceiling 1.60   11/26 exact, 20/26 within one class, bias -0.08   <- current
+    #     ceiling 3.00    9/26 exact, 21/26 within one,       bias +0.04
+    #     ceiling 5.00    9/26 exact, 22/26 within one,       bias +0.08
+    #     removed         4/26 exact, 21/26 within one,       bias +0.58
+    #
+    # Removing it collapses exact agreement and pushes the ladder half a class hot. The labels
+    # come from a 2025-26 publication and the value from an earlier port, so on this sample it
+    # behaves as out-of-sample corroboration rather than a fit. It does misclassify individual
+    # events -- Santa Coloma de Queralt, an observed pyroCb, sits at ratio 12.8 and is called
+    # class 1 -- but raising the ceiling to admit it costs seven other fires. The ladder is
+    # trading errors here, not simply making one.
+    #
+    # What it *is* becomes clear from the MARI port's own comment on this branch: "LCL sopra
+    # ABL ma non troppo lontano; richiede un impulso di calore del fuoco, non ricavabile dal
+    # solo ERA5" -- the LCL above the ABL but not too far, which **requires a heat impulse from
+    # the fire, not obtainable from ERA5 alone**. 1.60 is a geometric stand-in for the fire-power
+    # term, placed where the fire-side data was missing. Any explicit fire-power conditioning
+    # that replaces it has to beat 11/26 exact and -0.08 bias to be an improvement.
     lcl_ratio_overshoot_max: float = 1.60
+    # [UNSOURCED] Separate ratio ceiling for the deep class; also a MARI-port value.
     lcl_ratio_deep_max: float = 1.10
 
     # [UNSOURCED] The paper requires the shear maximum to sit *near* the ABL/LCL for the top
