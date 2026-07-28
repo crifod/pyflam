@@ -995,22 +995,104 @@ is precisely what GRAF holds operationally and what the published table does not
 a concrete, answerable request to put to them, and it is a better one than the definitional
 questions in §15 because it names the exact variable.
 
-### 21.6 Standing conclusion
+### 21.6 The metric was flattering the ladder
 
-**`lcl_ratio_overshoot_max = 1.60` remains the default**, but the reason has changed and is
-worth stating precisely. It is *not* that the empirical proxy outperforms the physics -- with
-the PFT actually resolving, the explicit gate edges ahead. It is that **the available labels
-cannot resolve the comparison**: the one metric that separates the variants is decided by two
-sondes of one fire, and the physically preferable variant is penalised by a timescale mismatch
-built into the label set.
+§21.5 concluded that validating a moment-level gate needs per-launch observed classes. **That
+data does not exist outside GRAF's operational records and is not obtainable.** Rather than
+stall, the constraint was attacked from the other side -- and doing so exposed a problem with
+the bar itself.
 
-That is a stronger position than the previous one. The proxy is retained on an argued
-measurement limitation with a named remedy, not on an unexplained empirical win.
+Exact agreement is a poor metric on a sample this imbalanced. The 27 sondes carry
+`{0: 6, 1: 10, 2: 7, 3: 2, 4: 2}`:
 
-The corollary for the rest of this document stands, with the bar re-measured on the corrected
-27-sonde sample: several sections propose mechanisms better *motivated* than what they would
-replace. Motivation is not evidence. Each should clear **12/27 exact, +0.04 bias** -- and clear
-it by more than two sondes of one fire -- before becoming a default.
+| | value |
+|:--|--:|
+| majority-class baseline (always predict 1) | 10/27 = **37 %** |
+| ladder exact agreement | 12/27 = **44 %** |
+| ladder predicts class 1 for | **20 of 27** sondes |
+| ladder rank correlation with observed class | **rho = -0.18** (p = 0.37) |
+
+The ladder is close to a constant predictor, and its *ordering* of fires by severity is
+slightly **anti**-correlated with truth. The "12/27 exact" bar that §21.2-21.5 measured
+everything against is barely above guessing the modal class. A metric that rewards a
+near-constant predictor cannot adjudicate between a proxy and a physical term.
+
+### 21.7 Capability margin: a fire-level test that needs no labels
+
+Both sides of the comparison are made fire-level, so the published fire-level labels are
+commensurable with the prediction. The sonde supplies the atmosphere; the isochrones supply the
+fire's **maximum** growth over its active life. The PFT is then inverted into the quantity that
+makes the two directly comparable (`atmosphere.critical_growth_rate_grid`):
+
+```
+dA/dt_crit = PFT / (alpha * h * w_a)        # ha/h this atmosphere demands for pyroCb
+margin     = log10(dA/dt_observed / dA/dt_crit)
+```
+
+Continuous, so **every** sonde contributes rather than only the 3 where a binary gate fires:
+
+| predictor | rho | p |
+|:--|--:|--:|
+| capability margin, +/-8 h window | **+0.32** | 0.14 |
+| capability margin, +/-4 h | +0.29 | 0.17 |
+| capability margin, +/-2 h | +0.26 | 0.23 |
+| capability margin, whole fire | +0.20 | 0.37 |
+| ladder prediction | -0.18 | 0.37 |
+
+Not significant -- but positive, stable across windows, and better than what it would replace.
+
+The binary form is cleaner: **margin > 0 flags exactly one fire of 22, Guissona, which is the
+campaign's clearest pyroCb.** TP 1, FP 0, FN 1, TN 20 (one-tailed Fisher p = 0.091). The single
+fire the physics says exceeded its atmospheric requirement is the one that produced a pyroCb.
+The miss is Santa Coloma de Queralt, already documented in §18 as the case where PFT runs ~2x
+short.
+
+**Honest limit:** 27 sondes come from 15 fires, so the effective n is ~15 and every p-value
+above is optimistic. Nothing here is statistically established, and the margin is *not* wired
+into the ladder.
+
+### 21.8 Why this is the durable form
+
+`crit_growth_ha_h` is now exported per cell by the daily product. Three properties matter, and
+none depend on anyone's labels:
+
+1. **Operationally legible.** "This atmosphere needs 3188 ha/h for pyroCb" is directly usable by
+   a fire analyst, unlike a dimensionless LCL/ABL ratio.
+2. **Falsifiable against data that already exists.** Every fire with a published perimeter time
+   series tests it. Fire services publish those routinely; hand-labelled plume classes are held
+   by a handful of groups.
+3. **Self-validating.** The evidence base grows on its own, with no labelling step and no
+   dependency on the group whose work this is meant to be discussed with.
+
+That last point is the substantive gain. The validation path no longer runs through a dataset
+that has to be requested.
+
+### 21.9 Standing conclusion
+
+**`lcl_ratio_overshoot_max = 1.60` remains the default**, but for a third and much narrower
+reason than either previous version of this section gave. It is *not* that the proxy
+outperforms the physics -- with the PFT actually resolving, the explicit gate edges ahead
+(§21.3). It is *not* only the timescale mismatch (§21.5). It is that **on this sample the
+ladder itself has no demonstrated ranking skill**, so nothing in it is presently defensible on
+evidence, the ceiling included. The proxy is retained because replacing one unvalidated
+predictor with another is not progress -- not because it has earned its place.
+
+That is a weaker claim about the ladder and a stronger position to argue from. What has
+actually been established:
+
+* the ceiling is a stand-in for the fire-power term, and its author said so (§21.1);
+* the fire-side chain that would replace it is now fully measured -- PFT, fuel load, growth
+  rate -- and no longer the weak link (§21.3-21.4);
+* the label set cannot adjudicate the two, and exact agreement on it rewards a near-constant
+  predictor (§21.6);
+* a fire-level capability margin ranks in the right direction and picks out the one fire that
+  exceeded its atmospheric requirement, with no false positives (§21.7).
+
+The corollary for the rest of this document changes accordingly. **Do not use 12/27 exact as a
+bar** -- it is 7 points above a majority-class baseline and anti-correlated with severity.
+Proposed mechanisms should be judged on rank correlation against observed severity, on
+out-of-sample behaviour, and above all on whether they emit a quantity that routinely published
+data can falsify. §21.8 is the template.
 
 ## 22. Provenance
 

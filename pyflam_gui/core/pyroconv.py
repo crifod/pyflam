@@ -82,6 +82,9 @@ PYROCONV_NODATA = -1
 # on the 4 usable campaign observations (mean |error| 1156 m against observations of
 # 371-2850 m). The forcing is now on measured ground; the model it feeds is not yet skilful.
 _REFERENCE_THETA_EXCESS_K = 10.0
+# Tuscany 10 m FBFM40 median available load (scripts/fuel_load_10m.py); used where no
+# fuel map is supplied, so the critical growth rate is always defined.
+_DEFAULT_FUEL_LOAD_KG_M2 = 1.49
 
 # Profile path: the levels the ICON-2I open-data archive publishes below 500 hPa.
 PROFILE_LEVELS = (1000, 925, 850, 700, 500)
@@ -754,6 +757,7 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True,
         shear_height_grid, shear_distance_grid, _EPSILON, max_rh_abl_grid,
         entrainment_jump_grid, fire_cape_grid, residual_layer_grid,
         pyrocb_firepower_threshold_grid, plume_entrainment_fraction,
+        critical_growth_rate_grid,
         critical_rh_for_cloud_persistence)
     th = thresholds or DEFAULT_PYROCONV_THRESHOLDS
 
@@ -915,7 +919,16 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True,
     with np.errstate(invalid="ignore"):
         rh_top_margin = rh_top - rh_top_critical
 
+    # The PFT expressed as the area growth rate this atmosphere demands for pyroCb. Same
+    # physics, but in a unit an analyst can act on and that published perimeter time series can
+    # falsify without any hand-labelled plume class -- see atmosphere.critical_growth_rate_grid.
+    # Computed on the default fuel load; callers holding a fuel map recompute per cell (see
+    # tests/pyroconv_daily.py), since the sampling happens there.
+    crit_growth = critical_growth_rate_grid(pft["pft_gw"],
+                                            fuel_load_kg_m2=_DEFAULT_FUEL_LOAD_KG_M2)
+
     return dict(abl=abl, abl_rib=abl_rib, lcl=lcl, lcl_ratio=ratio, ml_grad=ml_grad,
+                crit_growth_ha_h=crit_growth,
                 rh_top_critical=rh_top_critical, rh_top_margin=rh_top_margin,
                 entrainment_fraction=chi,
                 gamma=gamma,

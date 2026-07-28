@@ -1772,6 +1772,55 @@ def pyrocb_firepower_threshold_grid(height_agl_m, temperature_k, pressure_pa,
                 theta_ml_k=th_ml, q_ml=q_ml, ml_depth_m=depth)
 
 
+def critical_growth_rate_grid(pft_gw, *, fuel_load_kg_m2=1.49,
+                              combustion_efficiency: float = 0.7,
+                              heat_of_combustion: float = 15.0e6):
+    """Area growth rate (ha/h) this atmosphere demands for pyroCb -- the PFT, inverted.
+
+    Tory & Kepert's appendix D writes firepower as ``FP = alpha * h * w_a * dA/dt``. Every
+    term but ``dA/dt`` is measurable, so setting ``FP = PFT`` and solving gives the growth
+    rate at which a fire in *this* atmosphere reaches the pyroCb threshold::
+
+        dA/dt_crit = PFT / (alpha * h * w_a)
+
+    This is the same physics as :func:`pyrocb_firepower_threshold_grid` expressed in a unit an
+    analyst can act on and, more importantly, one that **routinely published data can falsify**.
+    Fire services publish perimeter time series; hand-labelled plume classes are scarce and held
+    by a few groups. Scoring a forecast as "this atmosphere needed 3188 ha/h, the fire reached
+    7869" accumulates evidence from any mapped fire, with no labelling step.
+
+    That matters because the label-based comparison is currently undecidable. On the 27 Catalan
+    campaign sondes the ladder predicts class 1 for 20 of them -- 44% exact against a 37%
+    majority-class baseline, and a *negative* rank correlation with the observed class. The
+    capability margin ``log10(dA/dt_observed / dA/dt_crit)`` ranks better (rho +0.32) and flags
+    exactly one fire of 22 as capable, which is the campaign's clearest pyroCb, with no false
+    positives. Neither result is significant at that sample size (~15 independent fires); see
+    docs/graf_vs_pyflam_2026-07-26.md sec. 21.7.
+
+    ``fuel_load_kg_m2`` defaults to the Tuscany 10 m FBFM40 median (:mod:`scripts.fuel_load_10m`)
+    and should be passed per cell where a fuel map is available. ``alpha`` and the heat of
+    combustion are the paper's values.
+
+    Returns ha/h; ``nan`` propagates from an unresolved PFT.
+    """
+    pft = np.asarray(pft_gw, dtype=float)
+    w_a = np.asarray(fuel_load_kg_m2, dtype=float)
+    denom = combustion_efficiency * heat_of_combustion * np.where(w_a > 0, w_a, np.nan)
+    return pft * 1.0e9 / denom * 3600.0 / 1.0e4        # m2/s -> ha/h
+
+
+def capability_margin(growth_rate_ha_h, critical_growth_rate_ha_h):
+    """``log10(observed / critical)`` -- how far a fire is from this atmosphere's pyroCb bar.
+
+    Zero is the threshold, positive means the fire exceeded what the atmosphere demanded. Kept
+    logarithmic because the two sides span four orders of magnitude across the campaign fires.
+    """
+    obs = np.asarray(growth_rate_ha_h, dtype=float)
+    crit = np.asarray(critical_growth_rate_ha_h, dtype=float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.log10(np.where(obs > 0, obs, np.nan) / np.where(crit > 0, crit, np.nan))
+
+
 def shear_height_grid(height_agl_m, wind_u, wind_v, *, zmin: float = 200.0,
                       zmax: float = 6000.0):
     """Height (m AGL) of maximum vector wind shear over a grid, from consecutive levels.

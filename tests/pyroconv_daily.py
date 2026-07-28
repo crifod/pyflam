@@ -44,6 +44,7 @@ from pyproj import Transformer
 import pyflam
 from pyflam import units, fuel_models
 from pyflam.atmosphere import (
+    critical_growth_rate_grid,
     equilibrium_moisture_content, relative_humidity_from_dewpoint,
     fetch_icon2i_mistral, fetch_icon_eu, ICON2I_PROFILE_FIELDS, ICON_EU_MODEL_LEVELS,
     PYROCONVECTION_TYPES, PYROCONVECTION_TYPE_LEVEL,
@@ -564,7 +565,8 @@ def export_diagnostics(diags, lat, lon):
                      "fireabl", "decoupling",
                      "residual_ml", "delta_theta", "firecape", "penetration",
                      "pft_gw", "z_fc", "delta_theta_fc", "u_ml", "abl_rib",
-                     "fuel_load", "burnable_fraction", "firepower_gw", "pft_margin"):
+                     "fuel_load", "burnable_fraction", "firepower_gw", "pft_margin",
+                     "crit_growth_ha_h"):
             if name not in diags[hi]:
                 continue
             arr = np.asarray(diags[hi][name], "float32")
@@ -699,6 +701,11 @@ def main():
         if fuel_load is not None:
             diag["fuel_load"] = fuel_load
             diag["burnable_fraction"] = burn_frac
+            # Recompute the critical growth rate on the mapped load, replacing the default
+            # constant the compute core had to assume (it does not see the fuel map).
+            if "pft_gw" in diag:
+                diag["crit_growth_ha_h"] = critical_growth_rate_grid(
+                    diag["pft_gw"], fuel_load_kg_m2=fuel_load)
         if gate and hi < len(gate) and "pft_gw" in diag:
             fli_w_m = fli_by_hour[hi] * 1.0e3                    # kW/m -> W/m
             fp_gw = _CONVECTIVE_FRACTION * fli_w_m * _HEADFIRE_LENGTH_M / 1.0e9

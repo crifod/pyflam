@@ -487,3 +487,28 @@ def test_state_at_with_scalar_time_coordinate():
     st = prov.state_at(40.9, 11.2, time=datetime(2026, 6, 24, 14, 0))
     assert st.relative_humidity == pytest.approx(30.0)
     assert st.temperature == pytest.approx(305.0 - 273.15, abs=0.1)
+
+
+def test_critical_growth_rate_inverts_the_pft():
+    """dA/dt_crit must round-trip Tory & Kepert appendix D: FP = alpha * h * w_a * dA/dt."""
+    import numpy as np
+    from pyflam.atmosphere import critical_growth_rate_grid, capability_margin
+
+    pft_gw, w_a, alpha, h = 139.0, 1.49, 0.7, 15.0e6
+    crit = float(critical_growth_rate_grid(np.array([pft_gw]), fuel_load_kg_m2=w_a)[0])
+
+    # feeding the critical rate back through appendix D must return the PFT
+    fp_gw = alpha * h * w_a * (crit * 1.0e4 / 3600.0) / 1.0e9
+    assert fp_gw == pytest.approx(pft_gw, rel=1e-9)
+
+    # Guissona: 139 GW threshold -> ~3.2 kha/h, and its observed 7869 ha/h clears it
+    assert 3100.0 < crit < 3300.0
+    assert capability_margin(7869.0, crit) == pytest.approx(0.39, abs=0.02)
+    assert capability_margin(358.0, crit) < 0.0        # Santa Coloma does not
+
+    # a richer fuel bed lowers the growth rate the same atmosphere demands
+    assert float(critical_growth_rate_grid(np.array([pft_gw]), fuel_load_kg_m2=3.0)[0]) < crit
+
+    # nan PFT (profile too shallow to reach the free-convection height) propagates
+    assert np.isnan(critical_growth_rate_grid(np.array([np.nan]))[0])
+    assert np.isnan(capability_margin(0.0, crit))      # a fire with no growth has no margin
