@@ -53,28 +53,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **ABL depth now uses the maximum-RH criterion, floored at the bulk-Richardson depth**
-  (`iconeu_diagnostics(abl_method="maxrh_floored")`, the new default; `"rib"` restores the
-  previous behaviour). This is the criterion the source method uses — Castellnou Ribau et al.
-  (2025) sec. 2.6 identify the boundary-layer top as the height of maximum relative humidity,
-  "supplemented with numerical calculations using the bulk Richardson number" — with that
-  supplement applied as a **floor** rather than a veto: a moisture maximum below the
-  dynamically diagnosed mixing top is not a capping inversion, which is the one failure mode
-  the automated maximum exhibits. An inversion-corroboration rule was tried and is strictly
-  worse (it rejects good picks along with bad, accepting only 42 % of columns).
+- **`max_rh_abl_grid` added and available as `iconeu_diagnostics(abl_method="maxrh_floored")`,
+  but the bulk-Richardson depth remains the default.** The maximum-RH height is the criterion
+  the source method uses (Castellnou Ribau et al. 2025 sec. 2.6, "supplemented with numerical
+  calculations using the bulk Richardson number"), here with the supplement applied as a floor
+  — a moisture maximum below the dynamically diagnosed mixing top is not a capping inversion.
 
-  **This changes every class in the product.** Against 26 ambient campaign sondes at
-  GRAF-labelled fires it lifts within-one-class agreement from 11/26 to 16/26 and cuts the
-  mean bias from +1.81 to +1.38; on the Tuscany grid at 15Z the ABL median goes 1863 → 2229 m
-  and land at ≥ pyroCu falls 85.7 % → 76.7 %. Two caveats travel with it: **exact agreement
-  does not improve** (2/26 either way) — the ladder remains well over a class hot and the
-  residual is fire-side conditioning, not the ABL — and the score is **in-sample**, since the
-  same 26 sondes were used to choose among the candidate rules. `abl_rib` is exported
-  alongside `abl` so the two can be compared in any product.
+  It was briefly made the default and then reverted, because measured on the ladder this
+  product actually runs it is worse. Against 26 ambient campaign sondes at GRAF-labelled fires,
+  on the **adaptive** ladder (which resolves to the 5-diagnostic `shear` path in 51 of 52
+  cases): `rib` gives 11/26 exact and mean bias **+0.12**, `maxrh_floored` 7/26 and **+0.58**.
+  The ordering reverses on the 3-diagnostic `castellnou` ladder (+1.38 against +1.81), which is
+  what an earlier analysis measured — and got wrong by validating a ladder the product does not
+  use. A deeper ABL shifts both the cap layer and the RH-top window upward, and on the adaptive
+  ladder those gates carry the discrimination, so a better LCL/ABL ratio bought at their expense
+  is a net loss.
 
-  The ICON-2I pressure-level path is unchanged: a maximum-RH pick is meaningless on five
-  levels.
-
+  Two things worth carrying forward from that episode: on the adaptive ladder the classifier is
+  **nearly unbiased (+0.12) and exact 42 % of the time** against observed fire classes — not the
+  "1.4 classes hot" reported earlier — and `abl_rib` is now exported alongside `abl` so the two
+  depths are comparable in any product.
 - **The dry-pyrocloud reference fire is prescribed as a temperature excess, not a heat flux**
   (`_REFERENCE_THETA_EXCESS_K = 10.0`, replacing `_REFERENCE_FIRE_FLUX_W_M2 = 200`), and
   `fire_induced_abl_grid` accepts `theta_excess=` directly. Even dimensionally corrected, a

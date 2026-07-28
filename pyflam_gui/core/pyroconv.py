@@ -733,7 +733,7 @@ def read_icon_eu(files, bbox, levels):
 
 
 def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True,
-                       abl_method="maxrh_floored"):
+                       abl_method="rib"):
     """Profile diagnostics from an ICON-EU model-level stack (:func:`read_icon_eu`).
 
     Same output dict as :func:`profile_diagnostics` (``abl``, ``parcel_ml``, ``lcl``,
@@ -772,20 +772,31 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True,
 
     abl_rib = bulk_richardson_abl_grid(z, thv, U, V, theta_v_surface=thv_s,
                                        wind_u_surface=U10, wind_v_surface=V10)
-    # ABL depth. Default "maxrh_floored": the maximum-RH criterion the source method uses
-    # (Castellnou Ribau et al. 2025 sec. 2.6), floored at the bulk-Richardson depth -- the
-    # "supplement with the bulk Richardson number" of that section, applied as a floor rather
-    # than a veto. A moisture maximum *below* the dynamically diagnosed mixing top is not a
-    # capping inversion, and rejecting those is what an analyst does by eye when reading the
-    # plotted profile; it is the only failure mode the automated maximum exhibits.
+    # ABL depth. Default "rib": the bulk-Richardson depth.
     #
-    # Against the 26 ambient campaign sondes at GRAF-labelled fires this lifts within-one-class
-    # agreement from 11/26 to 16/26 and cuts the mean bias from +1.81 to +1.38 (docs/
-    # graf_vs_pyflam_2026-07-26.md sec. 17, 21). Two caveats travel with that: exact agreement
-    # does not improve (2/26 either way) -- the ladder remains well over a class hot, and the
-    # residual is fire-side conditioning, not the ABL -- and the score is in-sample, since the
-    # same 26 sondes were used to compare the candidate rules. Pass ``abl_method="rib"`` for
-    # the previous behaviour.
+    # "maxrh_floored" implements the criterion the source method uses -- Castellnou Ribau et al.
+    # (2025) sec. 2.6 take the boundary-layer top as the height of maximum relative humidity,
+    # "supplemented with numerical calculations using the bulk Richardson number" -- with that
+    # supplement applied as a floor, since a moisture maximum below the dynamically diagnosed
+    # mixing top is not a capping inversion. It was briefly the default and is **not**, because
+    # measured on the ladder this product actually runs it is worse.
+    #
+    # Against 26 ambient campaign sondes at GRAF-labelled fires, on the **adaptive** ladder
+    # (which resolved to the 5-diagnostic "shear" path in 51 of 52 cases):
+    #
+    #     rib             11/26 exact, 20/26 within one class, mean bias +0.12
+    #     maxrh_floored    7/26 exact, 19/26 within one class, mean bias +0.58
+    #
+    # The ordering reverses on the 3-diagnostic "castellnou" ladder (+1.38 for maxrh_floored
+    # against +1.81 for rib), which is what an earlier analysis measured and got wrong. The
+    # reason is that a deeper ABL shifts both the cap layer (abl+200 to abl+1200) and the
+    # RH-top window upward, and on the adaptive ladder those two gates carry the
+    # discrimination -- improving the LCL/ABL ratio while degrading the gates is a net loss.
+    # The castellnou ladder has no RH-top gate, so it cannot show this.
+    #
+    # Keep "maxrh_floored" available: it is the source method's own criterion, and on a ladder
+    # that does not lean on the RH-top gate it is the better depth. See
+    # docs/graf_vs_pyflam_2026-07-26.md sec. 17.
     if abl_method == "maxrh_floored":
         z_rh = max_rh_abl_grid(z, RH)
         abl = np.where(np.isfinite(z_rh) & (z_rh >= abl_rib), z_rh, abl_rib)
