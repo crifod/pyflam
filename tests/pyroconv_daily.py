@@ -563,7 +563,8 @@ def export_diagnostics(diags, lat, lon):
         for name in ("abl", "parcel_ml", "lcl", "lcl_ratio", "ml_grad", "gamma", "rh_top",
                      "fireabl", "decoupling",
                      "residual_ml", "delta_theta", "firecape", "penetration",
-                     "pft_gw", "z_fc", "delta_theta_fc", "u_ml", "abl_rib"):
+                     "pft_gw", "z_fc", "delta_theta_fc", "u_ml", "abl_rib",
+                     "fuel_load", "burnable_fraction", "firepower_gw", "pft_margin"):
             if name not in diags[hi]:
                 continue
             arr = np.asarray(diags[hi][name], "float32")
@@ -609,6 +610,52 @@ def hybrid_diags_or_none(lat, lon):
         return None
 
 
+# --- fire-side conditioning ------------------------------------------------------------
+# The pyroconvection classes describe a *plume*, and whether one forms depends on fire power
+# as well as atmosphere. The POTENTIAL map posits a pyroCu-capable fire in every cell, which
+# is why it saturates; these give the per-cell fire power to condition on instead.
+#
+# Byram intensity is power per metre of front (W/m); the PyroCb Firepower Threshold is a
+# TOTAL power (W). Bridging them needs an active head-fire length. Rather than assume one,
+# it is taken from the fire behaviour the Wildfire Data Portal publishes: L = (burn ratio) /
+# ROS over its 20 fires with both, giving a median of 703 m (p25 398, p75 1300). The largest,
+# Varnavas at 6.1 km, matches Tory & Kepert's "a head fire of about 5 km" for an extreme case.
+_HEADFIRE_LENGTH_M = float(os.environ.get("PYROCONV_HEADFIRE_M", 700.0))
+# Fraction of released heat entering the plume; the rest is radiated (Tory & Kepert app. D).
+_CONVECTIVE_FRACTION = 0.7
+# Available fuel load + burnable fraction on the forecast grid, from the 10 m FBFM40 map
+# (scripts/fuel_load_10m.py). Optional: absent, the fuel diagnostics are simply not exported.
+FUEL_LOAD_TIF = os.environ.get("PYFLAM_FUEL_LOAD_TIF",
+                               os.path.join(REPO, "docs", "fuel_load_tuscany.tif"))
+
+
+def sample_fuel_grid(lat, lon):
+    """Available load (kg/m2) and burnable fraction sampled onto the (lat, lon) forecast grid.
+
+    Returns ``(load, burnable_fraction)`` or ``(None, None)`` when the raster is absent. The
+    raster is EPSG:3035; the forecast grid is lat/lon, so this reprojects by point sampling --
+    adequate because the raster is already block-averaged to about the forecast cell size.
+    """
+    if not os.path.exists(FUEL_LOAD_TIF):
+        return None, None
+    try:
+        import rasterio
+        from pyproj import Transformer
+        with rasterio.open(FUEL_LOAD_TIF) as src:
+            tr = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
+            lon2d, lat2d = np.meshgrid(lon, lat)
+            x, y = tr.transform(lon2d.ravel(), lat2d.ravel())
+            rows, cols = rasterio.transform.rowcol(src.transform, x, y)
+            rows = np.clip(np.asarray(rows), 0, src.height - 1)
+            cols = np.clip(np.asarray(cols), 0, src.width - 1)
+            load = src.read(1)[rows, cols].reshape(lat2d.shape)
+            frac = src.read(2)[rows, cols].reshape(lat2d.shape)
+        return load, frac
+    except Exception as e:
+        sys.stderr.write(f"[pyroconv_daily] fuel grid unavailable ({e})\n")
+        return None, None
+
+
 def main():
     os.makedirs(OUTDIR, exist_ok=True)
     sys.stderr.write(f"[pyroconv_daily] {DATE} {RUN:02d}Z -> {OUTDIR}  [requested={SOURCE}]\n")
@@ -630,6 +677,7 @@ def main():
     sys.stderr.write(f"[pyroconv_daily] effective source: {EFFECTIVE_SOURCE}\n")
 
     pot, gate, diags, ladders = [], [], [], set()
+    fli_by_hour = []
     for hi, si in enumerate(idx):
         if hybrid_diags is not None:
             diag = hybrid_diags[hi]
@@ -641,8 +689,22 @@ def main():
         if lf is not None:
             wsp = np.hypot(d["U10"][si], d["V10"][si])
             fli = fli_grid(T2m_c[si], RH_sfc[si], wsp, lf, burn)
+            fli_by_hour.append(fli)
             g, _ = classify_profile(diag, fli=fli, ladder=LADDER)
             gate.append(g)
+
+    # Fire-side conditioning: per-cell firepower against the column's own PFT.
+    fuel_load, burn_frac = sample_fuel_grid(lat, lon)
+    for hi, diag in enumerate(diags):
+        if fuel_load is not None:
+            diag["fuel_load"] = fuel_load
+            diag["burnable_fraction"] = burn_frac
+        if gate and hi < len(gate) and "pft_gw" in diag:
+            fli_w_m = fli_by_hour[hi] * 1.0e3                    # kW/m -> W/m
+            fp_gw = _CONVECTIVE_FRACTION * fli_w_m * _HEADFIRE_LENGTH_M / 1.0e9
+            diag["firepower_gw"] = fp_gw
+            with np.errstate(invalid="ignore", divide="ignore"):
+                diag["pft_margin"] = fp_gw / np.where(diag["pft_gw"] > 0, diag["pft_gw"], np.nan)
 
     png_pot = render(np.stack(pot), lat, lon, "potential")
     png_gate = render(np.stack(gate), lat, lon, "gated") if gate else png_pot
