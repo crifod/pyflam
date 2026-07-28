@@ -903,6 +903,9 @@ Tested against the observed classes on the adaptive ladder:
 | 5.00 | 9/26 | 22/26 | +0.08 |
 | removed | 4/26 | 21/26 | +0.58 |
 
+(This sensitivity test was run on the 26-sonde sample; §21.3 onward uses 27, after the name
+matcher recovered one more fire. The bar re-measures at 12/27 there.)
+
 Removing it collapses exact agreement and pushes the ladder half a class hot. The labels come
 from a 2025-26 publication and the value from an earlier port, so this behaves as out-of-sample
 corroboration rather than a fit.
@@ -911,52 +914,103 @@ It misclassifies individual events -- Santa Coloma de Queralt, an observed pyroC
 12.8 and is called class 1 -- but raising the ceiling to admit it costs seven other fires. The
 ladder is trading errors, not simply making one.
 
-### 21.3 The explicit fire-power term does not beat it
+### 21.3 The explicit fire-power term, tested properly
 
-pyflam now has every piece needed to replace the proxy with the physics: a PyroCb Firepower
+pyflam has every piece needed to replace the proxy with the physics: a PyroCb Firepower
 Threshold verified against 5 of 6 published worked cases (§18), fuel load pinned to
-~1.5 kg/m2 by three independent routes (§20), and head-fire length measured from 20 fires.
-Substituting that chain for the ceiling, on the 22 sondes carrying a label, a spliced PFT and
-portal firepower:
+~1.5 kg/m2 by three independent routes (§20), and head-fire length measured from 20 fires. The
+remaining input was `dA/dt`, and §21.4 below closes it.
+
+An earlier version of this section reported that every explicit variant lost to the proxy. **That
+test was broken in two independent ways and its numbers are withdrawn**:
+
+* Firepower resolved for only 11 of 26 sondes, because the isochrone parser missed three whole
+  classes of file and compared UTC launch times against local perimeter times (§21.4).
+* More seriously, **the PFT resolved for 1 sonde in 27**. It was computed from the sonde alone,
+  and a sonde topping out at 3-5 km cannot reach the free-convection height or the -20 degC
+  cloud-top level the threshold is defined at, so it returned nan almost everywhere. The gate
+  was not losing the comparison, it was **never firing**. Splicing ERA5 above each sonde top
+  (`splice_pft.py`) resolves PFT for 27/27.
+
+With both faults fixed, on all 27 labelled sondes, adaptive ladder, `w_a` = 1.49 kg/m2:
 
 | variant | exact | within 1 | bias |
 |:--|--:|--:|--:|
-| **ceiling 1.60, no firepower gate** | **10/22** | 19/22 | **-0.36** |
-| ceiling removed, firepower vs PFT instead | 9/22 | 19/22 | -0.50 |
-| ceiling 1.60 *and* firepower gate | 9/22 | 19/22 | -0.50 |
-| ceiling 5.00 + firepower gate | 9/22 | 19/22 | -0.50 |
+| ceiling 1.60 only (the bar) | 12/27 | 20/27 | +0.04 |
+| **+ firepower gate, fire-level peak** | **14/27** | **21/27** | -0.07 |
+| + firepower gate, per-moment isochrone | 13/27 | 20/27 | -0.15 |
+| ceiling removed, per-moment gate only | 6/27 | 21/27 | +0.48 |
 
-**Every variant using the explicit term is worse than the crude proxy.** The ladder is already
-slightly cold on this subset, and the firepower gate suppresses further because almost nothing
-clears its threshold. A poorly estimated physical term loses to a well-behaved empirical one.
+The gate now *beats* the bar. **It should still not be adopted**, because of what the firing
+pattern shows.
 
-### 21.4 Why the chain is too noisy, and what would fix it
+### 21.4 Per-moment firepower from the isochrones
 
-In the order worth attacking:
+The portal publishes perimeter KMZs per fire. Extracting `dA/dt` at each sonde's launch minute
+required three fixes, all found by inspection (`scripts/isochrone_firepower.py`):
 
-1. **Firepower is a fire-level constant.** `burn_ratio_max` is the peak *hourly* figure for the
-   whole event, applied to a sonde from one moment. The plume a sonde samples may be an order
-   of magnitude weaker than the fire's peak hour. **The portal publishes hourly isochrones and
-   perimeter KMZs, so per-moment firepower is obtainable** -- match each sonde to the isochrone
-   interval containing its launch time. This is the single change most likely to move the
-   result.
-2. **The PFT is weakly validated** -- one clean positive (Guissona), no demonstrated
-   sensitivity, SCQ short by ~2x. A systematically biased threshold propagates into every class.
-3. **`w_a` and `L` are single values** (2.0 kg/m2, 700 m) across fires whose head-fire lengths
-   span 250-6100 m.
+1. **A sixth timestamp format** (`20220717 1630`).
+2. **Files with no timestamp in `<name>` at all**, carrying it instead in the ArcGIS attribute
+   table rendered into `<description>` HTML, under `DiHo` or `FeHo`.
+3. **Perimeter times are local, not UTC.** Nothing in the files says so. The campaign sondes
+   settle it: Guissona's launched at 15:59 UTC into an already-convecting plume whose isochrones
+   run 17:13-19:29, so under a UTC reading the sonde precedes every mapped perimeter of the fire
+   it was sampling. Reading them as local puts it inside the span, and does the same for
+   Patagual, Junquillos and Vega Honda. Converted per fire via `zoneinfo` (DST-correct), zones
+   assigned from portal coordinates, which fall in four well-separated clusters.
 
-### 21.5 Standing conclusion
+Coverage went from 11/26 to **22/27**; growth rates from 18 fires to **24**, still agreeing with
+the portal's independently reported peak burn ratio (guissona 7869 vs 6000 ha/h, lavrio 860 vs
+795, martorell 103 vs 90). The 5 unresolved sondes belong to fires whose files hold only a final
+perimeter -- no time series exists to extract.
 
-**`lcl_ratio_overshoot_max = 1.60` remains the best available implementation of the
-heat-impulse term** -- an uncited proxy that outperforms the derived physics built to replace
-it. That is not a comfortable result and it is not a permanent one, but it is the defensible
-position on the evidence, and it is a better place to argue from than not knowing which of the
-two is better.
+### 21.5 Why the improvement is not real: a timescale mismatch
 
-The corollary matters for how the rest of this document is read: several sections propose
-mechanisms that are better *motivated* than what they would replace. Motivation is not
-evidence. Every one of them should clear this bar -- 11/26 exact, -0.08 bias -- before it
-becomes a default.
+The gate fires on **3 of 27 sondes**:
+
+| sonde | obs | raw | PFT (GW) | FP peak | FP moment | effect |
+|:--|--:|--:|--:|--:|--:|:--|
+| pauls | 2 | 3 | 518 | 34 | 4 | demoted, **correct** (both variants) |
+| pauls | 2 | 4 | 1278 | 34 | 17 | demoted, **correct** (both variants) |
+| guissona | 4 | 4 | 139 | 261 | 20 | per-moment demotes, **wrong** |
+
+That arithmetic is the whole table above: the peak variant fires twice and is right twice
+(12 -> 14); the per-moment variant fires three times, right twice and wrong once (12 -> 13).
+**The entire apparent improvement is two sondes of a single fire.** At n = 27 that is noise.
+
+The failure is the informative half. Guissona is the sample's one observed PyroCb. Its sonde
+was launched into an isochrone interval growing at ~460 ha/h (20 GW) against a fire peak of
+6000 ha/h (261 GW) -- **it blew up after the launch**. The per-moment gate correctly reports
+that the fire was not yet capable of pyroCb, and is scored wrong for it, because the label
+describes the fire's eventual behaviour. Pauls rewards the gate and Guissona punishes it for the
+same reason.
+
+So the fire-level peak does not "work better" because it is more physical. It works better
+because it matches the *timescale of the label*.
+
+**A moment-level gate cannot be validated against a fire-level label.** This is not a data
+volume problem, and no quantity of additional isochrones fixes it. Testing per-moment
+conditioning requires per-moment observed classes -- the plume behaviour at each launch -- which
+is precisely what GRAF holds operationally and what the published table does not carry. That is
+a concrete, answerable request to put to them, and it is a better one than the definitional
+questions in §15 because it names the exact variable.
+
+### 21.6 Standing conclusion
+
+**`lcl_ratio_overshoot_max = 1.60` remains the default**, but the reason has changed and is
+worth stating precisely. It is *not* that the empirical proxy outperforms the physics -- with
+the PFT actually resolving, the explicit gate edges ahead. It is that **the available labels
+cannot resolve the comparison**: the one metric that separates the variants is decided by two
+sondes of one fire, and the physically preferable variant is penalised by a timescale mismatch
+built into the label set.
+
+That is a stronger position than the previous one. The proxy is retained on an argued
+measurement limitation with a named remedy, not on an unexplained empirical win.
+
+The corollary for the rest of this document stands, with the bar re-measured on the corrected
+27-sonde sample: several sections propose mechanisms better *motivated* than what they would
+replace. Motivation is not evidence. Each should clear **12/27 exact, +0.04 bias** -- and clear
+it by more than two sondes of one fire -- before becoming a default.
 
 ## 22. Provenance
 
