@@ -44,6 +44,20 @@ An earlier batch taken at each fire's *start* hour is deliberately **not** vendo
 onto sondes launched hours later was a real error (§18), and excluding it stops the file-matching
 fallback from silently reintroducing it.
 
+### `fuel_effis.json` — per-fire fuel load
+Derived from the **EFFIS European Fuel Map** (European Forest Fire Information System, 2017;
+European Fuel Map, based on JRC Contract Number 384347, European Commission — in EFFIS,
+Copernicus Emergency Management System). The map assigns Anderson (1982) NFFL fuel models; cite
+both EFFIS and Anderson if these values are reused.
+
+The 622 MB source raster is **not** vendored — download `FuelMap_LAEA.zip` and point
+`PYFLAM_EFFIS_FUEL` at it (see `scripts/fuel_load_effis.py`). The per-fire **NFFL class
+histogram** is stored here, so any alternative fuel assignment can be re-tested without it.
+
+Read `unclassified_fraction` before using `w_a_kg_m2`: EFFIS does not classify agricultural land,
+and several Catalan fires are 80–99 % unclassified cereal belt. §21.13 shows that how those
+cells are treated decides whether the corpus contains any positive detection at all.
+
 ## Derived files
 
 `oos_margin.json` and `era5_oos_index.json` are computed, not source — regenerate with
