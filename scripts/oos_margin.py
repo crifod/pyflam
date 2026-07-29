@@ -8,7 +8,9 @@ and no rank correlation to compute. See docs/graf_vs_pyflam_2026-07-26.md sec. 2
 import warnings; warnings.simplefilter("ignore")
 import json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import numpy as np, xarray as xr
+import numpy as np
+
+import valdata, xarray as xr
 from pyflam.atmosphere import (pyrocb_firepower_threshold_grid, critical_growth_rate_grid,
                                capability_margin, _G)
 G = lambda a: np.asarray(a, float).reshape(-1, 1, 1)
@@ -16,8 +18,8 @@ W_A = 1.49
 S = os.path.dirname(os.path.abspath(__file__))
 iso = json.load(open("/Users/cristianofoderi/-softEST/firelab-flammap6_install_0828_2025/"
                      "pyflam/docs/isochrone_firepower.json"))
-oos = {o["slug"]: o for o in json.load(open("/tmp/oos_fires.json"))}
-idx = json.load(open("/tmp/era5_oos_index.json"))
+oos = {o["slug"]: o for o in json.load(open(os.path.join(valdata.DATA,"oos_fires.json")))}
+idx = json.load(open(os.path.join(valdata.DATA,"era5_oos_index.json")))
 
 def era5_pft(nc, lat, lon):
     d = xr.open_dataset(nc)
@@ -56,4 +58,4 @@ print(f"false positives (margin > 0): {len(fp)}"
 if fin:
     print(f"margin range: {min(r['margin'] for r in fin):+.2f} to "
           f"{max(r['margin'] for r in fin):+.2f}")
-json.dump(rows, open("/tmp/oos_margin.json", "w"), indent=1)
+json.dump(rows, open(os.path.join(valdata.DATA,"oos_margin.json"), "w"), indent=1)

@@ -6,10 +6,12 @@ observed classes, so it is calibration and not discrimination. Adding a w_a corr
 makes the score worse. This is the record of that negative result --
 docs/graf_vs_pyflam_2026-07-26.md sec. 21.11.
 
-Depends on the campaign-side harness (margin_test.py) and its scratchpad inputs.
+Reads the vendored corpus via scripts/valdata.py; runs from a clone with no external inputs.
 """
 import warnings; warnings.simplefilter("ignore")
-import json, os, sys, numpy as np
+import json
+
+import valdata, os, sys, numpy as np
 from math import comb
 from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -31,7 +33,7 @@ for r in rows:
     if np.isfinite(gh) and r["crit_ha_h"] > 0:
         f, nat = res_factor(r["slug"])
         cr.append([r["slug"], r["obs"], np.log10(gh/r["crit_ha_h"]), f, nat])
-for r in json.load(open("/tmp/oos_margin.json")):
+for r in json.load(open(os.path.join(valdata.DATA,"oos_margin.json"))):
     if np.isfinite(r["margin"]):
         f, nat = res_factor(r["slug"]); cr.append([r["slug"], r["obs"], r["margin"], f, nat])
 for r in cr:

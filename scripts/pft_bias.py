@@ -6,11 +6,13 @@ without admitting many false positives, the bar is misplaced; if it does not, th
 elsewhere. Combined with the independent anchoring of PFT magnitude, the answer is that the gap
 sits on the firepower side -- docs/graf_vs_pyflam_2026-07-26.md sec. 21.10.
 
-Depends on the campaign-side harness (margin_test.py) and its scratchpad inputs; it is the
-record of how the numbers in sec. 21.10 were produced, not a reusable library.
+Reads the vendored corpus via scripts/valdata.py; runs from a clone with no external inputs.
+This is the record of how the numbers in sec. 21.10 were produced, not a reusable library.
 """
 import warnings; warnings.simplefilter("ignore")
-import json, os, sys, numpy as np
+import json
+
+import valdata, os, sys, numpy as np
 from math import comb
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)),"margin_test.py")).read()
@@ -22,7 +24,7 @@ for r in rows:
     gh = g*3600/1e4 if np.isfinite(g) else np.nan
     if np.isfinite(gh) and r["crit_ha_h"] > 0:
         comb_rows.append([r["slug"], r["obs"], np.log10(gh/r["crit_ha_h"])])
-for r in json.load(open("/tmp/oos_margin.json")):
+for r in json.load(open(os.path.join(valdata.DATA,"oos_margin.json"))):
     if np.isfinite(r["margin"]): comb_rows.append([r["slug"], r["obs"], r["margin"]])
 
 # SCQ: sec.18 establishes the pyroCb was on 25 Jul, not the 24 Jul sonde day. Use the 25th's

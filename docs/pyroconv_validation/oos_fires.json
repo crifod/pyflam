@@ -1,0 +1,98 @@
+[
+ {
+  "slug": "lavrio",
+  "name": "Lavrio",
+  "cls": "Convective plume",
+  "obs": 1,
+  "paper": "Convective plume",
+  "lat": 37.776629,
+  "lon": 23.998869,
+  "start": "08/08/2025 14:04:00",
+  "br_max": 795.0,
+  "area": 1600.0
+ },
+ {
+  "slug": "etos",
+  "name": "Etos",
+  "cls": "Convective plume",
+  "obs": 1,
+  "paper": "Convective plume",
+  "lat": 38.100084,
+  "lon": 23.967836,
+  "start": "03/07/2025 15:02:00",
+  "br_max": 65.0,
+  "area": 115.0
+ },
+ {
+  "slug": "thimari",
+  "name": "Thimari",
+  "cls": "Convective plume",
+  "obs": 1,
+  "paper": "Convective plume",
+  "lat": 37.696382,
+  "lon": 23.945007,
+  "start": "26/06/2025 12:35:00",
+  "br_max": 110.0,
+  "area": 98.0
+ },
+ {
+  "slug": "varnavas",
+  "name": "Varnavas",
+  "cls": "Convective plume",
+  "obs": 1,
+  "paper": "Convective plume",
+  "lat": 38.237959,
+  "lon": 23.924421,
+  "start": "11/08/2024 12:02:00",
+  "br_max": 2750.0,
+  "area": 10414.0
+ },
+ {
+  "slug": "la-figuera",
+  "name": "La Figuera",
+  "cls": "Convective plume",
+  "obs": 1,
+  "paper": "Convective plume",
+  "lat": 41.21406,
+  "lon": 0.741027,
+  "start": "28/07/2024 13:40:00",
+  "br_max": null,
+  "area": 17.0
+ },
+ {
+  "slug": "mequinensa",
+  "name": "Mequinensa",
+  "cls": "Convective plume",
+  "obs": 1,
+  "paper": "Convective plume",
+  "lat": 41.379853,
+  "lon": 0.31567,
+  "start": "03/07/2024 15:16:00",
+  "br_max": 70.0,
+  "area": 70.0
+ },
+ {
+  "slug": "katsimidi",
+  "name": "Katsimidi",
+  "cls": "Convective plume",
+  "obs": 1,
+  "paper": "Convective plume",
+  "lat": 38.183321,
+  "lon": 23.791808,
+  "start": "29/06/2024 11:50:00",
+  "br_max": 2000.0,
+  "area": 62.0
+ },
+ {
+  "slug": "batea",
+  "name": "Batea",
+  "cls": "Convective plume",
+  "obs": 1,
+  "paper": "Convective plume",
+  "lat": 41.14588,
+  "lon": 0.26582,
+  "start": "11/05/2024 13:30:00",
+  "br_max": 100.0,
+  "area": 445.0
+ }
+]

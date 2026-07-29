@@ -1033,10 +1033,10 @@ Continuous, so **every** sonde contributes rather than only the 3 where a binary
 
 | predictor | rho | p |
 |:--|--:|--:|
-| capability margin, +/-8 h window | **+0.32** | 0.14 |
-| capability margin, +/-4 h | +0.29 | 0.17 |
-| capability margin, +/-2 h | +0.26 | 0.23 |
-| capability margin, whole fire | +0.20 | 0.37 |
+| capability margin, +/-8 h window | **+0.32** | 0.13 |
+| capability margin, +/-4 h | +0.28 | 0.19 |
+| capability margin, +/-2 h | +0.25 | 0.25 |
+| capability margin, whole fire | +0.20 | 0.35 |
 | ladder prediction | -0.18 | 0.37 |
 
 Not significant -- but positive, stable across windows, and better than what it would replace.
@@ -1205,7 +1205,30 @@ its hourly means report, and `peak_ha_per_h_res_corrected` says so -- martorell 
 SCQ 358 -> 728, katsimidi 11 -> 34, guissona 7869 -> 8980 (nearly unchanged, being already
 mapped at 14 min). It must not be quoted as improving classification.
 
-### 21.12 Standing conclusion
+### 21.12 Reproducing all of this
+
+Every input §21 rests on is vendored in `docs/pyroconv_validation/` (7 MB: 27 sonde profiles,
+24 perimeter KMZs, 46 ERA5 profiles, the portal catalogue and the labels). The scripts read it
+through `scripts/valdata.py` and take no external inputs, so from a clone:
+
+```
+export PYTHONPATH=src:scripts
+python scripts/isochrone_firepower.py   # growth rates from the perimeter KMZs   (sec. 21.4)
+python scripts/coarsen.py               # the resolution power law, beta = 0.44  (sec. 21.11)
+python scripts/margin_test.py           # capability margin vs observed class    (sec. 21.7)
+python scripts/oos_margin.py            # the 8 fires with no sounding           (sec. 21.9)
+python scripts/pft_bias.py              # PFT scale sweep                        (sec. 21.10)
+python scripts/res_correct.py           # resolution correction rescored         (sec. 21.11)
+```
+
+Only `scripts/era5_oos.py` needs anything external (a configured `cdsapi` client), and its
+output is already vendored.
+
+`docs/pyroconv_validation/ATTRIBUTION.md` records provenance and licensing per source. One point
+from it belongs here: the portal's `fire-classification` labels and the campaign paper's classes
+are **the same source**, not two agreeing ones, so they are not mutual corroboration.
+
+### 21.13 Standing conclusion
 
 **`lcl_ratio_overshoot_max = 1.60` remains the default**, but for a third and much narrower
 reason than either previous version of this section gave. It is *not* that the proxy

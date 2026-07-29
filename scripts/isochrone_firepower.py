@@ -49,10 +49,15 @@ import argparse
 import json
 import os
 import re
+import sys
 import zipfile
 from datetime import datetime
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import numpy as np
+
+import valdata
 
 TIME_NOTE = ("isochrone timestamps are published in local time and converted to UTC here, per "
              "the launch-time evidence in the module docstring")
@@ -248,10 +253,11 @@ def firepower_at(rates, when, *, w_a=2.0, alpha=0.7, heat=15.0e6, tolerance_s=18
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--kmz-dir", required=True)
+    ap.add_argument("--kmz-dir", default=valdata.PERIMS,
+                    help="perimeter KMZs (default: the vendored corpus)")
     ap.add_argument("--out", default="docs/isochrone_firepower.json")
     a = ap.parse_args()
-    port = {p["slug"]: p for p in json.load(open("/tmp/portal_fires.json"))}
+    port = valdata.portal_by_slug()
     res = {}
     for fn in sorted(os.listdir(a.kmz_dir)):
         if not fn.endswith(".kmz"):
