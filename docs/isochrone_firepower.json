@@ -2,6 +2,9 @@
  "batea": {
   "n": 10,
   "zone": "Europe/Madrid",
+  "median_gap_min": 60.0,
+  "resolution_factor": 2.2,
+  "peak_ha_per_h_res_corrected": 182.5,
   "first": "2024-05-11T14:30:00",
   "last": "2024-05-11T23:30:00",
   "peak_ha_per_h": 82.9,
@@ -58,6 +61,9 @@
  "ede": {
   "n": 8,
   "zone": "Europe/Amsterdam",
+  "median_gap_min": 6.0,
+  "resolution_factor": 1.0,
+  "peak_ha_per_h_res_corrected": 150.7,
   "first": "2025-04-03T12:39:00",
   "last": "2025-04-03T14:15:00",
   "peak_ha_per_h": 150.7,
@@ -104,6 +110,9 @@
  "el-valle-2": {
   "n": 12,
   "zone": "America/Santiago",
+  "median_gap_min": 225.0,
+  "resolution_factor": 3.0,
+  "peak_ha_per_h_res_corrected": 2114.2,
   "first": "2025-02-08T23:00:00",
   "last": "2025-02-12T23:20:00",
   "peak_ha_per_h": 704.7,
@@ -170,6 +179,9 @@
  "etos": {
   "n": 3,
   "zone": "Europe/Athens",
+  "median_gap_min": 94.5,
+  "resolution_factor": 2.69,
+  "peak_ha_per_h_res_corrected": 88.2,
   "first": "2025-07-03T13:51:00",
   "last": "2025-07-03T17:00:00",
   "peak_ha_per_h": 32.8,
@@ -191,6 +203,9 @@
  "granyena": {
   "n": 12,
   "zone": "Europe/Madrid",
+  "median_gap_min": 30.0,
+  "resolution_factor": 1.62,
+  "peak_ha_per_h_res_corrected": 217.7,
   "first": "2025-06-21T12:00:00",
   "last": "2025-06-21T17:20:00",
   "peak_ha_per_h": 134.2,
@@ -247,6 +262,9 @@
  "guissona": {
   "n": 11,
   "zone": "Europe/Madrid",
+  "median_gap_min": 13.5,
+  "resolution_factor": 1.14,
+  "peak_ha_per_h_res_corrected": 8979.5,
   "first": "2025-07-01T15:13:00",
   "last": "2025-07-01T17:29:00",
   "peak_ha_per_h": 7868.7,
@@ -308,6 +326,9 @@
  "junquillos": {
   "n": 6,
   "zone": "America/Santiago",
+  "median_gap_min": 25.0,
+  "resolution_factor": 1.5,
+  "peak_ha_per_h_res_corrected": 79.6,
   "first": "2025-02-10T21:25:00",
   "last": "2025-02-11T01:00:00",
   "peak_ha_per_h": 53.2,
@@ -344,6 +365,9 @@
  "katsimidi": {
   "n": 3,
   "zone": "Europe/Athens",
+  "median_gap_min": 232.0,
+  "resolution_factor": 3.0,
+  "peak_ha_per_h_res_corrected": 34.0,
   "first": "2024-06-29T12:16:00",
   "last": "2024-06-29T20:00:00",
   "peak_ha_per_h": 11.3,
@@ -365,6 +389,9 @@
  "la-capellania": {
   "n": 4,
   "zone": "America/Santiago",
+  "median_gap_min": 50.0,
+  "resolution_factor": 2.03,
+  "peak_ha_per_h_res_corrected": 229.5,
   "first": "2025-02-03T19:40:00",
   "last": "2025-02-03T23:20:00",
   "peak_ha_per_h": 113.0,
@@ -391,6 +418,9 @@
  "la-figuera": {
   "n": 6,
   "zone": "Europe/Madrid",
+  "median_gap_min": 29.0,
+  "resolution_factor": 1.6,
+  "peak_ha_per_h_res_corrected": 21.3,
   "first": "2024-07-28T13:47:00",
   "last": "2024-07-28T16:00:00",
   "peak_ha_per_h": 13.3,
@@ -427,6 +457,9 @@
  "lavrio": {
   "n": 9,
   "zone": "Europe/Athens",
+  "median_gap_min": 41.0,
+  "resolution_factor": 1.86,
+  "peak_ha_per_h_res_corrected": 1599.8,
   "first": "2025-08-08T11:41:00",
   "last": "2025-08-08T18:50:00",
   "peak_ha_per_h": 859.9,
@@ -478,6 +511,9 @@
  "manuel-rodriguez": {
   "n": 7,
   "zone": "America/Santiago",
+  "median_gap_min": 48.5,
+  "resolution_factor": 2.0,
+  "peak_ha_per_h_res_corrected": 433.3,
   "first": "2025-02-05T19:08:00",
   "last": "2025-02-06T14:00:00",
   "peak_ha_per_h": 216.3,
@@ -519,6 +555,9 @@
  "martorell": {
   "n": 7,
   "zone": "Europe/Madrid",
+  "median_gap_min": 60.0,
+  "resolution_factor": 2.2,
+  "peak_ha_per_h_res_corrected": 227.1,
   "first": "2021-07-13T13:00:00",
   "last": "2021-07-13T20:00:00",
   "peak_ha_per_h": 103.2,
@@ -560,6 +599,9 @@
  "mequinensa": {
   "n": 5,
   "zone": "Europe/Madrid",
+  "median_gap_min": 38.5,
+  "resolution_factor": 1.81,
+  "peak_ha_per_h_res_corrected": 124.5,
   "first": "2024-07-03T15:23:00",
   "last": "2024-07-04T20:00:00",
   "peak_ha_per_h": 68.8,
@@ -591,6 +633,9 @@
  "patagual": {
   "n": 5,
   "zone": "America/Santiago",
+  "median_gap_min": 20.0,
+  "resolution_factor": 1.36,
+  "peak_ha_per_h_res_corrected": 361.3,
   "first": "2025-02-08T21:15:00",
   "last": "2025-02-08T22:50:00",
   "peak_ha_per_h": 266.3,
@@ -622,6 +667,9 @@
  "pauls": {
   "n": 21,
   "zone": "Europe/Madrid",
+  "median_gap_min": 77.5,
+  "resolution_factor": 2.46,
+  "peak_ha_per_h_res_corrected": 1819.7,
   "first": "2025-07-07T11:07:00",
   "last": "2025-07-09T00:00:00",
   "peak_ha_per_h": 739.1,
@@ -733,6 +781,9 @@
  "pont-de-vilomara": {
   "n": 26,
   "zone": "Europe/Madrid",
+  "median_gap_min": 20.0,
+  "resolution_factor": 1.36,
+  "peak_ha_per_h_res_corrected": 1466.5,
   "first": "2022-07-17T11:20:00",
   "last": "2022-07-17T22:20:00",
   "peak_ha_per_h": 1081.0,
@@ -844,6 +895,9 @@
  "san-patricio": {
   "n": 19,
   "zone": "America/Santiago",
+  "median_gap_min": 1440.0,
+  "resolution_factor": 3.0,
+  "peak_ha_per_h_res_corrected": 55.1,
   "first": "2025-02-14T17:15:00",
   "last": "2025-02-28T22:30:00",
   "peak_ha_per_h": 18.4,
@@ -945,6 +999,9 @@
  "santa-coloma-de-queralt": {
   "n": 28,
   "zone": "Europe/Madrid",
+  "median_gap_min": 50.0,
+  "resolution_factor": 2.03,
+  "peak_ha_per_h_res_corrected": 727.6,
   "first": "2021-07-24T13:47:00",
   "last": "2021-07-25T19:30:00",
   "peak_ha_per_h": 358.4,
@@ -1081,6 +1138,9 @@
  "thimari": {
   "n": 5,
   "zone": "Europe/Athens",
+  "median_gap_min": 60.0,
+  "resolution_factor": 2.2,
+  "peak_ha_per_h_res_corrected": 119.1,
   "first": "2025-06-26T11:00:00",
   "last": "2025-06-26T15:00:00",
   "peak_ha_per_h": 54.1,
@@ -1112,6 +1172,9 @@
  "tortosa": {
   "n": 6,
   "zone": "Europe/Madrid",
+  "median_gap_min": 60.0,
+  "resolution_factor": 2.2,
+  "peak_ha_per_h_res_corrected": 101.8,
   "first": "2024-05-28T08:30:00",
   "last": "2024-05-28T13:30:00",
   "peak_ha_per_h": 46.3,
@@ -1148,6 +1211,9 @@
  "varnavas": {
   "n": 9,
   "zone": "Europe/Athens",
+  "median_gap_min": 163.5,
+  "resolution_factor": 3.0,
+  "peak_ha_per_h_res_corrected": 5817.2,
   "first": "2024-08-11T12:38:00",
   "last": "2024-08-12T11:13:00",
   "peak_ha_per_h": 1939.1,
@@ -1199,6 +1265,9 @@
  "vega-honda": {
   "n": 14,
   "zone": "America/Santiago",
+  "median_gap_min": 45.0,
+  "resolution_factor": 1.94,
+  "peak_ha_per_h_res_corrected": 6971.6,
   "first": "2025-02-06T21:30:00",
   "last": "2025-02-09T23:00:00",
   "peak_ha_per_h": 3596.8,
@@ -1275,6 +1344,9 @@
  "vilanova-de-meia": {
   "n": 23,
   "zone": "Europe/Madrid",
+  "median_gap_min": 23.0,
+  "resolution_factor": 1.44,
+  "peak_ha_per_h_res_corrected": 65.1,
   "first": "2024-08-09T13:29:00",
   "last": "2024-08-09T23:00:00",
   "peak_ha_per_h": 45.1,

@@ -192,6 +192,44 @@ def growth_rate(iso, total_ha: float | None = None):
     return out
 
 
+# Growth rates are means over a mapping interval, so coarsely mapped fires under-report their
+# peak. Measured, not assumed: taking the 8 fires mapped at <=30 min and progressively
+# coarsening their own cumulative-area curves, the peak rate falls as a clean power law
+# peak(W) ~ W^-beta over W = native..180 min, with r2 0.76-0.99 per fire and a median
+# beta = 0.44 (range 0.08-0.61). A 60 min window costs a factor 2.21 against a 10 min
+# reference; the median 60->native loss across those fires is 1.54x.
+#
+# Linear interpolation inside each interval hides sub-interval bursts, so beta is a LOWER bound.
+RESOLUTION_BETA = 0.44
+# Reference window: the plume overturning timescale, which is what the convective column
+# responds to. Not 1 min -- firepower averaged over a minute is not what lifts a plume.
+RESOLUTION_REF_MIN = 10.0
+# Beyond ~2 h of mapping gap the power law is pure extrapolation, so the factor is capped.
+RESOLUTION_MAX_FACTOR = 3.0
+
+
+def resolution_factor(median_gap_min: float) -> float:
+    """Correction from a fire's mapping cadence to the ``RESOLUTION_REF_MIN`` reference.
+
+    Applies to the *estimate*, and is worth having for that reason alone -- a fire mapped hourly
+    genuinely did burn faster than its hourly means say. It does **not** improve
+    classification: applied across all 30 labelled columns it shifts every margin up and crosses
+    no decision boundary (docs/graf_vs_pyflam_2026-07-26.md sec. 21.11). The gap it closes is
+    near-uniform across observed classes, so it is calibration, not discrimination.
+    """
+    if not np.isfinite(median_gap_min) or median_gap_min <= 0:
+        return 1.0
+    g = max(float(median_gap_min), RESOLUTION_REF_MIN)
+    return float(min((g / RESOLUTION_REF_MIN) ** RESOLUTION_BETA, RESOLUTION_MAX_FACTOR))
+
+
+def median_gap_minutes(rates) -> float:
+    """Median mapping interval (minutes) of a fire's isochrone series."""
+    if not rates:
+        return float("nan")
+    return float(np.median([(t1 - t0).total_seconds() / 60.0 for t0, t1, _ in rates]))
+
+
 def firepower_at(rates, when, *, w_a=2.0, alpha=0.7, heat=15.0e6, tolerance_s=1800.0):
     """Firepower (GW) at ``when``, from the isochrone interval containing it.
 
@@ -236,7 +274,11 @@ def main():
         if not rates:
             continue
         peak = max(r[2] for r in rates) * 3600 / 1e4
+        gap = median_gap_minutes(rates)
+        rf = resolution_factor(gap)
         res[slug] = dict(n=len(iso), zone=zone,
+                         median_gap_min=round(gap, 1), resolution_factor=round(rf, 2),
+                         peak_ha_per_h_res_corrected=round(peak * rf, 1),
                          first=iso[0][0].isoformat(), last=iso[-1][0].isoformat(),
                          peak_ha_per_h=round(peak, 1),
                          portal_br_max=p.get("br_max"), portal_area_ha=p.get("area"),

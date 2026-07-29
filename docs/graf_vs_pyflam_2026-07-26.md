@@ -1157,7 +1157,55 @@ problem.** Two concrete steps, neither requiring anything from GRAF:
    fuel map rather than the Tuscany one.
 2. **Finer `dA/dt`.** The 60-minute median mapping interval is the limiting resolution.
 
-### 21.11 Standing conclusion
+### 21.11 Finer dA/dt: measured, adopted, and it does not improve skill
+
+§21.10 charged the fire-side gap partly to a `dA/dt` averaged over a 60-minute mapping window,
+with an *assumed* 1.5-2x penalty. That assumption is testable from the data already held: take
+the fires mapped finely enough, coarsen their own cumulative-area curves, and watch the peak
+decay.
+
+Eight fires are mapped at <=30 min (guissona at 14, ede at 6). Their peak rate falls as a clean
+power law `peak(W) ~ W^-beta` over W = native..180 min, r2 0.76-0.99 per fire:
+
+| | |
+|:--|--:|
+| median beta | **0.44** (range 0.08-0.61, n=8) |
+| median native-vs-60 min loss | **1.54x** |
+| 60 min -> 10 min reference | **2.21x** |
+
+The reference is 10 min, the plume overturning timescale -- what the convective column actually
+responds to. Not 1 min: firepower averaged over a minute is not what lifts a plume. Linear
+interpolation inside each interval hides sub-interval bursts, so **beta is a lower bound**.
+
+The assumed 1.5-2x was therefore about right, and slightly optimistic at the top.
+
+**Applied across all 30 labelled columns, it changes nothing:**
+
+| variant | TP | FP | Fisher p |
+|:--|--:|--:|--:|
+| baseline (w_a 1.49, native rate) | 1/2 | 0/28 | 0.067 |
+| **+ measured resolution correction** | 1/2 | 0/28 | **0.067** |
+| + resolution + w_a 4.0 kg/m2 | 1/2 | 3/28 | 0.253 |
+
+Every margin lifts -- Guissona +0.39 -> +0.45, SCQ -0.74 -> -0.43 -- and no decision boundary is
+crossed. Adding the fuel correction on top brings SCQ to exactly -0.00 while pushing three
+non-pyroCb fires above zero, so the score gets *worse*, and SCQ still ranks 5th, below three
+class-1 fires.
+
+**This is the substantive finding of §21.10-21.11: the 5.5x gap is near-uniform across observed
+classes, so closing it is calibration, not discrimination.** A correction that lifts everything
+roughly equally cannot separate anything. The fire-side terms were the best-defined open
+problem, they are now measured, and measuring them did not produce skill. What is missing is not
+the magnitude of the firepower term but a quantity that distinguishes fires that go pyroCb from
+fires that do not.
+
+The correction is adopted anyway, for the estimate rather than the score
+(`isochrone_firepower.resolution_factor`): a fire mapped hourly genuinely did burn faster than
+its hourly means report, and `peak_ha_per_h_res_corrected` says so -- martorell 103 -> 227 ha/h,
+SCQ 358 -> 728, katsimidi 11 -> 34, guissona 7869 -> 8980 (nearly unchanged, being already
+mapped at 14 min). It must not be quoted as improving classification.
+
+### 21.12 Standing conclusion
 
 **`lcl_ratio_overshoot_max = 1.60` remains the default**, but for a third and much narrower
 reason than either previous version of this section gave. It is *not* that the proxy
