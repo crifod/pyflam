@@ -55,8 +55,11 @@ The 622 MB source raster is **not** vendored — download `FuelMap_LAEA.zip` and
 histogram** is stored here, so any alternative fuel assignment can be re-tested without it.
 
 Read `unclassified_fraction` before using `w_a_kg_m2`: EFFIS does not classify agricultural land,
-and several Catalan fires are 80–99 % unclassified cereal belt. §21.13 shows that how those
-cells are treated decides whether the corpus contains any positive detection at all.
+and several Catalan fires are 80–99 % unclassified cereal belt. Those cells are assigned
+**NFFL 3 (tall grass)**, confirmed as correct for Catalan cereal at harvest (C. Foderi,
+2026-07-29). §21.13 shows the assignment decides whether the corpus contains any positive
+detection at all, so it must travel with these values. It is applied to Greek agriculture too,
+where it is plausible but not separately confirmed.
 
 ## Derived files
 

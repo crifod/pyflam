@@ -1,12 +1,12 @@
 {
  "batea": {
-  "w_a_kg_m2": 1.98,
-  "covered_fraction": 0.57,
+  "w_a_kg_m2": 1.506,
+  "covered_fraction": 1.0,
   "unclassified_fraction": 0.43,
   "radius_m": 2000,
-  "n_cells": 146,
+  "n_cells": 256,
   "mediterranean_adjust": true,
-  "agri_nffl": 0,
+  "agri_nffl": 3,
   "nffl_histogram": {
    "0": 110,
    "2": 9,
@@ -14,13 +14,13 @@
   }
  },
  "drunen": {
-  "w_a_kg_m2": 0.442,
-  "covered_fraction": 0.719,
+  "w_a_kg_m2": 0.508,
+  "covered_fraction": 1.0,
   "unclassified_fraction": 0.281,
   "radius_m": 2000,
-  "n_cells": 184,
+  "n_cells": 256,
   "mediterranean_adjust": false,
-  "agri_nffl": 0,
+  "agri_nffl": 3,
   "nffl_histogram": {
    "0": 72,
    "1": 64,
@@ -29,13 +29,13 @@
   }
  },
  "ede": {
-  "w_a_kg_m2": 0.61,
-  "covered_fraction": 0.867,
+  "w_a_kg_m2": 0.619,
+  "covered_fraction": 1.0,
   "unclassified_fraction": 0.133,
   "radius_m": 2000,
-  "n_cells": 222,
+  "n_cells": 256,
   "mediterranean_adjust": false,
-  "agri_nffl": 0,
+  "agri_nffl": 3,
   "nffl_histogram": {
    "0": 34,
    "1": 24,
@@ -46,39 +46,39 @@
  },
  "el-valle-2": null,
  "etos": {
-  "w_a_kg_m2": 4.088,
-  "covered_fraction": 0.402,
+  "w_a_kg_m2": 2.169,
+  "covered_fraction": 1.0,
   "unclassified_fraction": 0.598,
   "radius_m": 2000,
-  "n_cells": 103,
+  "n_cells": 256,
   "mediterranean_adjust": true,
-  "agri_nffl": 0,
+  "agri_nffl": 3,
   "nffl_histogram": {
    "0": 153,
    "4": 103
   }
  },
  "granyena": {
-  "w_a_kg_m2": 4.088,
-  "covered_fraction": 0.039,
+  "w_a_kg_m2": 1.003,
+  "covered_fraction": 1.0,
   "unclassified_fraction": 0.961,
   "radius_m": 2000,
-  "n_cells": 10,
+  "n_cells": 256,
   "mediterranean_adjust": true,
-  "agri_nffl": 0,
+  "agri_nffl": 3,
   "nffl_histogram": {
    "0": 246,
    "4": 10
   }
  },
  "guissona": {
-  "w_a_kg_m2": 3.67,
-  "covered_fraction": 0.068,
+  "w_a_kg_m2": 1.067,
+  "covered_fraction": 1.0,
   "unclassified_fraction": 0.932,
   "radius_m": 4494,
-  "n_cells": 88,
+  "n_cells": 1296,
   "mediterranean_adjust": true,
-  "agri_nffl": 0,
+  "agri_nffl": 3,
   "nffl_histogram": {
    "0": 1208,
    "4": 76,
@@ -87,13 +87,13 @@
  },
  "junquillos": null,
  "katsimidi": {
-  "w_a_kg_m2": 3.94,
-  "covered_fraction": 0.914,
+  "w_a_kg_m2": 3.676,
+  "covered_fraction": 1.0,
   "unclassified_fraction": 0.086,
   "radius_m": 2000,
-  "n_cells": 234,
+  "n_cells": 256,
   "mediterranean_adjust": true,
-  "agri_nffl": 0,
+  "agri_nffl": 3,
   "nffl_histogram": {
    "0": 22,
    "4": 217,
@@ -102,13 +102,13 @@
  },
  "la-capellania": null,
  "la-figuera": {
-  "w_a_kg_m2": 3.272,
-  "covered_fraction": 0.676,
+  "w_a_kg_m2": 2.496,
+  "covered_fraction": 1.0,
   "unclassified_fraction": 0.324,
   "radius_m": 2000,
-  "n_cells": 173,
+  "n_cells": 256,
   "mediterranean_adjust": true,
-  "agri_nffl": 0,
+  "agri_nffl": 3,
   "nffl_histogram": {
    "0": 83,
    "4": 104,
@@ -116,13 +116,13 @@
   }
  },
  "lavrio": {
-  "w_a_kg_m2": 2.962,
-  "covered_fraction": 0.395,
+  "w_a_kg_m2": 1.701,
+  "covered_fraction": 1.0,
   "unclassified_fraction": 0.605,
   "radius_m": 2257,
-  "n_cells": 128,
+  "n_cells": 324,
   "mediterranean_adjust": true,
-  "agri_nffl": 0,
+  "agri_nffl": 3,
   "nffl_histogram": {
    "0": 196,
    "2": 37,
@@ -132,13 +132,13 @@
  },
  "manuel-rodriguez": null,
  "martorell": {
-  "w_a_kg_m2": 2.834,
-  "covered_fraction": 0.535,
+  "w_a_kg_m2": 1.924,
+  "covered_fraction": 1.0,
   "unclassified_fraction": 0.465,
   "radius_m": 2000,
-  "n_cells": 137,
+  "n_cells": 256,
   "mediterranean_adjust": true,
-  "agri_nffl": 0,
+  "agri_nffl": 3,
   "nffl_histogram": {
    "0": 119,
    "4": 53,
@@ -146,13 +146,13 @@
   }
  },
  "mequinensa": {
-  "w_a_kg_m2": 1.255,
-  "covered_fraction": 0.527,
+  "w_a_kg_m2": 1.076,
+  "covered_fraction": 1.0,
   "unclassified_fraction": 0.473,
   "radius_m": 2000,
-  "n_cells": 135,
+  "n_cells": 256,
   "mediterranean_adjust": true,
-  "agri_nffl": 0,
+  "agri_nffl": 3,
   "nffl_histogram": {
    "0": 121,
    "2": 104,
@@ -160,13 +160,13 @@
   }
  },
  "orista-traveries-obertes": {
-  "w_a_kg_m2": 2.188,
-  "covered_fraction": 0.605,
+  "w_a_kg_m2": 1.671,
+  "covered_fraction": 1.0,
   "unclassified_fraction": 0.395,
   "radius_m": 2000,
-  "n_cells": 155,
+  "n_cells": 256,
   "mediterranean_adjust": true,
-  "agri_nffl": 0,
+  "agri_nffl": 3,
   "nffl_histogram": {
    "0": 101,
    "4": 11,
@@ -175,13 +175,13 @@
  },
  "patagual": null,
  "pauls": {
-  "w_a_kg_m2": 3.118,
-  "covered_fraction": 0.597,
+  "w_a_kg_m2": 2.214,
+  "covered_fraction": 1.0,
   "unclassified_fraction": 0.403,
   "radius_m": 3161,
-  "n_cells": 373,
+  "n_cells": 625,
   "mediterranean_adjust": true,
-  "agri_nffl": 0,
+  "agri_nffl": 3,
   "nffl_histogram": {
    "0": 252,
    "2": 6,
@@ -190,13 +190,13 @@
   }
  },
  "pont-de-vilomara": {
-  "w_a_kg_m2": 3.636,
-  "covered_fraction": 0.914,
+  "w_a_kg_m2": 3.399,
+  "covered_fraction": 1.0,
   "unclassified_fraction": 0.086,
   "radius_m": 2324,
-  "n_cells": 330,
+  "n_cells": 361,
   "mediterranean_adjust": true,
-  "agri_nffl": 0,
+  "agri_nffl": 3,
   "nffl_histogram": {
    "0": 31,
    "4": 257,
@@ -204,13 +204,13 @@
   }
  },
  "rojals-plans-de-sant-joan": {
-  "w_a_kg_m2": 3.245,
-  "covered_fraction": 0.957,
+  "w_a_kg_m2": 3.143,
+  "covered_fraction": 1.0,
   "unclassified_fraction": 0.043,
   "radius_m": 2000,
-  "n_cells": 245,
+  "n_cells": 256,
   "mediterranean_adjust": true,
-  "agri_nffl": 0,
+  "agri_nffl": 3,
   "nffl_histogram": {
    "0": 11,
    "4": 144,
@@ -219,13 +219,13 @@
  },
  "san-patricio": null,
  "santa-coloma-de-queralt": {
-  "w_a_kg_m2": 2.861,
-  "covered_fraction": 0.014,
+  "w_a_kg_m2": 0.905,
+  "covered_fraction": 1.0,
   "unclassified_fraction": 0.986,
   "radius_m": 2386,
-  "n_cells": 5,
+  "n_cells": 361,
   "mediterranean_adjust": true,
-  "agri_nffl": 0,
+  "agri_nffl": 3,
   "nffl_histogram": {
    "0": 356,
    "4": 2,
@@ -233,13 +233,13 @@
   }
  },
  "thimari": {
-  "w_a_kg_m2": 2.769,
-  "covered_fraction": 0.418,
+  "w_a_kg_m2": 1.668,
+  "covered_fraction": 1.0,
   "unclassified_fraction": 0.582,
   "radius_m": 2000,
-  "n_cells": 107,
+  "n_cells": 256,
   "mediterranean_adjust": true,
-  "agri_nffl": 0,
+  "agri_nffl": 3,
   "nffl_histogram": {
    "0": 149,
    "2": 40,
@@ -248,26 +248,26 @@
   }
  },
  "tortosa": {
-  "w_a_kg_m2": 4.088,
-  "covered_fraction": 0.395,
+  "w_a_kg_m2": 2.144,
+  "covered_fraction": 1.0,
   "unclassified_fraction": 0.605,
   "radius_m": 2000,
-  "n_cells": 101,
+  "n_cells": 256,
   "mediterranean_adjust": true,
-  "agri_nffl": 0,
+  "agri_nffl": 3,
   "nffl_histogram": {
    "0": 155,
    "4": 101
   }
  },
  "varnavas": {
-  "w_a_kg_m2": 3.811,
-  "covered_fraction": 0.434,
+  "w_a_kg_m2": 2.151,
+  "covered_fraction": 1.0,
   "unclassified_fraction": 0.566,
   "radius_m": 5757,
-  "n_cells": 919,
+  "n_cells": 2116,
   "mediterranean_adjust": true,
-  "agri_nffl": 0,
+  "agri_nffl": 3,
   "nffl_histogram": {
    "0": 1197,
    "4": 807,
@@ -277,13 +277,13 @@
  },
  "vega-honda": null,
  "vilanova-de-meia": {
-  "w_a_kg_m2": 3.55,
-  "covered_fraction": 0.52,
+  "w_a_kg_m2": 2.266,
+  "covered_fraction": 1.0,
   "unclassified_fraction": 0.48,
   "radius_m": 2000,
-  "n_cells": 133,
+  "n_cells": 256,
   "mediterranean_adjust": true,
-  "agri_nffl": 0,
+  "agri_nffl": 3,
   "nffl_histogram": {
    "0": 123,
    "4": 98,

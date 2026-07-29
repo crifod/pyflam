@@ -1228,7 +1228,7 @@ output is already vendored.
 from it belongs here: the portal's `fire-classification` labels and the campaign paper's classes
 are **the same source**, not two agreeing ones, so they are not mutual corroboration.
 
-### 21.13 Per-region fuel from EFFIS -- and the result it undermines
+### 21.13 Per-region fuel from EFFIS -- and the assumption it removes
 
 `w_a` was a single Tuscan number, 1.49 kg/m2, applied to Catalan, Greek, Dutch and Chilean
 fires. §21.10 charged ~2.7x of the fire-side gap to it, making it the best-defined remaining
@@ -1259,31 +1259,34 @@ for Guissona, from 7 % of its ground. That is not what burned.
 | w_a 1.49 uniform (baseline) | 1/2 | 0/28 | 0.067 |
 | + resolution correction (§21.11) | 1/2 | 0/28 | 0.067 |
 | + EFFIS per-fire, agricultural cells excluded | 1/2 | 1/28 | 0.131 |
-| + EFFIS per-fire, **agri = NFFL 1 (short grass)** | **0/2** | 0/28 | **1.000** |
-| + EFFIS per-fire, agri = NFFL 3 (tall grass) | 1/2 | 0/28 | 0.067 |
+| + EFFIS per-fire, agri = NFFL 1 (short grass) | 0/2 | 0/28 | 1.000 |
+| **+ EFFIS per-fire, agri = NFFL 3 (tall grass)** | **1/2** | **0/28** | **0.067** |
 
-Treating Catalan cereal as short grass gives Guissona `w_a` = 0.45 kg/m2, dropping its firepower
-from 342 to 103 GW against a 139 GW threshold: margin +0.45 -> **-0.07**, and **the only positive
-detection in the corpus disappears**. Tall grass keeps it.
+Treating Catalan cereal as *short* grass would give Guissona `w_a` = 0.45 kg/m2, dropping its
+firepower from 342 to 103 GW against a 139 GW threshold and erasing the only positive detection
+in the corpus.
 
-So Guissona clearing its PFT -- the one piece of positive evidence in §21.7-21.10, and the basis
-for "the physics picks out the campaign's clearest pyroCb" -- **rests in part on having applied a
-Tuscan shrub load to a wheat field.** That has to be said plainly, because every earlier
-statement in this section was made without it.
+**NFFL 3 (tall grass) is the correct assignment for Catalan cereal at harvest** (C. Foderi,
+2026-07-29), and it is the default in `scripts/fuel_load_effis.py`. On it, Guissona's `w_a` is
+**1.07 kg/m2** -- between the 3.67 that ignoring the cereal gives and the 0.45 of short grass --
+its margin is **+0.30**, and it remains the **only positive of 30 columns and the top-ranked**.
 
-What it does *not* mean is that the criterion is refuted. The two readings differ by one
-judgement -- whether Catalan cereal at harvest is NFFL 1 or NFFL 3 -- which is an operational
-question for someone who knows those fuels, not something this analysis can settle. It is now
-the highest-leverage unknown in the chain: it decides a result that three previous sections
-treated as established.
+The important consequence is not the score, which is unchanged from baseline. It is that the
+score no longer rests on an assumption: `w_a` is now mapped per fire rather than borrowed from
+Tuscany, and the one positive detection **survives that replacement**. Before this section the
+detection could have been an artifact of giving a wheat field a shrub load; it is not.
 
-Two further caveats on the map itself: it is `FuelMap2000`, built on year-2000 land cover and
-published in 2017, and 250 m is coarse against fires whose runs are mapped at 20-60 min. Neither
-is disqualifying; both belong in any citation of these numbers.
+Scope of the assignment: NFFL 3 is applied to every unclassified cell, so it also covers Greek
+agriculture, where it is plausible but not separately confirmed. Those fires run 40-60 %
+unclassified against 93-99 % in the Catalan cereal belt, so the assignment matters most exactly
+where it is validated. `unclassified_fraction` is stored per fire.
 
-The per-fire **NFFL class histogram is stored** in
-`docs/pyroconv_validation/fuel_effis.json`, so any other assignment can be re-tested from the
-corpus without the 622 MB raster.
+Two caveats on the map itself: it is `FuelMap2000`, built on year-2000 land cover and published
+in 2017, and 250 m is coarse against fires whose runs are mapped at 20-60 min. Neither is
+disqualifying; both belong in any citation of these numbers.
+
+The per-fire **NFFL class histogram** is stored in `docs/pyroconv_validation/fuel_effis.json`, so
+any other assignment can be re-tested from the corpus without the 622 MB raster.
 
 ### 21.14 Standing conclusion
 
@@ -1307,18 +1310,20 @@ actually been established:
 * the fire-side gap is near-uniform across observed classes, so closing it is calibration and
   does not produce discrimination (§21.11).
 
-**One earlier claim is now withdrawn.** §21.7-21.10 rested on the capability margin picking out
-Guissona, the campaign's clearest pyroCb, with no false positives. §21.13 shows that detection
-depends on having given a cereal-belt fire a Tuscan shrub fuel load: with per-fire EFFIS fuel and
-its agricultural cells treated as short grass, Guissona no longer clears and the corpus contains
-**no positive detection at all**. Whether it survives turns on one operational judgement --
-NFFL 1 versus NFFL 3 for Catalan cereal at harvest -- which this analysis cannot settle. Until it
-is settled, "the physics identifies the pyroCb" is not a claim this document supports.
+* the capability margin puts Guissona -- the campaign's clearest pyroCb -- **first of 30
+  columns**, as the only one clearing its own atmospheric requirement, with no false positives
+  (§21.7); and this **survives replacing the assumed fuel load with mapped per-fire fuel**
+  (§21.13), so it is not an artifact of having borrowed a Tuscan shrub load for a wheat field.
 
-That leaves the honest position: **nothing in the ladder, and nothing proposed to replace it,
-has demonstrated skill on this corpus.** Two pyroCb in ~17 independent fires was never enough to
-show any, and the one apparent success was fuel-assumption-dependent. The value of §21 is the
-negative results and the measurement infrastructure, not a validated criterion.
+That last point was in doubt until the fuel map was brought in, and it was worth testing: on the
+wrong cereal assignment the detection disappears entirely. It holds on the right one.
+
+What it still is not, is skill. **One positive detection at Fisher p = 0.067, from 2 pyroCb in
+~17 independent fires, does not demonstrate a working criterion** -- it fails to reject chance at
+the conventional level, and the second pyroCb (Santa Coloma) ranks 9th. The value of §21 remains
+the negative results and the measurement infrastructure. What has changed is that the fire-side
+chain is now measured end to end, so the next fire that produces a pyroCb tests a criterion with
+no free assumptions left in it.
 
 The corollary for the rest of this document changes accordingly. **Do not use 12/27 exact as a
 bar** -- it is 7 points above a majority-class baseline and anti-correlated with severity.

@@ -41,8 +41,9 @@ be re-tested from the stored JSON without the 622 MB raster.
 
 That treatment is not a detail. It decides the headline result of sec. 21: Guissona, the only
 fire in the corpus that clears its PFT, sits on ground EFFIS leaves 93 % unclassified. Calling
-that cereal NFFL 1 (short grass) drops its firepower from 342 to 103 GW against a 139 GW
-threshold and the detection vanishes; calling it NFFL 3 (tall grass) keeps it. See sec. 21.13.
+that cereal NFFL 1 (short grass) would drop its firepower from 342 to 103 GW against a 139 GW
+threshold and the detection would vanish. **NFFL 3 (tall grass) is the correct assignment for
+Catalan cereal at harvest**, and it keeps it. See sec. 21.13.
 
 Usage:  PYTHONPATH=src:scripts python scripts/fuel_load_effis.py [--out PATH]
 """
@@ -67,6 +68,12 @@ EFFIS_TIF = os.environ.get(
 LB_FT2_TO_KG_M2 = 4.882
 MED_ADJUST = float(os.environ.get("PYFLAM_FUEL_MED_ADJUST", 1.30))
 MIN_RADIUS_M = 2000.0
+# NFFL model for EFFIS's unclassified (agricultural) cells. 3 = tall grass, confirmed as the
+# correct assignment for Catalan cereal at harvest by C. Foderi (2026-07-29). It is applied to
+# every unclassified cell, so it also covers Greek agriculture, where it is plausible but not
+# separately confirmed -- those fires run 40-60 % unclassified, against 93-99 % in the Catalan
+# cereal belt, so the assignment matters most exactly where it is validated.
+AGRI_NFFL = 3
 # Mediterranean basin, for the +30 % adjustment: Iberia through Greece, south of the Alps.
 MED_BOX = (34.0, 46.0, -10.0, 30.0)          # south, north, west, east
 
@@ -139,9 +146,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=os.path.join(valdata.DATA, "fuel_effis.json"))
     ap.add_argument("--tif", default=EFFIS_TIF)
-    ap.add_argument("--agri-nffl", type=int, default=0, metavar="N",
-                    help="assign unclassified (agricultural) cells NFFL model N; "
-                         "0 (default) leaves them out of the mean")
+    ap.add_argument("--agri-nffl", type=int, default=AGRI_NFFL, metavar="N",
+                    help=f"assign unclassified (agricultural) cells NFFL model N "
+                         f"(default {AGRI_NFFL}, tall grass); 0 leaves them out of the mean")
     a = ap.parse_args()
 
     if not os.path.exists(a.tif):
