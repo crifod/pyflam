@@ -1067,7 +1067,97 @@ none depend on anyone's labels:
 That last point is the substantive gain. The validation path no longer runs through a dataset
 that has to be requested.
 
-### 21.9 Standing conclusion
+### 21.9 Out-of-sample: the portal's non-sonded fires
+
+The portal carries a `fire-classification` taxonomy on **all 27 fires**, using the same class
+names as the campaign paper, and the two agree on every fire they share. 19 fires have sondes,
+so **8 are out-of-sample**. ERA5 at each fire's peak-growth hour supplies the atmosphere -- no
+sonde, no splice -- which is also the configuration an operational run would use.
+
+| fire | obs | PFT GW | crit ha/h | obs ha/h | margin |
+|:--|--:|--:|--:|--:|--:|
+| varnavas | 1 | 1346 | 30979 | 1939 | -1.20 |
+| lavrio | 1 | 925 | 21277 | 860 | -1.39 |
+| batea | 1 | 247 | 5691 | 83 | -1.84 |
+| thimari | 1 | 804 | 18497 | 54 | -2.53 |
+| mequinensa | 1 | 2689 | 61877 | 69 | -2.95 |
+| etos | 1 | 1403 | 32277 | 33 | -2.99 |
+| la-figuera | 1 | 608 | 13996 | 13 | -3.02 |
+| katsimidi | 1 | 1161 | 26708 | 11 | -3.37 |
+
+**Zero false positives, and the margins land in the same range as the sonde-based ones** -- so
+the method transfers to reanalysis input without a systematic shift. That portability is the
+result worth keeping.
+
+The specificity claim itself is weak, and should not be quoted without this caveat: **all 8 are
+class 1**, so there is no label variance and no rank correlation to compute, and every fire sits
+1.2-3.4 log units below its threshold. A criterion nothing comes near cannot produce false
+positives. There is not one boundary case in the set.
+
+Combined with the campaign sondes: **30 fire-observations, 2 pyroCb.** Guissona ranks **first of
+30** (the only positive margin; under random ranking p = 2/30 = 0.067).
+
+### 21.10 Is the PFT systematically high? No -- the gap is on the firepower side
+
+Only 1 of 30 columns ever exceeds its PFT, and Santa Coloma missed by 5.5x. That pattern reads
+as a threshold biased high. It is not.
+
+**First, SCQ was being tested against the wrong day.** §18 established that its sonde is from
+24 July while Castellnou Fig. 6d places the pyroCb on the **25th**; §21.7 nonetheless scored it
+on the 24th. Recomputed from ERA5 across the 25th:
+
+| atmosphere | PFT GW | crit ha/h | obs ha/h | margin |
+|:--|--:|--:|--:|--:|
+| 24 Jul 19Z (sonde day, pyroCu) | 301 | 6932 | 358 | -1.29 |
+| 25 Jul 11Z (pyroCb day) | 137 | 3144 | 276 | -1.06 |
+| 25 Jul 18Z (pyroCb day) | **67** | 1532 | 276 | **-0.74** |
+
+**PFT falls 4.5x on the pyroCb day** -- the atmosphere side correctly identifies the day the
+fire blew up, on the case that had looked like its clearest failure. What remains short is the
+fire side.
+
+**Second, the PFT magnitude is independently anchored.** Eq 31 reproduces the paper (Black
+Saturday 1244 GW against a published 1240), and our PFT over 29 fire-columns runs 26-2689 GW
+with a **median of 448** -- inside Tory & Kepert's real-event range of ~100 GW (Chisholm
+afternoon) to 1240 GW (Black Saturday morning), with Sir Ivan at ~300 GW described as near the
+upper limit for most wildfires. A PFT biased 5.5x high would put our median near 2500 GW.
+
+**Third, the margin only constrains the ratio.** `margin = log10(FP/PFT)`, so a uniform 5.5x
+discrepancy is identifiable but its owner is not -- unless one side is pinned independently.
+PFT is. So the gap falls to FP, whose two soft terms cover it almost exactly:
+
+| term | current | defensible | factor |
+|:--|:--|:--|--:|
+| `w_a` | 1.49 kg/m2 (Tuscany 10 m median) | 4.0 (T&K upper; dense Mediterranean shrub) | 2.7x |
+| `dA/dt` | mean over a 60 min mapping interval | instantaneous peak | 1.5-2x |
+| | | **combined** | **4.0-5.4x** |
+
+against an observed 5.5x. A Tuscan fuel median is being applied to Catalan, Greek and Chilean
+fires, and growth is a mean over a 60-minute window (median interval across 213 intervals).
+Both understate FP, both in the same direction.
+
+Sweeping a uniform PFT scale over the 30 columns, with SCQ corrected:
+
+| PFT scale | TP | FP | FN | precision | Fisher p |
+|--:|--:|--:|--:|--:|--:|
+| 1.0 | 1 | 0 | 1 | 1.00 | 0.067 |
+| 3.0 | 1 | 0 | 1 | 1.00 | 0.067 |
+| **5.5** | **2** | **4** | **0** | 0.33 | **0.035** |
+| 12.0 | 2 | 7 | 0 | 0.22 | 0.083 |
+| 50.0 | 2 | 16 | 0 | 0.11 | 0.352 |
+
+At 5.5x both pyroCb are captured for 4 false positives. **That p is optimised over 8 thresholds
+-- corrected it is ~0.28, not significant** -- and it is quoted as a description of the sweep,
+not as a calibration.
+
+**Conclusion: this is a measurement problem on the fire side, not a threshold-calibration
+problem.** Two concrete steps, neither requiring anything from GRAF:
+
+1. **Per-region `w_a`.** The pipeline exists (`scripts/fuel_load_10m.py`); it needs a Catalan
+   fuel map rather than the Tuscany one.
+2. **Finer `dA/dt`.** The 60-minute median mapping interval is the limiting resolution.
+
+### 21.11 Standing conclusion
 
 **`lcl_ratio_overshoot_max = 1.60` remains the default**, but for a third and much narrower
 reason than either previous version of this section gave. It is *not* that the proxy
