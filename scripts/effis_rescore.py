@@ -61,6 +61,28 @@ score([r[2] for r in base], obs, "w_a 1.49 uniform, native rate (baseline)")
 score([r[2] + np.log10(res_factor(r[0])) for r in base], obs, "+ resolution correction")
 score(final, obs, "+ per-fire EFFIS w_a (agri = NFFL 3)")
 
+# Sample structure and pyroCb ranks -- the numbers sec. 21.13-21.14 quote, printed by the
+# script that produces them rather than transcribed.
+order = sorted(zip(base, final), key=lambda x: -x[1])
+distinct = []
+for (s_, o_, m_), f_ in order:
+    if s_ not in distinct:
+        distinct.append(s_)
+print(f"\ncolumns {len(base)} | distinct fires {len(set(s_ for s_, _, _ in base))} | "
+      f"pyroCb columns {sum(1 for _, o_, _ in base if o_ >= 4)} | "
+      f"distinct pyroCb fires {len(set(s_ for s_, o_, _ in base if o_ >= 4))}")
+for i, ((s_, o_, m_), f_) in enumerate(order, 1):
+    if o_ >= 4:
+        print(f"  pyroCb rank: #{i} of {len(order)} columns, "
+              f"#{distinct.index(s_)+1} of {len(distinct)} distinct fires -- {s_} ({f_:+.2f})")
+K = sum(1 for _, o_, _ in base if o_ >= 4); N = len(base)
+nd = sum(1 for f_ in final if f_ > 0)
+tp_ = sum(1 for (s_, o_, m_), f_ in zip(base, final) if f_ > 0 and o_ >= 4)
+pv = (sum(comb(K, i) * comb(N-K, nd-i) for i in range(tp_, min(K, nd)+1)) / comb(N, nd)
+      if nd else 1.0)
+print(f"  hypergeometric N={N} K={K} draws={nd} hits={tp_} -> p = {pv:.4f} "
+      f"({'rejects' if pv < 0.05 else 'does NOT reject'} at 0.05)")
+
 print(f"\n{'fire':26s} {'obs':>3s} {'w_a':>6s} {'unclass':>8s} {'margin':>7s}")
 seen = set()
 for (s, o, m), f in sorted(zip(base, final), key=lambda x: -x[1]):

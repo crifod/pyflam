@@ -69,7 +69,11 @@ client; nothing else here does.
 
 ## Scope
 
-27 sonde-columns over 19 sonded fires, plus 8 fires with a label but no sounding: **30 usable
-fire-columns, of which 2 are observed pyroCb.** Every statistic in §21 rests on that, and the
-effective sample is ~17 independent fires rather than 30 columns. The section states this at
-each result; it should not be quoted without it.
+27 sonde-columns over 19 sonded fires, plus 8 fires with a label but no sounding. The margin
+analysis uses the 30 columns with a resolvable growth rate, drawn from **24 distinct fires**, of
+which **2 are observed pyroCb**.
+
+Fires, not columns, are the independent unit — several fires contribute multiple sondes — so
+column-based p-values are optimistic. The headline detection scores p = 0.067 on columns and
+p = 0.083 on distinct fires; neither rejects chance at 0.05. §21 states this at each result and
+it should not be quoted without it.

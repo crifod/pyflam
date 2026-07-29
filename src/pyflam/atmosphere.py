@@ -1794,8 +1794,8 @@ def critical_growth_rate_grid(pft_gw, *, fuel_load_kg_m2=1.49,
     majority-class baseline, and a *negative* rank correlation with the observed class. The
     capability margin ``log10(dA/dt_observed / dA/dt_crit)`` ranks better (rho +0.32) and flags
     exactly one fire of 22 as capable, which is the campaign's clearest pyroCb, with no false
-    positives. Neither result is significant at that sample size (~15 independent fires); see
-    docs/graf_vs_pyflam_2026-07-26.md sec. 21.7.
+    positives. Neither result is significant: the margin subset is 22 columns from 16 distinct
+    fires, with 2 observed pyroCb. See docs/graf_vs_pyflam_2026-07-26.md sec. 21.7.
 
     ``fuel_load_kg_m2`` defaults to the Tuscany 10 m FBFM40 median (:mod:`scripts.fuel_load_10m`)
     and should be passed per cell where a fuel map is available. ``alpha`` and the heat of

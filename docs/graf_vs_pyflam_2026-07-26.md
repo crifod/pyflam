@@ -1047,9 +1047,10 @@ fire the physics says exceeded its atmospheric requirement is the one that produ
 The miss is Santa Coloma de Queralt, already documented in §18 as the case where PFT runs ~2x
 short.
 
-**Honest limit:** 27 sondes come from 15 fires, so the effective n is ~15 and every p-value
-above is optimistic. Nothing here is statistically established, and the margin is *not* wired
-into the ladder.
+**Honest limit:** the 27 sondes come from **19 distinct fires**, and the rows above use the 22
+columns with a resolvable growth rate, from **16 distinct fires**. Fires, not columns, are the
+independent unit, so every p-value above is optimistic. Nothing here is statistically
+established, and the margin is *not* wired into the ladder.
 
 ### 21.8 Why this is the durable form
 
@@ -1318,9 +1319,11 @@ actually been established:
 That last point was in doubt until the fuel map was brought in, and it was worth testing: on the
 wrong cereal assignment the detection disappears entirely. It holds on the right one.
 
-What it still is not, is skill. **One positive detection at Fisher p = 0.067, from 2 pyroCb in
-~17 independent fires, does not demonstrate a working criterion** -- it fails to reject chance at
-the conventional level, and the second pyroCb (Santa Coloma) ranks 9th. The value of §21 remains
+What it still is not, is skill. **One positive detection does not demonstrate a working
+criterion.** The 30 columns come from **24 distinct fires** carrying **2 observed pyroCb**;
+scoring on columns gives Fisher p = 0.067, and on distinct fires -- the independent unit --
+p = 0.083. Neither rejects chance at the conventional level. The second pyroCb, Santa Coloma,
+ranks **#9 of 24 fires** (#10 of 30 columns). The value of §21 remains
 the negative results and the measurement infrastructure. What has changed is that the fire-side
 chain is now measured end to end, so the next fire that produces a pyroCb tests a criterion with
 no free assumptions left in it.
