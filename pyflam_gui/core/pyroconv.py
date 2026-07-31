@@ -757,7 +757,7 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True,
         shear_height_grid, shear_distance_grid, _EPSILON, max_rh_abl_grid,
         entrainment_jump_grid, fire_cape_grid, residual_layer_grid,
         pyrocb_firepower_threshold_grid, plume_entrainment_fraction,
-        critical_growth_rate_grid,
+        critical_growth_rate_grid, continuous_haines_grid,
         critical_rh_for_cloud_persistence)
     th = thresholds or DEFAULT_PYROCONV_THRESHOLDS
 
@@ -927,8 +927,14 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True,
     crit_growth = critical_growth_rate_grid(pft["pft_gw"],
                                             fuel_load_kg_m2=_DEFAULT_FUEL_LOAD_KG_M2)
 
+    # C-Haines on the identical columns as the PFT. The two diagnostics disagree about what a
+    # weak lid means -- CH scores it low, the PFT scores it cheap -- and nothing in the
+    # literature settles which orders real events. Exporting both is the precondition for
+    # finding out; see docs/graf_vs_pyflam_2026-07-26.md.
+    chaines = continuous_haines_grid(T, QV, P)
+
     return dict(abl=abl, abl_rib=abl_rib, lcl=lcl, lcl_ratio=ratio, ml_grad=ml_grad,
-                crit_growth_ha_h=crit_growth,
+                crit_growth_ha_h=crit_growth, chaines=chaines,
                 rh_top_critical=rh_top_critical, rh_top_margin=rh_top_margin,
                 entrainment_fraction=chi,
                 gamma=gamma,
@@ -971,7 +977,8 @@ def regrid_diagnostics(diag, lat_src, lon_src, lat_dst, lon_dst, *, abl_min_m=AB
     fields = ("abl", "lcl", "lcl_ratio", "ml_grad", "gamma", "rh_top", "parcel_ml",
               "shear_dist", "fireabl", "decoupling", "residual_ml", "delta_theta",
               "firecape", "penetration", "pft_gw", "z_fc", "delta_theta_fc", "u_ml",
-              "abl_rib", "rh_top_critical", "rh_top_margin", "entrainment_fraction")
+              "abl_rib", "rh_top_critical", "rh_top_margin", "entrainment_fraction",
+              "chaines", "crit_growth_ha_h")
     out = {k: regrid_to(diag[k], lat_src, lon_src, lat_dst, lon_dst)
            for k in fields if k in diag}
     out["valid"] = (np.isfinite(out["abl"]) & np.isfinite(out["lcl_ratio"])

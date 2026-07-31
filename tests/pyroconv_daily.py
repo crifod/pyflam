@@ -568,7 +568,7 @@ def export_diagnostics(diags, lat, lon):
         for name in ("abl", "parcel_ml", "lcl", "lcl_ratio", "ml_grad", "gamma", "rh_top",
                      "fireabl", "decoupling",
                      "residual_ml", "delta_theta", "firecape", "penetration",
-                     "pft_gw", "z_fc", "delta_theta_fc", "u_ml", "abl_rib",
+                     "pft_gw", "z_fc", "delta_theta_fc", "u_ml", "abl_rib", "chaines",
                      "fuel_load", "burnable_fraction", "firepower_gw", "pft_margin",
                      "crit_growth_ha_h"):
             if name not in diags[hi]:

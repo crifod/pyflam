@@ -426,6 +426,58 @@ def continuous_haines(profile: AtmosphericProfile, *,
     return float(ca + cb)
 
 
+def continuous_haines_grid(temperature_k, specific_humidity, pressure_pa, *,
+                           low_hpa: float = 850.0, high_hpa: float = 700.0):
+    """Gridded C-Haines from a model-level stack -- the grid twin of :func:`continuous_haines`.
+
+    ``temperature_k``, ``specific_humidity`` and ``pressure_pa`` are ``(nlev, ny, nx)`` stacks
+    ordered **ascending in height** (index 0 = lowest level = highest pressure), the layout
+    :data:`ICON_EU_MODEL_LEVELS` produces. Returns ``(ny, nx)`` of ``CA + CB``.
+
+    Model levels are hybrid-height, not isobaric, so the two reference pressures are reached by
+    interpolating each column **linearly in log-p** -- the same convention
+    :meth:`AtmosphericProfile._at` uses on pressure-level data, so the two paths agree where
+    they overlap. Columns whose stack does not span a reference pressure return ``nan`` rather
+    than an extrapolated value.
+
+    Exists so the stability/dryness diagnostic can be scored on the *identical* columns as the
+    firepower threshold. The two order the same column differently -- C-Haines rewards a strong
+    850->700 lapse, the PFT rewards a weak lid the plume can escape cheaply -- and that
+    disagreement is not resolved in the literature. Exporting both is what makes it testable.
+    """
+    T = np.asarray(temperature_k, float)
+    QV = np.asarray(specific_humidity, float)
+    P = np.asarray(pressure_pa, float)
+    lnp = np.log(np.clip(P, 1.0, None))
+    e = QV * P / (_EPSILON + (1.0 - _EPSILON) * QV)              # vapour pressure, Pa
+    # Bolton (1980) inverted: Td from vapour pressure, over liquid water.
+    le = np.log(np.clip(e, 1.0e-6, None) / 611.2)
+    Td = 243.5 * le / (17.67 - le) + 273.15
+
+    def _at(target_hpa, field):
+        """Per-column linear-in-log-p interpolation of ``field`` to ``target_hpa``."""
+        tgt = np.log(target_hpa * 100.0)
+        nlev = T.shape[0]
+        out = np.full(T.shape[1:], np.nan)
+        # lnp decreases with index (ascending height); find the bracketing pair per column.
+        for k in range(nlev - 1):
+            lo, hi = lnp[k], lnp[k + 1]
+            m = (lo >= tgt) & (tgt >= hi) & np.isnan(out)
+            if not m.any():
+                continue
+            w = np.where(np.abs(lo - hi) > 1e-12, (lo - tgt) / (lo - hi), 0.0)
+            out = np.where(m, field[k] + w * (field[k + 1] - field[k]), out)
+        return out
+
+    t_lo = _at(low_hpa, T) - 273.15
+    t_hi = _at(high_hpa, T) - 273.15
+    td_hi = _at(high_hpa, Td) - 273.15
+    ca = (t_lo - t_hi) / 2.0 - 2.0
+    cb = (t_hi - td_hi) / 3.0 - 1.0
+    cb = np.where(cb > 5.0, 5.0 + (cb - 5.0) / 2.0, cb)          # Mills & McCaw cap
+    return ca + cb
+
+
 def inverted_v(profile: AtmosphericProfile, *, mid_hpa: float = 600.0,
                surface_depression_c: float = 10.0, mid_rh_pct: float = 50.0):
     """Detect the inverted-V (dry mixed layer, moist aloft) pyroCb-prone sounding.
