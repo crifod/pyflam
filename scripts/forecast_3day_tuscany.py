@@ -1,14 +1,28 @@
 """3-day Tuscany pyroconvection forecast (hybrid) from a single 00Z run, as one report.
 
 Runs the tested daily pipeline (tests/pyroconv_daily.py) for three valid days -- the run day
-and the next two forecast days -- then stitches the three days into three combined 3-row
-figures and a markdown/PDF report:
+and the next two forecast days -- then stitches the three days into combined 3-row figures and
+a markdown/PDF report. The maps are ordered to answer three questions, in escalating order:
 
-  * **FUEL-GATED** -- the expected product (a class only where the .lcp fuels support
-    >= 10 MW/m of fireline intensity);
-  * **POTENTIAL** -- the atmospheric upper bound (assumes a pyroCu-capable fire everywhere);
+  1. **POTENTIAL** -- *what is the most intense pyroconvection this column could sustain?*
+     The atmospheric upper bound: the ladder run with no fire-side condition at all.
+  2. **FUEL-GATED** -- *is there enough fire here to make a plume at all?*  The same ladder
+     with each cell forced to a surface plume below 10 MW/m of Byram intensity on the .lcp
+     fuels (Tedim et al. 2018).
+  3. **PFT MARGIN** -- *is there enough fire here to make a pyroCb in this specific column?*
+     Per-cell total firepower over that column's own PyroCb Firepower Threshold (Tory &
+     Kepert 2021). A far harder test than (2), and a continuous one.
+
+A fourth, supporting map rides along:
+
   * **dry-pyrocloud decoupling** -- the continuous fireABL/ABL ratio for a reference intense
     fire, the DRY counterpart to the moist class ladder (diagnostic, no class label).
+
+Questions 2 and 3 share an input -- both descend from the same Byram intensity field -- but
+they are different tests and they disagree: (2) compares power *per metre of front* against a
+fixed constant, (3) converts it to a *total* power through an assumed head-fire length and
+compares it against a locally computed threshold. Cells can clear (2) and fail (3) by orders
+of magnitude, which is the point of carrying both.
 
 Every day is a **complete 24 h cycle, 3-hourly, always starting at 00Z of the run day**
 (00, 03, 06, 09, 12, 15, 18, 21Z), on the Tuscany domain with ISTAT province borders.
@@ -20,6 +34,9 @@ Usage:  PYTHONPATH=src python scripts/forecast_3day_tuscany.py [YYYY-MM-DD run-d
 Env:    PYROCONV_OUT (folder, default docs/forecast_<rundate>_3day), plus the usual
         PYROCONV_* knobs honoured by tests/pyroconv_daily.py. PYROCONV_HOURS is *not*
         honoured here -- the product is defined on the full 00-21Z cycle.
+        SKIP_BASE_RUN=1 re-stitches the figures and report from rasters already on disk,
+        without re-running the three daily pipelines -- the only way to revise a published
+        report after DWD has dropped the run.
 """
 import os
 import subprocess
@@ -35,6 +52,8 @@ sys.path.insert(0, REPO)
 from pyflam.atmosphere import (PYROCONVECTION_TYPES, PYROCONVECTION_TYPE_LEVEL,
                                PYROCONVECTION_TYPE_LABEL, pyroconvection_colors)
 from pyflam_gui.core.pyroconv import ABL_MIN_M, _REFERENCE_THETA_EXCESS_K
+sys.path.insert(0, HERE)
+import pyroconv_i18n as I18N        # report prose + figure labels, en/it
 
 RUNDATE = sys.argv[1] if len(sys.argv) > 1 else datetime.now(timezone.utc).strftime("%Y-%m-%d")
 RUN = int(sys.argv[2]) if len(sys.argv) > 2 else 0
@@ -63,6 +82,18 @@ NODATA_COLOR = "0.92"                                     # land with no classif
 DECOUP_VMIN, DECOUP_VMAX = 1.0, 8.0
 # Decoupling levels the summary table counts (ratio >= x over the classified land).
 DECOUP_LEVELS = (2.0, 3.0)
+# PFT margin = firepower / PyroCb Firepower Threshold. 1.0 is the criterion, and it is the
+# colour pivot -- everything below is blue, everything at or above is red, with no ambiguity
+# about which side of the threshold a cell is on. The scale is logarithmic because the field
+# spans four decades: the median burnable cell sits near 5e-3, the domain max near 7.
+PFT_MARGIN_VMIN, PFT_MARGIN_VMAX = 1.0e-3, 10.0
+# Margin levels the summary table counts. 1.0 is the criterion; 0.1 is the within-one-decade
+# band, which is where a bigger head fire than the assumed 700 m would start to matter.
+PFT_MARGIN_LEVELS = (1.0, 0.1)
+# Cells with no burnable fuel have exactly zero firepower, so their margin is exactly zero --
+# a categorical "no", not a small number. Drawn white rather than at the bottom of the log
+# scale, which would read as "very weak fire" when the truth is "no fire".
+NOFUEL_COLOR = "#ffffff"
 
 
 def provenance():
@@ -78,7 +109,11 @@ def provenance():
     try:
         h = _sp.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO, capture_output=True,
                     text=True, timeout=10, check=True).stdout.strip()
-        dirty = _sp.run(["git", "status", "--porcelain"], cwd=REPO, capture_output=True,
+        # -uno: untracked files are ignored. The run writes its own output folder into the
+        # repo, so without this every report stamps itself "+local-changes" and the flag
+        # loses all meaning. What matters for reproducibility is whether *tracked* code
+        # differs from HEAD.
+        dirty = _sp.run(["git", "status", "--porcelain", "-uno"], cwd=REPO, capture_output=True,
                         text=True, timeout=10).stdout.strip()
         ver = h + ("+local-changes" if dirty else "")
     except Exception:
@@ -177,7 +212,7 @@ def valid_stack(valid):
             & np.isfinite(load_diag_stack(valid, "ml_grad")) & (abl >= ABL_MIN_M))
 
 
-def combined_figure(kind, path):
+def combined_figure(kind, path, lang):
     """WRF-style day x hour grid: geographic panels, sea masked, province borders, legend."""
     import matplotlib; matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -215,24 +250,22 @@ def combined_figure(kind, path):
                 axc.set_title(f"{hour:02d}Z", fontsize=9)
             if c == 0:
                 axc.set_ylabel(f"{valid}\n(+{r}d)", fontsize=9)
-    title = ("FUEL-GATED -- expected (fire power >= 10 MW/m on the Tuscany fuels)"
-             if kind == "gated"
-             else "POTENTIAL -- atmospheric upper bound (assumes a pyroCu-capable fire everywhere)")
-    fig.suptitle(f"Tuscany pyroconvection -- 3-day forecast -- {title}\n"
-                 f"ICON-EU model levels + ICON-2I 2.2 km gate -- run {RUNDATE} {RUN:02d}Z",
+    title = I18N.f(lang, "gated_title" if kind == "gated" else "potential_title")
+    head = ("Piroconvezione in Toscana -- previsione 3 giorni" if lang == "it"
+            else "Tuscany pyroconvection -- 3-day forecast")
+    fig.suptitle(f"{head} -- {title}\n"
+                 f"{I18N.f(lang, 'src_hybrid')} -- {I18N.f(lang, 'run')} {RUNDATE} {RUN:02d}Z",
                  fontsize=12)
     leg = [Patch(facecolor=COLORS[t], edgecolor="0.4",
-                 label=f"{PYROCONVECTION_TYPE_LEVEL[t]}  {PYROCONVECTION_TYPE_LABEL[t]}")
+                 label=f"{PYROCONVECTION_TYPE_LEVEL[t]}  {I18N.CLASS_LABEL[lang][t]}")
            for t in PYROCONVECTION_TYPES]
-    leg.append(Patch(facecolor=NODATA_COLOR, edgecolor="0.4",
-                     label="n/c  not classifiable (no usable column)"))
+    leg.append(Patch(facecolor=NODATA_COLOR, edgecolor="0.4", label=I18N.f(lang, "nc")))
     fig.legend(handles=leg, loc="lower center", ncol=6, fontsize=9, frameon=False,
-               title="Pyroconvection class (0 = lowest -> 4 = highest)",
-               bbox_to_anchor=(0.5, -0.09))
+               title=I18N.f(lang, "class_legend_title"), bbox_to_anchor=(0.5, -0.09))
     fig.savefig(path, dpi=140, bbox_inches="tight"); plt.close(fig)
 
 
-def decoupling_figure(path):
+def decoupling_figure(path, lang):
     """Day x hour grid of the dry-pyrocloud decoupling ratio (fireABL / ABL).
 
     The DRY counterpart to the class maps, on the same geographic panels: how high a
@@ -275,13 +308,166 @@ def decoupling_figure(path):
                 axc.set_title(f"{hour:02d}Z", fontsize=9)
             if c == 0:
                 axc.set_ylabel(f"{valid}\n(+{r}d)", fontsize=9)
-    fig.suptitle("Tuscany dry-pyrocloud decoupling -- 3-day forecast -- fireABL / ABL "
-                 f"(reference fire: {_REFERENCE_THETA_EXCESS_K:.0f} K plume excess -- DIAGNOSTIC, no class)\n"
-                 f"ICON-EU model levels + ICON-2I 2.2 km gate -- run {RUNDATE} {RUN:02d}Z",
+    fig.suptitle(f"{I18N.f(lang, 'decoup_title')} "
+                 f"({I18N.f(lang, 'decoup_ref', k=_REFERENCE_THETA_EXCESS_K)})\n"
+                 f"{I18N.f(lang, 'src_hybrid')} -- {I18N.f(lang, 'run')} {RUNDATE} {RUN:02d}Z",
                  fontsize=12)
     cb = fig.colorbar(im, ax=ax, shrink=0.6, aspect=34, pad=0.01)
-    cb.set_label("fireABL / ABL   (1 = no decoupling; higher = deeper dry decoupling)", fontsize=9)
+    cb.set_label(I18N.f(lang, "decoup_cb"), fontsize=9)
     fig.savefig(path, dpi=140, bbox_inches="tight"); plt.close(fig)
+
+
+def fire_bridge_constants():
+    """``(head-fire length m, convective fraction)`` -- the Byram-to-PFT bridge, from the
+    daily runner that actually computed the margin.
+
+    Read from ``tests/pyroconv_daily.py`` rather than restated here so the figure cannot end
+    up labelled with a head-fire length the field was not computed at; that script owns them
+    (and honours ``PYROCONV_HEADFIRE_M``). It parses ``sys.argv`` at import, so argv is
+    neutralised for the duration -- this script's own arguments are not its arguments.
+    """
+    import importlib.util
+    src = os.path.join(REPO, "tests", "pyroconv_daily.py")
+    argv = sys.argv
+    try:
+        sys.argv = [src]
+        spec = importlib.util.spec_from_file_location("_pyroconv_daily_consts", src)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return float(mod._HEADFIRE_LENGTH_M), float(mod._CONVECTIVE_FRACTION)
+    except Exception as e:
+        sys.stderr.write(f"[3day] head-fire constants unavailable ({e}); figure will not state them\n")
+        return None, None
+    finally:
+        sys.argv = argv
+
+
+def pft_margin_figure(path, lang):
+    """Day x hour grid of the PFT margin: firepower / PyroCb Firepower Threshold.
+
+    The third question the report answers -- *is there enough fire here to make a pyroCb in
+    this specific column?* -- and the only one of the three whose threshold is computed per
+    column rather than fixed. Logarithmic, diverging about the criterion at 1.0, so that the
+    single fact a reader must not misread -- which side of 1 a cell is on -- is carried by
+    the colour pivot rather than by reading a number off a bar.
+
+    Three exclusions, each drawn differently on purpose: columns the classifier rejects are
+    grey (no atmosphere to test against), cells with no burnable fuel are white (zero
+    firepower -- a categorical no, not a small margin), and sea is masked.
+    """
+    import matplotlib; matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import ListedColormap, TwoSlopeNorm
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+
+    _, lat0, lon0 = load_stack(DAYS[0], "potential")
+    ext = [lon0.min(), lon0.max(), lat0.min(), lat0.max()]
+    sea = sea_mask(lat0, lon0)
+    prov = provinces()
+    cmap = plt.get_cmap("RdYlBu_r").copy()
+    cmap.set_bad(alpha=0.0)                      # unclassifiable land -> panel facecolor
+    sea_cmap, nofuel_cmap = ListedColormap([SEA_COLOR]), ListedColormap([NOFUEL_COLOR])
+    lo, hi = np.log10(PFT_MARGIN_VMIN), np.log10(PFT_MARGIN_VMAX)
+    norm = TwoSlopeNorm(vcenter=0.0, vmin=lo, vmax=hi)          # log10(margin), pivot at 1.0
+
+    fig, ax = plt.subplots(len(DAYS), len(HOURS), figsize=(2.05 * len(HOURS), 2.5 * len(DAYS)),
+                           constrained_layout=True, squeeze=False)
+    im = None
+    for r, valid in enumerate(DAYS):
+        mg, ok = load_diag_stack(valid, "pft_margin"), valid_stack(valid)
+        gate, _, _ = load_stack(valid, "gated")
+        for c, hour in enumerate(HOURS):
+            axc = ax[r][c]
+            axc.set_facecolor(NODATA_COLOR)
+            m = np.where(ok[c], mg[c].astype(float), np.nan)
+            nofuel = np.isfinite(m) & (m <= 0)
+            # Clip into the drawn range before the log: below the floor the exact value is
+            # not resolvable on this scale anyway, and above the ceiling the pivot is what
+            # matters, not how far past it the cell went (the table carries the true max).
+            lm = np.log10(np.clip(np.where(nofuel, np.nan, m), PFT_MARGIN_VMIN, PFT_MARGIN_VMAX))
+            im = axc.imshow(np.ma.masked_invalid(lm), origin="upper", extent=ext, cmap=cmap,
+                            norm=norm, aspect="auto", interpolation="nearest")
+            axc.imshow(np.ma.masked_where(~nofuel, np.zeros_like(m)), origin="upper", extent=ext,
+                       cmap=nofuel_cmap, aspect="auto", interpolation="nearest")
+            # Ring every cell that meets the criterion. Without this the map fails at the one
+            # job it has: the field spans three decades below 1 and the cells at or above it
+            # are a handful of 2 km pixels, so on a printed panel the answer to question 3 is
+            # invisible inside the colour ramp that is supposed to convey it.
+            # ...but split by whether the cell also clears question 2. The two criteria are
+            # not nested: a column whose PFT has collapsed to a few GW can be "passed" by a
+            # fire far too weak to raise any pyroCu at all, and marking those the same way
+            # as a genuine candidate would be the most misleading thing this figure could do.
+            hit = np.isfinite(m) & (m >= 1.0)
+            gpass = hit & (gate[c] > 0)
+            gfail = hit & ~gpass
+            if gpass.any():
+                yy, xx = np.nonzero(gpass)
+                axc.scatter(lon0[xx], lat0[yy], s=15, facecolors="none", edgecolors="black",
+                            linewidths=0.7, zorder=6)
+            if gfail.any():
+                yy, xx = np.nonzero(gfail)
+                axc.scatter(lon0[xx], lat0[yy], s=11, marker="x", color="0.35",
+                            linewidths=0.6, zorder=5)
+            if sea is not None and sea.shape == m.shape:
+                axc.imshow(np.ma.masked_where(~sea, np.zeros_like(m)), origin="upper",
+                           extent=ext, cmap=sea_cmap, aspect="auto", interpolation="nearest")
+            if prov is not None:
+                prov.plot(ax=axc, color="0.25", linewidth=0.4)
+                axc.set_xlim(ext[0], ext[1]); axc.set_ylim(ext[2], ext[3])
+            axc.set_xticks([]); axc.set_yticks([])
+            if r == 0:
+                axc.set_title(f"{hour:02d}Z", fontsize=9)
+            if c == 0:
+                axc.set_ylabel(f"{valid}\n(+{r}d)", fontsize=9)
+    hf, cf = fire_bridge_constants()
+    bridge = "" if hf is None else f" ({I18N.f(lang, 'margin_bridge', m=hf, c=cf)})"
+    fig.suptitle(f"{I18N.f(lang, 'margin_title')}{bridge}\n"
+                 f"{I18N.f(lang, 'src_hybrid')} -- {I18N.f(lang, 'run')} {RUNDATE} {RUN:02d}Z",
+                 fontsize=12)
+    ticks = [t for t in range(int(lo), int(hi) + 1)]
+    cb = fig.colorbar(im, ax=ax, shrink=0.6, aspect=34, pad=0.01, ticks=ticks)
+    cb.ax.set_yticklabels([("1" if t == 0 else f"$10^{{{t}}}$") for t in ticks])
+    cb.set_label(I18N.f(lang, "margin_cb"), fontsize=9)
+    cb.ax.axhline(0.0, color="0.1", linewidth=1.6)                # the criterion, drawn on the bar
+    fig.legend(handles=[Line2D([], [], marker="o", linestyle="none", markersize=7,
+                               markerfacecolor="none", markeredgecolor="black",
+                               label=I18N.f(lang, "margin_hit")),
+                        Line2D([], [], marker="x", linestyle="none", markersize=6, color="0.35",
+                               label=I18N.f(lang, "margin_miss")),
+                        Patch(facecolor=NOFUEL_COLOR, edgecolor="0.4",
+                              label=I18N.f(lang, "nofuel")),
+                        Patch(facecolor=NODATA_COLOR, edgecolor="0.4",
+                              label=I18N.f(lang, "nc"))],
+               loc="lower center", ncol=4, fontsize=8.5, frameon=False, bbox_to_anchor=(0.5, -0.05))
+    fig.savefig(path, dpi=140, bbox_inches="tight"); plt.close(fig)
+
+
+def pft_margin_table():
+    """Per-day daytime PFT-margin summary over the classifiable, burnable land.
+
+    Rows are (day, hour, % grid with firepower, % of that at margin >= 1, >= 0.1, domain max).
+    The denominator is deliberately the *burnable and classifiable* share rather than the
+    domain: a percentage of Tuscany would be dominated by the cells that carry no fuel and can
+    never contribute, and would fall towards zero for reasons that have nothing to do with the
+    forecast. The carried share makes that denominator visible.
+    """
+    rows = []
+    for valid in DAYS:
+        mg, ok = load_diag_stack(valid, "pft_margin"), valid_stack(valid)
+        gate, _, _ = load_stack(valid, "gated")
+        for hi, h in enumerate(HOURS):
+            if h not in DAYTIME:
+                continue
+            m = np.where(ok[hi], mg[hi].astype(float), np.nan)
+            fire = np.isfinite(m) & (m > 0)          # a column to test, and fuel to test it with
+            n = max(int(fire.sum()), 1)
+            pct = [round(100.0 * int((fire & (m >= lv)).sum()) / n, 1) for lv in PFT_MARGIN_LEVELS]
+            hit = fire & (m >= 1.0)
+            rows.append((valid, h, round(100.0 * int(fire.sum()) / fire.size, 1), *pct,
+                         round(float(m[fire].max()), 2) if fire.any() else float("nan"),
+                         int(hit.sum()), int((hit & (gate[hi] > 0)).sum())))
+    return rows
 
 
 def decoupling_table():
@@ -331,117 +517,121 @@ def dist_table(kind):
     return rows, n
 
 
-def build_report(png_pot, png_gate, png_decoup):
-    md = os.path.join(OUT, f"forecast_3day_{RUNDATE}.md")
-    pdf = os.path.join(OUT, f"forecast_3day_{RUNDATE}.pdf")
+def build_report(png_pot, png_gate, png_margin, png_decoup, lang):
+    """Write the .md and build the .pdf for one language, from the same rasters.
+
+    The two editions are generated in the same call chain from one set of computed tables, so
+    they cannot drift apart on a number: only the prose and the column headers come from the
+    language table. Numbers are formatted once, here.
+    """
+    sfx = I18N.SUFFIX[lang]
+    md = os.path.join(OUT, f"forecast_3day_{RUNDATE}{sfx}.md")
+    pdf = os.path.join(OUT, f"forecast_3day_{RUNDATE}{sfx}.pdf")
+    # The parameter is named _key, not k: the prose blocks take a kwarg called k (the
+    # reference plume excess), and a shorter name here would shadow it.
+    def T(_key, **kw):
+        return I18N.t(lang, _key, **kw)
     rows, n = dist_table("gated")
-    lines = ["| Day | Hour | surface | convect | overshoot | resilient | deep | n/c |",
-             "|:--|:--|--:|--:|--:|--:|--:|--:|"]
+    hf, cf = fire_bridge_constants()
+    mlines = [T("mtbl_head"), "|:--|:--|--:|--:|--:|--:|--:|--:|"]
+    for valid, h, fire, p1, p01, mx, n1, nboth in pft_margin_table():
+        mlines.append(f"| {valid} | {h:02d}Z | {fire} | {p1} | {p01} | {mx} | {n1} | **{nboth}** |")
+    mtbl = "\n".join(mlines)
+    lines = [T("ctbl_head"), "|:--|:--|--:|--:|--:|--:|--:|--:|"]
     for valid, h, pct in rows:
         if h in DAYTIME:                # daytime rows only, to keep the table compact
             lines.append(f"| {valid} | {h:02d}Z | " + " | ".join(str(x) for x in pct) + " |")
     tbl = "\n".join(lines)
-    dlines = ["| Day | Hour | % grid classifiable | % area ratio >= 2 | % area ratio >= 3 "
-              "| max ratio |", "|:--|:--|--:|--:|--:|--:|"]
+    dlines = [T("dtbl_head"), "|:--|:--|--:|--:|--:|--:|"]
     for valid, h, cls, p2, p3, mx in decoupling_table():
         dlines.append(f"| {valid} | {h:02d}Z | {cls} | {p2} | {p3} | {mx} |")
     dtbl = "\n".join(dlines)
     hours_txt = ", ".join(f"{h:02d}Z" for h in HOURS)
     code_ver, gen_at = provenance()
+    abl = int(ABL_MIN_M)
     with open(md, "w") as f:
         f.write(f"""---
-title: "Tuscany Pyroconvection -- 3-Day Forecast -- run {RUNDATE} {RUN:02d}Z"
-subtitle: "Valid {DAYS[0]} .. {DAYS[2]}. Hybrid: ICON-EU model levels + ICON-2I 2.2 km fuel gate. Method after Castellnou et al. (2022)."
+title: "{T('title_3day', rundate=RUNDATE, run=RUN)}"
+subtitle: "{T('subtitle_3day', d0=DAYS[0], d2=DAYS[2])}"
 geometry: a4paper, landscape, margin=1.1cm
 fontsize: 9pt
+lang: {lang}
+header-includes: |
+  \\usepackage{{float}}
+  \\floatplacement{{figure}}{{H}}
 ---
 
-## 3-day forecast
+## {T('h_intro_3day')}
 
-Three valid days from the single {RUNDATE} {RUN:02d}Z run (day 0, +1, +2), using the day+1/+2
-forecast steps in the same ICON-EU + ICON-2I datasets. Each day is a **complete 24 h cycle,
-3-hourly, starting at 00Z of the run day** ({hours_txt}), so the three day-rows of every figure
-are directly comparable and day 0 opens at the run's own initial time. Panels are the Tuscany
-domain with ISTAT province borders; the sea is masked. Atmosphere from ICON-EU native model
-levels (bulk-Richardson ABL, Bolton LCL, measured mixed-layer dtheta/dz, cap gamma-theta,
-ABL-top RH, shear); the 10 MW/m fuel gate uses ICON-2I's 2.2 km surface fields on the Tuscany
-.lcp fuels. See scripts/validation/README.md for the diagnostic validation (radiosondes + ERA5).
+{T('p_intro_3day', rundate=RUNDATE, run=RUN, hours=hours_txt)}
 
-Three map series follow. The **fuel-gated** map is the expected product; the **potential** map
-is the atmospheric upper bound (assumes a pyroCu-capable fire in every cell); the
-**dry-pyrocloud decoupling** map is the dry counterpart to both, and carries no class label.
-Read class *counts* as indicative.
+### {T('h_questions')}
 
-## Fuel-gated (expected)
+{T('questions_intro')}
 
-![gated]({os.path.basename(png_gate)}){{width=100%}}
+{T('questions_table')}
 
-## Potential (atmospheric upper bound)
+{T('questions_note')}
 
-![potential]({os.path.basename(png_pot)}){{width=100%}}
+{T('questions_fourth')}
 
-## Dry-pyrocloud decoupling -- DIAGNOSTIC (no class label)
+## {T('h1')}
 
-![decoupling]({os.path.basename(png_decoup)}){{width=100%}}
+![{T('cap1')}]({os.path.basename(png_pot)}){{width=100%}}
 
-The **decoupling ratio** fireABL / ABL is how high a reference intense fire
-(a {_REFERENCE_THETA_EXCESS_K:.0f} K plume temperature excess -- the intense end of the GRAF in-plume
-measurements, 0.1-13.1 K) would grow its own boundary layer by
-*sensible heat alone*, divided by the ambient ABL. It is the **dry** counterpart to the moist
-class maps above (Castellnou et al. 2022; Castellnou Ribau et al. 2024): values well above 1
-mark deep, hot, dry columns where a fire can punch through and decouple from the surface *even
-where the moist ladder scores low*, which is exactly the situation the gated map under-reports.
-Like the potential map it assumes a fire everywhere -- here a fixed reference flux rather than
-a computed one -- so it is an upper bound, not an expectation, and no dry/moist LCL split is
-applied (the +1 km literature offset is not supported by the GRAF prototype labels). fireABL
-from `pyflam.atmosphere.fire_induced_abl_grid`, the parcel intersected with the real theta(z)
-stack; cells the classifier rejects (no usable column, or ABL below {int(ABL_MIN_M)} m) are left
-blank rather than painted with a bare quotient.
+{T('p1')}
 
-## Dry decoupling -- daytime, % of the classifiable land
+## {T('h2')}
+
+![{T('cap2')}]({os.path.basename(png_gate)}){{width=100%}}
+
+{T('p2')}
+
+## {T('h3')}
+
+![{T('cap3')}]({os.path.basename(png_margin)}){{width=100%}}
+
+{T('p3a')}
+
+{T('p3b', m=hf or 0.0, c=cf or 0.0)}
+
+{T('p3c')}
+
+{T('p3d')}
+
+### {T('h_nested')}
+
+{T('p_nested')}
+
+## {T('h_margin_table')}
+
+{mtbl}
+
+{T('p_mtbl')}
+
+## {T('h4', n=4)}
+
+![{T('cap4')}]({os.path.basename(png_decoup)}){{width=100%}}
+
+{T('p_decoup', k=_REFERENCE_THETA_EXCESS_K, abl=abl)}
+
+## {T('h_dtbl')}
 
 {dtbl}
 
-*% grid classifiable* is the share of the domain with a usable column at that hour (ABL above
-{int(ABL_MIN_M)} m); the two ratio columns are percentages **of that share**, not of Tuscany.
-The denominator collapses towards sunset as the mixed layer decays, so an 18Z row can read
-100% off a small residual area -- read it together with the classifiable column.
+{T('p_dtbl', abl=abl)}
 
-## Fuel-gated class distribution -- daytime, % of land cells ({n} land cells)
+## {T('h_ctbl', n=n)}
 
 {tbl}
 
-Classes: 0 surface plume, 1 convection plume, 2 overshooting pyroCu, 3 resilient pyroCu,
-4 deep pyroCu/pyroCb. **n/c** is land with no classifiable column (no usable profile, or an
-ABL below {int(ABL_MIN_M)} m) -- distinct from class 0, which is the ladder's finding that the
-column supports only a surface plume. Around sunset n/c takes most of the domain; those hours
-carry no forecast, and must not be read as quiet ones.
+{T('p_ctbl', abl=abl)}
 
-## Evening columns and the residual layer
+## {T('h_evening')}
 
-After sunset the convective layer collapses into a shallow stable layer, but the air above it
-keeps the day's near-neutral profile -- the **residual layer**. A surface-referenced parcel
-finds only the stable layer, and a mixed-layer dtheta/dz fitted inside that depth has no levels
-to work with, so the whole domain used to fall out as unclassifiable. The gradient is now
-fitted over the deeper of the parcel and residual depths (`atmosphere.residual_layer_grid`),
-which by day reduces exactly to the parcel depth and only differs in the evening. **This changes
-the evening classes**: those hours now carry a forecast where they previously carried none.
-Treat them with more caution than the midday ones -- the diagnostic is newer and the residual
-depth it returns still looks shallow against what the profile suggests.
+{T('p_evening')}
 
-Two further diagnostics ride along and are **not** used by the classifier: the entrainment-zone
-jump `delta_theta` (the potential-temperature step a plume must cross to escape the mixed layer)
-and `firecape` (Potter 2005, the CAPE of a fire-heated parcel). Both come from the source
-method's variable set; neither gates a class here, because the penetration test they imply does
-not yet discriminate at this product's reference fire strength. See
-`docs/graf_vs_pyflam_2026-07-26.md`.
-
-Per-hour class and diagnostic GeoTIFFs accompany this report in `rasters_hybrid_<day>/`:
-ABL, parcel_ml, residual_ml, LCL, LCL/ABL, ML dtheta/dz, cap gamma-theta, RH-top, fireABL,
-decoupling, delta_theta, firecape, penetration.
-Generated by scripts/forecast_3day_tuscany.py at pyflam `{code_ver}`, {gen_at}.
-This product cannot be regenerated once DWD drops the run (~24 h), so it is frozen with
-the physics of that commit.
+{T('p_footer', ver=code_ver, at=gen_at)}
 """)
     try:
         # Run from OUT: the image links are basenames, and pandoc resolves relative paths
@@ -452,7 +642,7 @@ the physics of that commit.
                        timeout=300, cwd=OUT)
         return pdf
     except Exception as e:
-        sys.stderr.write(f"PDF build skipped ({e})\n"); return None
+        sys.stderr.write(f"PDF build skipped for {lang} ({e})\n"); return None
 
 
 def main():
@@ -460,17 +650,30 @@ def main():
         sys.exit(f"run {RUN:02d}Z: this product starts at 00Z of the run day, so day 0 would be "
                  f"missing its first {RUN} h. Use the 00Z run.")
     os.makedirs(OUT, exist_ok=True)
-    for valid in DAYS:
-        run_daily(valid)
-    png_pot = os.path.join(OUT, f"forecast_3day_potential_{RUNDATE}.png")
-    png_gate = os.path.join(OUT, f"forecast_3day_gated_{RUNDATE}.png")
-    png_decoup = os.path.join(OUT, f"forecast_3day_decoupling_{RUNDATE}.png")
-    combined_figure("potential", png_pot)
-    combined_figure("gated", png_gate)
-    decoupling_figure(png_decoup)
-    pdf = build_report(png_pot, png_gate, png_decoup)
+    if os.environ.get("SKIP_BASE_RUN") == "1":
+        print("SKIP_BASE_RUN=1: re-stitching from the rasters already in "
+              f"{OUT} -- the daily pipelines are not re-run.")
+    else:
+        for valid in DAYS:
+            run_daily(valid)
+    # One figure set and one report per language, from the identical rasters. The English
+    # filenames keep their historical form so existing links still resolve.
+    made = []
+    for lang in I18N.LANGS:
+        sfx = I18N.SUFFIX[lang]
+        png_pot = os.path.join(OUT, f"forecast_3day_potential_{RUNDATE}{sfx}.png")
+        png_gate = os.path.join(OUT, f"forecast_3day_gated_{RUNDATE}{sfx}.png")
+        png_margin = os.path.join(OUT, f"forecast_3day_pft_margin_{RUNDATE}{sfx}.png")
+        png_decoup = os.path.join(OUT, f"forecast_3day_decoupling_{RUNDATE}{sfx}.png")
+        combined_figure("potential", png_pot, lang)
+        combined_figure("gated", png_gate, lang)
+        pft_margin_figure(png_margin, lang)
+        decoupling_figure(png_decoup, lang)
+        pdf = build_report(png_pot, png_gate, png_margin, png_decoup, lang)
+        made += [png_pot, png_gate, png_margin, png_decoup] + ([pdf] if pdf else [])
     print(f"\nOK 3-day forecast -> {OUT}")
-    print(f"  {png_pot}\n  {png_gate}\n  {png_decoup}" + (f"\n  {pdf}" if pdf else ""))
+    for m in made:
+        print(f"  {m}")
 
 
 if __name__ == "__main__":

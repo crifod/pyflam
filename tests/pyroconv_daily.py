@@ -59,6 +59,9 @@ from pyflam_gui.core.pyroconv import (
     read_icon_eu, iconeu_diagnostics, regrid_diagnostics,
     _REFERENCE_THETA_EXCESS_K, ML_FIT_MIN_PTS, PYROCONV_NODATA, ABL_MIN_M,
     lcp_fields as _core_lcp_fields)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                "scripts"))
+import pyroconv_i18n as I18N        # report prose + figure labels, en/it
 
 warnings.simplefilter("ignore")
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -148,7 +151,11 @@ def provenance():
     try:
         h = _sp.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO, capture_output=True,
                     text=True, timeout=10, check=True).stdout.strip()
-        dirty = _sp.run(["git", "status", "--porcelain"], cwd=REPO, capture_output=True,
+        # -uno: untracked files are ignored. The run writes its own output folder into the
+        # repo, so without this every report stamps itself "+local-changes" and the flag
+        # loses all meaning. What matters for reproducibility is whether *tracked* code
+        # differs from HEAD.
+        dirty = _sp.run(["git", "status", "--porcelain", "-uno"], cwd=REPO, capture_output=True,
                         text=True, timeout=10).stdout.strip()
         ver = h + ("+local-changes" if dirty else "")
     except Exception:
@@ -182,7 +189,7 @@ def lcp_fields(lat, lon):
     return _core_lcp_fields(ls, lat, lon, _TO3035)
 
 
-def render(cats, lat, lon, tag):
+def render(cats, lat, lon, tag, lang="en", write_rasters=True):
     import matplotlib; matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.colors import ListedColormap, BoundaryNorm
@@ -205,19 +212,21 @@ def render(cats, lat, lon, tag):
             prov.plot(ax=ax[hi], color="0.15", linewidth=0.4)
             ax[hi].set_xlim(ext[0], ext[1]); ax[hi].set_ylim(ext[2], ext[3])
         ax[hi].set_title(f"{DATE} {hour:02d}Z", fontsize=8); ax[hi].set_xticks([]); ax[hi].set_yticks([])
-    src_label = ("ICON-EU model levels + ICON-2I 2.2 km gate" if EFFECTIVE_SOURCE == "hybrid"
-                 else "ICON-2I 2.2 km")
-    fig.suptitle(f"Pyroconvection type -- {TAG_TITLE.get(tag, tag)}\n{src_label} -- "
-                 f"Tuscany -- VALID {DATE} (run {RUNDATE} {RUN:02d}Z)", fontsize=11)
+    src_label = I18N.f(lang, "src_hybrid" if EFFECTIVE_SOURCE == "hybrid" else "src_icon2i")
+    fig.suptitle(f"{I18N.f(lang, 'type_prefix')} -- {I18N.f(lang, tag + '_title_daily')}\n"
+                 f"{src_label} -- {I18N.f(lang, 'tuscany')} -- {I18N.f(lang, 'valid')} {DATE} "
+                 f"({I18N.f(lang, 'run')} {RUNDATE} {RUN:02d}Z)", fontsize=11)
     leg = [Patch(facecolor=COLORS[t], edgecolor="0.4",
-                 label=f"{PYROCONVECTION_TYPE_LEVEL[t]}  {PYROCONVECTION_TYPE_LABEL[t]}")
+                 label=f"{PYROCONVECTION_TYPE_LEVEL[t]}  {I18N.CLASS_LABEL[lang][t]}")
            for t in PYROCONVECTION_TYPES]
-    leg.append(Patch(facecolor=NODATA_COLOR, edgecolor="0.4", label="n/c  not classifiable"))
+    leg.append(Patch(facecolor=NODATA_COLOR, edgecolor="0.4", label=I18N.f(lang, "nc_short")))
     fig.legend(handles=leg, loc="lower center", ncol=6, fontsize=8.5, frameon=False,
-               title="Pyroconvection class (0 = lowest activity -> 4 = highest)",
-               bbox_to_anchor=(0.5, -0.12))
-    png = os.path.join(OUTDIR, f"pyroconv_tuscany_{MODEL_TAG}_{tag}_{DATE}.png")
+               title=I18N.f(lang, "class_legend_title"), bbox_to_anchor=(0.5, -0.12))
+    png = os.path.join(OUTDIR,
+                       f"pyroconv_tuscany_{MODEL_TAG}_{tag}_{DATE}{I18N.SUFFIX[lang]}.png")
     fig.savefig(png, dpi=140, bbox_inches="tight"); plt.close(fig)
+    if not write_rasters:                # rasters carry no language; one pass writes them
+        return png
     dlon = float(abs(lon[1]-lon[0])); dlat = float(abs(lat[1]-lat[0]))
     tr = from_origin(lon.min()-dlon/2, lat.max()+dlat/2, dlon, dlat)
     for hi, hour in enumerate(HOURS):
@@ -229,7 +238,7 @@ def render(cats, lat, lon, tag):
     return png
 
 
-def render_decoupling(diags, lat, lon):
+def render_decoupling(diags, lat, lon, lang="en"):
     """Render the dry-pyrocloud decoupling ratio (fireABL / ABL) as an 8-hour panel.
 
     A continuous heatmap, the DRY counterpart to the moist class map: how far a
@@ -258,22 +267,143 @@ def render_decoupling(diags, lat, lon):
             ax[hi].set_xlim(ext[0], ext[1]); ax[hi].set_ylim(ext[2], ext[3])
         ax[hi].set_title(f"{DATE} {hour:02d}Z", fontsize=8)
         ax[hi].set_xticks([]); ax[hi].set_yticks([])
-    src_label = ("ICON-EU model levels + ICON-2I 2.2 km gate" if EFFECTIVE_SOURCE == "hybrid"
-                 else "ICON-2I 2.2 km")
-    fig.suptitle(f"Dry-pyrocloud decoupling  fireABL / ABL  "
-                 f"(reference fire: {_REFERENCE_THETA_EXCESS_K:.0f} K plume excess -- DIAGNOSTIC, no class)\n"
-                 f"{src_label} -- Tuscany -- VALID {DATE} (run {RUNDATE} {RUN:02d}Z)", fontsize=11)
+    src_label = I18N.f(lang, "src_hybrid" if EFFECTIVE_SOURCE == "hybrid" else "src_icon2i")
+    fig.suptitle(f"{I18N.f(lang, 'decoup_title_daily')}  "
+                 f"({I18N.f(lang, 'decoup_ref', k=_REFERENCE_THETA_EXCESS_K)})\n"
+                 f"{src_label} -- {I18N.f(lang, 'tuscany')} -- {I18N.f(lang, 'valid')} {DATE} "
+                 f"({I18N.f(lang, 'run')} {RUNDATE} {RUN:02d}Z)", fontsize=11)
     cb = fig.colorbar(im, ax=ax, shrink=0.72, aspect=30, pad=0.01)
-    cb.set_label("fireABL / ABL   (1 = no decoupling; higher = deeper dry decoupling)", fontsize=8)
-    png = os.path.join(OUTDIR, f"pyroconv_tuscany_{MODEL_TAG}_decoupling_{DATE}.png")
+    cb.set_label(I18N.f(lang, "decoup_cb"), fontsize=8)
+    png = os.path.join(OUTDIR,
+                       f"pyroconv_tuscany_{MODEL_TAG}_decoupling_{DATE}{I18N.SUFFIX[lang]}.png")
     fig.savefig(png, dpi=140, bbox_inches="tight"); plt.close(fig)
     return png
 
 
-def build_pdf(png_pot, png_gate, ladders, n_levels, png_decoup=None, ml_fit_support=None):
-    md = os.path.join(OUTDIR, f"pyroconv_{MODEL_TAG}_{DATE}.md")
-    pdf = os.path.join(OUTDIR, f"pyroconv_tuscany_{MODEL_TAG}_{DATE}.pdf")
-    ladder_txt = ", ".join(ladders) if ladders else "none (no classifiable cell)"
+PFT_MARGIN_VMIN, PFT_MARGIN_VMAX = 1.0e-3, 10.0
+PFT_MARGIN_LEVELS = (1.0, 0.1)      # the criterion, and the within-one-decade band
+NOFUEL_COLOR = "#ffffff"            # zero firepower: a categorical no, not a small margin
+
+
+def render_pft_margin(diags, gate, lat, lon, lang="en"):
+    """Render firepower / PyroCb Firepower Threshold as an 8-hour panel, or ``None``.
+
+    The third question the product answers -- *is there enough fire here to make a pyroCb in
+    this specific column?* -- and the only one whose threshold is computed per column rather
+    than fixed. Returns ``None`` when the run has no margin field (no fuel gate, or an
+    ICON-2I-only run that cannot form a PFT).
+
+    Logarithmic and diverging about the criterion at 1.0, because the field spans four
+    decades and the one fact a reader must not misread is which side of 1 a cell is on. Cells
+    meeting the criterion are marked individually: at 2 km they are a few pixels, and inside a
+    four-decade ramp the answer would otherwise be invisible.
+    """
+    if not gate or not all("pft_margin" in d for d in diags):
+        return None
+    import matplotlib; matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import ListedColormap, TwoSlopeNorm
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+    flip = lat[0] > lat[-1]; ext = [lon.min(), lon.max(), lat.min(), lat.max()]
+    prov = _tuscany_provinces()
+    cmap = plt.get_cmap("RdYlBu_r").copy(); cmap.set_bad(NODATA_COLOR)
+    nofuel_cmap = ListedColormap([NOFUEL_COLOR])
+    lo, hi = np.log10(PFT_MARGIN_VMIN), np.log10(PFT_MARGIN_VMAX)
+    norm = TwoSlopeNorm(vcenter=0.0, vmin=lo, vmax=hi)          # log10(margin), pivot at 1.0
+    fig, ax = plt.subplots(1, len(HOURS), figsize=(2.1*len(HOURS), 3.0),
+                           constrained_layout=True, squeeze=False)
+    ax = ax[0]
+    im = None
+    for hi_, hour in enumerate(HOURS):
+        m = np.where(np.asarray(diags[hi_]["valid"], bool),
+                     np.asarray(diags[hi_]["pft_margin"], float), np.nan)
+        g = np.asarray(gate[hi_])
+        nofuel = np.isfinite(m) & (m <= 0)
+        lm = np.log10(np.clip(np.where(nofuel, np.nan, m), PFT_MARGIN_VMIN, PFT_MARGIN_VMAX))
+        a = (lambda x: x[::-1] if flip else x)
+        im = ax[hi_].imshow(np.ma.masked_invalid(a(lm)), origin="lower", extent=ext, cmap=cmap,
+                            norm=norm, aspect="auto", interpolation="nearest")
+        ax[hi_].imshow(np.ma.masked_where(~a(nofuel), np.zeros_like(a(m))), origin="lower",
+                       extent=ext, cmap=nofuel_cmap, aspect="auto", interpolation="nearest")
+        # Split by whether the cell also clears the fuel gate. The two criteria are not
+        # nested: a column whose PFT has collapsed to a few GW is "passed" by a fire far too
+        # weak to raise any pyroCu at all, and marking those as candidates would be the most
+        # misleading thing this panel could do.
+        hit = np.isfinite(m) & (m >= 1.0)
+        for sel, kw in ((hit & (g > 0), dict(s=15, facecolors="none", edgecolors="black",
+                                             linewidths=0.7, zorder=6)),
+                        (hit & ~(g > 0), dict(s=11, marker="x", color="0.35",
+                                              linewidths=0.6, zorder=5))):
+            if sel.any():
+                yy, xx = np.nonzero(sel)
+                ax[hi_].scatter(lon[xx], lat[yy], **kw)
+        if prov is not None:
+            prov.plot(ax=ax[hi_], color="0.15", linewidth=0.4)
+            ax[hi_].set_xlim(ext[0], ext[1]); ax[hi_].set_ylim(ext[2], ext[3])
+        ax[hi_].set_title(f"{DATE} {hour:02d}Z", fontsize=8)
+        ax[hi_].set_xticks([]); ax[hi_].set_yticks([])
+    src_label = I18N.f(lang, "src_hybrid" if EFFECTIVE_SOURCE == "hybrid" else "src_icon2i")
+    fig.suptitle(f"{I18N.f(lang, 'margin_title_daily')}  "
+                 f"({I18N.f(lang, 'margin_bridge', m=_HEADFIRE_LENGTH_M, c=_CONVECTIVE_FRACTION)})\n"
+                 f"{src_label} -- {I18N.f(lang, 'tuscany')} -- {I18N.f(lang, 'valid')} {DATE} "
+                 f"({I18N.f(lang, 'run')} {RUNDATE} {RUN:02d}Z)", fontsize=11)
+    ticks = list(range(int(lo), int(hi) + 1))
+    cb = fig.colorbar(im, ax=ax, shrink=0.72, aspect=30, pad=0.01, ticks=ticks)
+    cb.ax.set_yticklabels([("1" if t == 0 else f"$10^{{{t}}}$") for t in ticks])
+    cb.set_label(I18N.f(lang, "margin_cb"), fontsize=8)
+    cb.ax.axhline(0.0, color="0.1", linewidth=1.6)              # the criterion, drawn on the bar
+    fig.legend(handles=[
+        Line2D([], [], marker="o", linestyle="none", markersize=7, markerfacecolor="none",
+               markeredgecolor="black", label=I18N.f(lang, "margin_hit")),
+        Line2D([], [], marker="x", linestyle="none", markersize=6, color="0.35",
+               label=I18N.f(lang, "margin_miss")),
+        Patch(facecolor=NOFUEL_COLOR, edgecolor="0.4", label=I18N.f(lang, "nofuel")),
+        Patch(facecolor=NODATA_COLOR, edgecolor="0.4", label=I18N.f(lang, "nc_short"))],
+        loc="lower center", ncol=4, fontsize=8, frameon=False, bbox_to_anchor=(0.5, -0.12))
+    png = os.path.join(OUTDIR,
+                       f"pyroconv_tuscany_{MODEL_TAG}_pft_margin_{DATE}{I18N.SUFFIX[lang]}.png")
+    fig.savefig(png, dpi=140, bbox_inches="tight"); plt.close(fig)
+    return png
+
+
+def pft_margin_rows(diags, gate):
+    """``(hour, %grid with firepower, %>=1, %>=0.1, max, n>=1, n>=1 and gate-passing)`` rows.
+
+    The denominator for the two percentages is the burnable *and* classifiable share, not the
+    domain: a percentage of Tuscany would be dominated by cells that carry no fuel and can
+    never contribute, and would move for reasons unrelated to the forecast. The last column
+    applies the joint criterion and is the count to act on.
+    """
+    if not gate or not all("pft_margin" in d for d in diags):
+        return []
+    rows = []
+    for hi, hour in enumerate(HOURS):
+        m = np.where(np.asarray(diags[hi]["valid"], bool),
+                     np.asarray(diags[hi]["pft_margin"], float), np.nan)
+        fire = np.isfinite(m) & (m > 0)
+        n = max(int(fire.sum()), 1)
+        pct = [round(100.0 * int((fire & (m >= lv)).sum()) / n, 1) for lv in PFT_MARGIN_LEVELS]
+        hit = fire & (m >= 1.0)
+        rows.append((hour, round(100.0 * int(fire.sum()) / fire.size, 1), *pct,
+                     round(float(m[fire].max()), 2) if fire.any() else float("nan"),
+                     int(hit.sum()), int((hit & (np.asarray(gate[hi]) > 0)).sum())))
+    return rows
+
+
+def build_pdf(png_pot, png_gate, ladders, n_levels, png_decoup=None, ml_fit_support=None,
+              png_margin=None, margin_rows=None, lang="en"):
+    """Write the .md and build the .pdf for one language, from one set of computed values.
+
+    Called once per language from :func:`main`; the numbers are formatted here and only the
+    prose comes from the language table, so the two editions cannot disagree about a value.
+    """
+    sfx = I18N.SUFFIX[lang]
+    md = os.path.join(OUTDIR, f"pyroconv_{MODEL_TAG}_{DATE}{sfx}.md")
+    pdf = os.path.join(OUTDIR, f"pyroconv_tuscany_{MODEL_TAG}_{DATE}{sfx}.pdf")
+    def T(_key, **kw):
+        return I18N.t(lang, _key, **kw)
+    ladder_txt = ", ".join(ladders) if ladders else T("ladder_none")
     code_ver, gen_at = provenance()
     # The fifth (shear) diagnostic is available only where the profile resolves a
     # shear-maximum height: the ICON-EU model levels do, ICON-2I's 5 pressure levels do not,
@@ -281,234 +411,108 @@ def build_pdf(png_pot, png_gate, ladders, n_levels, png_decoup=None, ml_fit_supp
     # run actually hit -- asserting the pressure-level answer would misdescribe every hybrid
     # run, where the full ladder does run and class 4 does carry its shear clause.
     has_shear = "shear" in ladders
-    if has_shear and len(ladders) > 1:
-        shear_para = (
-            "**Ladder actually used for this run: `{lad}`.** The fifth diagnostic -- the distance "
-            "from the ABL/LCL to the height of maximum wind shear -- resolved over part of the "
-            "domain only, so the full 5-diagnostic ladder ran there and the reduced one "
-            "elsewhere. That clause is a *necessary* condition for the top class, so class 4 is "
-            "somewhat **easier** to reach in the cells that fell back than in the ones that did "
-            "not. Treat class 4 as an alert to inspect the column, not as a calibrated "
-            "probability.")
-    elif has_shear:
-        shear_para = (
-            "**Ladder actually used for this run: `{lad}`.** The full 5-diagnostic method ran: the "
-            "model levels resolved a shear-maximum height, so class 4 additionally required that "
-            "maximum to sit within 0.30 ABL of the ABL/LCL -- a *necessary* condition the reduced "
-            "ladders omit. Class 4 here therefore carries its shear clause; it remains an alert "
-            "to inspect the column rather than a calibrated probability.")
+    which = ("partial" if has_shear and len(ladders) > 1 else "full" if has_shear else "none")
+    shear_para = T(f"shear_{which}", lad=ladder_txt)
+    shear_row = T(f"shear_row_{which}")
+    hybrid = EFFECTIVE_SOURCE == "hybrid"
+    src_title = I18N.f(lang, "src_hybrid" if hybrid else "src_icon2i")
+    heights_txt = T("heights_hybrid" if hybrid else "heights_icon2i")
+    ml_rows = T("ml_rows_hybrid" if hybrid else "ml_rows_icon2i")
+    forcing_txt = T("forcing_hybrid" if hybrid else "forcing_icon2i", n=n_levels)
+    if hybrid:
+        sup = (T("sup_txt", pct=100.0 * ml_fit_support, pts=ML_FIT_MIN_PTS)
+               if ml_fit_support is not None else T("sup_none"))
+        ml_para = T("ml_para_hybrid", n=n_levels, sup=sup)
     else:
-        shear_para = (
-            "**Ladder actually used for this run: `{lad}`.** The full method has a fifth "
-            "diagnostic -- the distance from the ABL/LCL to the height of maximum wind shear -- "
-            "which this source cannot resolve, so the reduced ladder runs. The shear clause is a "
-            "*necessary* condition for the top class, so omitting it makes class 4 somewhat "
-            "**easier** to reach here than in the full method. Treat class 4 as an alert to "
-            "inspect the column, not as a calibrated probability.")
-    shear_para = shear_para.format(lad=ladder_txt)
-    if has_shear and len(ladders) > 1:
-        shear_row = ("| Shear-maximum distance / ABL | <= 0.30 | Required for class 4 where the "
-                     "shear height resolved -- **applied over part of the domain** (see Method) |")
-    elif has_shear:
-        shear_row = ("| Shear-maximum distance / ABL | <= 0.30 | Required for class 4 -- "
-                     "**resolved and applied throughout this run** |")
-    else:
-        shear_row = ("| Shear-maximum distance / ABL | <= 0.30 | Required for class 4 **in the "
-                     "5-diagnostic ladder only** (not resolvable here -- see Method) |")
-    if EFFECTIVE_SOURCE == "hybrid":
-        src_title = "ICON-EU model levels + ICON-2I 2.2 km gate"
-        heights_txt = ("per-cell heights from the ICON-EU model-level heights (HHL)")
-        ml_rows = (
-            "| ML dtheta/dz (least-squares fit, in mixed layer) | > 1.1e-3 K/m (stable) | "
-            "Convection plume only -- no pyroCu |\n"
-            "| ML dtheta/dz (measured on model levels) | <= 1.1e-3 K/m | "
-            "Column is pyroCu-capable (bias ~-0.4e-4 K/m vs radiosondes) |")
-        forcing_txt = (
-            "Forcing: atmosphere from ICON-EU 6.5 km native model levels (DWD open data, "
-            "CC-BY), lowest ~24 levels; ~{n} inside the mixed layer here (land, 12-15Z), "
-            "regridded to the "
-            "ICON-2I 2.2 km grid. Surface fields and fuel gate from ICON-2I 2.2 km "
-            "(MISTRAL / AgenziaItaliaMeteo). Classifier: pyflam.pyroconvection_type "
-            "(bulk-Richardson ABL, Bolton LCL, measured mixed-layer dtheta/dz, cap "
-            "gamma-theta, ABL-top RH; no surface CAPE)."
-        ).format(n=n_levels)
-        sup_txt = (
-            f"Over the classified land the fit is supported in **{100.0 * ml_fit_support:.0f}%** "
-            f"of columns at peak of day (i.e. that share holds at least {ML_FIT_MIN_PTS} levels "
-            "inside the layer; the rest return a nan gradient and leave the class map, which is "
-            "also what thins the evening panels)."
-            if ml_fit_support is not None else
-            "The share of columns supporting the fit was not recorded for this run.")
-        ml_para = (
-"""The **mixed-layer stability** here is a genuine measurement, not a proxy. The ICON-EU
-native model levels put ~10 levels inside the mixed layer (this run: {n} median over land at
-12-15Z, when the layer is mature -- the night and evening counts are far lower, but nothing is
-classified then). """ + sup_txt + """ So the
-mixed-layer dtheta/dz is a real least-squares fit across those levels. Validated against
-IGRA radiosondes (JJA 12Z, period of record), the model-level fit cuts the gradient bias to
-~-0.4e-4 K/m (from ~-4.7e-4 on ICON-2I's 5 pressure levels) and the Rib ABL bias to ~-70 m
-(from ~-700 m). This is why the hybrid product exists: the ICON-2I 2.2 km open data cannot
-resolve the mixed layer, and ICON-EU can.
-
-The trade is horizontal resolution: the atmosphere is 6.5 km (regridded to the 2.2 km grid),
-while the **fuel gate keeps ICON-2I's 2.2 km surface fields**, where fine terrain matters.
-The mixed-layer gradient is now measured, but the 1.1e-3 K/m threshold still sits inside the
-validated error bar (+/- ~2.6e-4), so treat class *counts* as indicative, not exact.
-
-After sunset the layer the gradient is fitted over is the **residual layer** -- the near-neutral
-air the decaying convective layer leaves behind -- rather than the shallow nocturnal stable
-layer a surface-referenced parcel would find. By day the two coincide. This is what lets the
-evening hours carry a forecast at all; it is a newer diagnostic than the rest of the ladder, so
-weight those hours accordingly.""")
-    else:
-        src_title = "ICON-2I 2.2 km"
-        heights_txt = "per-cell heights from the model geopotential (FI)"
-        ml_rows = (
-            "| ML stability *proxy*: parcel mixing depth (see Method) | depth < 455 m "
-            "(\"stable\") | Convection plume only -- no pyroCu |\n"
-            "| ML stability proxy | depth >= 455 m (= dtheta/dz <= 1.1e-3 K/m) | "
-            "Column is pyroCu-capable (weak filter: spec. 0.29 inland) |")
-        forcing_txt = (
-            "Forcing: ICON-2I 2.2 km full-Italy GRIB (MISTRAL / AgenziaItaliaMeteo, CC-BY), "
-            "Tuscany subset: geopotential, temperature, RH and wind on {n} pressure levels "
-            "plus the 2 m / 10 m state, surface pressure and orography. Classifier: "
-            "pyflam.pyroconvection_type (bulk-Richardson ABL, Bolton LCL, mixed-layer "
-            "dtheta/dz proxy, cap gamma-theta, ABL-top RH; no surface CAPE)."
-        ).format(n=n_levels)
-        ml_para = (
-"""The **mixed-layer stability** diagnostic is the weakest link in this product, and is a
-*proxy*, not a measurement. Validated against IGRA radiosondes (JJA 12Z, period of record,
-n=2835), a 5-pressure-level column contains only 0-2 model levels inside the mixed layer --
-one or none in 92% of coastal columns -- and the lowest sits in the superadiabatic surface
-layer. The mixed-layer dtheta/dz is therefore **not measurable from this archive**: fitting
-it across the in-mixed-layer levels has no skill (Youden J ~ 0.00), and measuring theta up to
-the Rib ABL top folds in the entrainment jump (Delta-theta), which Castellnou et al. (2022,
-sec.2.1.1) treat as a variable *separate* from the gradient the ladder conditions on.
-
-What is used instead is the **parcel mixing depth** as a proxy: at the 1.1e-3 K/m threshold
-the criterion reduces to "well-mixed layer >= 455 m deep". It is the only candidate with
-skill (J = 0.29 inland / 0.55 coastal, r = +0.50 against the radiosonde truth). It
-**over-flags**: inland specificity is 0.29, so of the columns that are truly stable it still
-calls ~71% pyroCu-capable (sensitivity 0.99 -- it rarely misses a capable column).
-
-**Consequence: read the classes as a screening flag, not as calibrated counts.** The class
-*totals* on these maps are not quantitatively trustworthy. The hybrid product
-(`PYROCONV_SOURCE=hybrid`, ICON-EU model levels) measures this gradient properly; on this
-5-level source, set `PYROCONV_ML_METHOD=surface_to_abl` or `mid_layer` for the superseded
-measurements.""")
-    ml_para = ml_para.format(n=n_levels)
+        ml_para = T("ml_para_icon2i", n=n_levels)
+    abl = int(ABL_MIN_M)
+    margin_block = ""
+    if png_margin:
+        mlines = [T("mtbl_head_daily"), "|:--|--:|--:|--:|--:|--:|--:|"]
+        for hour, fire, p1, p01, mx, n1, nboth in (margin_rows or []):
+            mlines.append(f"| {hour:02d}Z | {fire} | {p1} | {p01} | {mx} | {n1} | **{nboth}** |")
+        hf, cf = _HEADFIRE_LENGTH_M, _CONVECTIVE_FRACTION
+        margin_block = (
+            f"## {T('h3')}\n\n"
+            f"![{T('cap3')}]({png_margin}){{width=100%}}\n\n"
+            f"{T('p3a')}\n\n{T('p3b', m=hf, c=cf)}\n\n{T('p3c')}\n\n"
+            f"### {T('h_nested')}\n\n{T('p_nested')}\n\n"
+            + "\n".join(mlines) + "\n\n" + T("p_mtbl") + "\n\n")
     decoup_block = ""
     if png_decoup:
         decoup_block = (
-"## Dry-pyrocloud decoupling -- DIAGNOSTIC (no class label)\n\n"
-f"![decoupling]({png_decoup}){{{{width=100%}}}}\n\n"
-"The **decoupling ratio** fireABL / ABL is how high a reference intense fire "
-f"(a {_REFERENCE_THETA_EXCESS_K:.0f} K plume temperature excess, the intense end of the GRAF in-plume\nmeasurements) would grow its own boundary layer "
-"by *sensible heat alone*, divided by the ambient ABL. It is the **dry** counterpart to the "
-"moist class map above (Castellnou et al. 2022; Castellnou Ribau et al. 2024): values well "
-"above 1 mark deep, hot, dry columns where a fire can punch through and decouple from the "
-"surface *even where the moist ladder scores low*. It is a diagnostic, not a calibrated class "
-"-- no dry/moist LCL split is applied (the +1 km literature offset is not supported by the "
-"GRAF prototype labels; a fit prefers ~ -0.5 km). fireABL from "
-"`pyflam.atmosphere.fire_induced_abl_grid` (parcel intersected with the real theta(z) stack).\n\n")
+            f"## {T('h4', n=4 if png_margin else 3)}\n\n"
+            f"![{T('cap4')}]({png_decoup}){{width=100%}}\n\n"
+            f"{T('p_decoup', k=_REFERENCE_THETA_EXCESS_K, abl=abl)}\n\n")
     with open(md, "w") as f:
         f.write(f"""---
-title: "Tuscany Pyroconvection-Type Forecast -- {src_title} -- VALID {DATE}"
-subtitle: "3-hourly, 24 h. Run {RUNDATE} {RUN:02d}Z. Method after Castellnou et al. (2022), JGR-Atmos."
+title: "{T('title_daily', src=src_title, date=DATE)}"
+subtitle: "{T('subtitle_daily', rundate=RUNDATE, run=RUN)}"
 geometry: a4paper, landscape, margin=1.2cm
 fontsize: 9pt
+lang: {lang}
+header-includes: |
+  \\usepackage{{float}}
+  \\floatplacement{{figure}}{{H}}
 ---
 
-## How to read this product
+## {T('h_howto')}
 
-Two panels are produced. The **fuel-gated** map is the expected, operationally
-comparable product (the equivalent of the Catalan "tipus de piroconveccio" map):
-a pyroCu/pyroCb class is assigned **only where a fire could actually reach >= 10
-MW/m** of fireline intensity on the real Tuscany fuels. The **potential** map is an
-unconditional **upper bound** -- it assumes a pyroCu-capable fire in *every* cell.
-Use the gated panel for situational awareness; use the potential panel only to see
-the atmospheric ceiling.
+{T('questions_intro')}
 
-## Method and its limits (read this before using the classes)
+{T('questions_table')}
 
-The column is classified from a **real vertical profile**, not a standard atmosphere:
-{heights_txt}, the mixing depth from the **bulk Richardson number** (first Rib >= 0.33
-above 200 m AGL, referenced to the 2 m / 10 m state), the LCL from the exact
-**Bolton (1980)** formula, and the humidity at the ABL top from the model's RH. The cap
-gamma-theta is taken over ABL+200 m to ABL+1200 m.
+{T('questions_note')}
+
+## {T('h_method')}
+
+{T('p_method', heights=heights_txt)}
 
 {ml_para}
 
 {shear_para}
 
-The classes express atmospheric predisposition **given a fire of sufficient power**;
-in the gated panel that power is computed, not assumed. They are paper-informed
-thresholds, not locally validated ones.
+{T('p_predisposition')}
 
-## Expected pyroconvection type -- FUEL-GATED
+## {T('h1')}
 
-![gated]({png_gate}){{width=100%}}
+![{T('cap1')}]({png_pot}){{width=100%}}
 
-## Atmospheric potential -- UPPER BOUND (assumes a pyroCu-capable fire in every cell)
+{T('p1')}
 
-![potential]({png_pot}){{width=100%}}
+## {T('h2')}
 
-{decoup_block}## Class scale (low -> high pyroconvective activity)
+![{T('cap2')}]({png_gate}){{width=100%}}
 
-| Level | Colour | Class | Meaning |
-|:--:|:--|:--|:--|
-| 0 | white | Surface plume | Buoyant smoke plume; no significant cloud development. |
-| 1 | green | Convection plume | Plume penetrates a stable mixed layer; condensation possible, no pyroCu. |
-| 2 | yellow | Overshooting pyroCu | Brief pyrocumulus; cloud base above the mixing height (LCL/ABL > 1). |
-| 3 | orange | Resilient pyroCu | Persistent pyrocumulus in an unstable column (LCL/ABL < 1). |
-| 4 | dark red | Deep pyroCu / pyroCb | Deep pyroconvection / pyrocumulonimbus; weak upper cap lets the plume deepen. |
+{T('p2')}
 
-## Classification thresholds (ladder in use: `{ladder_txt}`)
+{margin_block}{decoup_block}## {T('h_classscale')}
 
-| Diagnostic | Threshold | Effect |
-|:--|:--|:--|
+{T('classscale')}
+
+## {T('h_thresholds', lad=ladder_txt)}
+
+{T('thr_head')}
 {ml_rows}
-| LCL / ABL ratio | 1.0 -- 1.60 | Overshooting pyroCu (brief) |
-| LCL / ABL ratio | < 1.0 | Resilient pyroCu (persistent) |
-| LCL / ABL ratio | <= 1.10 (+ conditions below) | Admissible for deep pyroCu / pyroCb |
-| Cap gamma-theta (ABL+200 m -> ABL+1200 m) | <= 4.2e-3 K/m (weak cap) | Permits deepening to pyroCb |
-| Cap gamma-theta | >= 4.8e-3 K/m (strong cap) | Inhibits deepening (resilient at most) |
-| RH at the ABL top (mean, ABL +/- 150 m) | >= 60% | Required for classes 3 and 4 (was 80%; relaxed for dry fire weather) |
+{T('thr_rest')}
 {shear_row}
-| Fireline intensity (fuel gate, gated panel) | >= 10 MW/m | Minimum fire power for any pyroCu (Tedim et al. 2018) |
-| ABL depth | < {int(ABL_MIN_M)} m | Not classifiable (implausible depth). No 600 m gate: it had no basis in Castellnou et al. (2022) and discarded 5 of the 8 campaign fires -- removed 2026-07-26 |
-| Usable pressure levels | < 4 | Cell not classified |
+{T('thr_tail', abl=abl)}
 
-## Reference cases (Castellnou et al. 2022, Table 1)
+## {T('h_refcases')}
 
-The paper's labelled events, which anchor the published 3-diagnostic ladder
-(`pyflam.pyroconvection_type(ladder="castellnou")`, still the library default and
-regression-tested against these rows). The profile ladders used for this map are
-stricter at the top: they additionally require a moist ABL top and an LCL close to it.
+{T('p_refcases')}
 
-| Case | Observed type | LCL/ABL | ML dtheta/dz | gamma-theta (700-500) |
-|:--|:--|:--:|:--|:--:|
-| T21 | Convection plume | -- | stable | -- |
-| SCQ32 | Overshooting pyroCu | > 1 | neutral/unstable | -- |
-| M11 | Resilient pyroCu | < 1 | unstable | 4.2e-3 (resilient cap) |
-| SCQ41 | pyroCu, not pyroCb | < 1 | unstable | 5.1e-3 (strong cap) |
-| SCQ51 | Deep pyroCu / pyroCb | < 1 | unstable | 3.9e-3 (weak cap) |
+{T('refcases')}
 
 {forcing_txt}
-Gate: Rothermel + Cruz-2005 crown on the .lcp fuels with forecast moisture/wind.
-Per-hour diagnostic rasters accompany the classes: ABL, parcel_ml, residual_ml, LCL, LCL/ABL,
-ML dtheta/dz, cap gamma-theta, RH-top, fireABL, decoupling, and (hybrid only) delta_theta,
-firecape, penetration, pft_gw (PyroCb Firepower Threshold, GW), z_fc, delta_theta_fc, u_ml.
-Province borders: ISTAT-derived (openpolis geojson-italy).
-Generated by tests/pyroconv_daily.py at pyflam `{code_ver}`, {gen_at} -- frozen with that
-commit's physics, since DWD drops the run after ~24 h.
+{T('p_footer_daily', ver=code_ver, at=gen_at)}
 """)
     try:
         subprocess.run(["pandoc", md, "-o", pdf, "--pdf-engine=tectonic"], check=True,
                        capture_output=True, timeout=300)
         return pdf
     except Exception as e:
-        sys.stderr.write(f"PDF build skipped ({e}); PNGs + GeoTIFFs still written\n")
+        sys.stderr.write(f"PDF build skipped for {lang} ({e}); PNGs + GeoTIFFs still written\n")
         return None
 
 
@@ -713,13 +717,24 @@ def main():
             with np.errstate(invalid="ignore", divide="ignore"):
                 diag["pft_margin"] = fp_gw / np.where(diag["pft_gw"] > 0, diag["pft_gw"], np.nan)
 
-    png_pot = render(np.stack(pot), lat, lon, "potential")
-    png_gate = render(np.stack(gate), lat, lon, "gated") if gate else png_pot
-    png_decoup = render_decoupling(diags, lat, lon)
     export_diagnostics(diags, lat, lon)
     n_lev, support = ml_fit_resolution(diags)
-    pdf = build_pdf(png_pot, png_gate, sorted(ladders), n_lev,
-                    png_decoup=png_decoup, ml_fit_support=support)
+    mrows = pft_margin_rows(diags, gate)
+    # One figure set and one report per language, off the identical arrays. The GeoTIFFs are
+    # written on the first pass only -- a raster has no language, and rewriting them per
+    # edition would only risk the two passes disagreeing.
+    png_pot = pdf = None
+    for li, lang in enumerate(I18N.LANGS):
+        p_pot = render(np.stack(pot), lat, lon, "potential", lang, write_rasters=(li == 0))
+        p_gate = (render(np.stack(gate), lat, lon, "gated", lang, write_rasters=(li == 0))
+                  if gate else p_pot)
+        p_margin = render_pft_margin(diags, gate, lat, lon, lang)
+        p_decoup = render_decoupling(diags, lat, lon, lang)
+        pdf_l = build_pdf(p_pot, p_gate, sorted(ladders), n_lev, png_decoup=p_decoup,
+                          ml_fit_support=support, png_margin=p_margin, margin_rows=mrows,
+                          lang=lang)
+        if li == 0:
+            png_pot, pdf = p_pot, pdf_l
     print(f"OK {DATE} {RUN:02d}Z [ladder={','.join(sorted(ladders))}]: {png_pot}"
           + (f" | {pdf}" if pdf else ""))
 
