@@ -108,6 +108,7 @@ def spread_field(
     wind_midflame=0.0,
     wind_direction=0.0,
     load_factor: float = 1.0,
+    effective_wind_limit: bool = False,
 ) -> SpreadField:
     """Build the per-cell elliptical spread template for a landscape.
 
@@ -164,13 +165,21 @@ def spread_field(
             phi_eff = np.hypot(vx, vy)
             head = np.degrees(np.arctan2(vx, vy)) % 360.0
 
+            # Rothermel effective-wind-speed limit (as BehavePlus/FlamMap): cap the
+            # combined wind+slope factor so steep-slope / high-wind cells in high-SAV
+            # fuels cannot run the spread rate to unphysical values. Opt-in (default
+            # off) -- the classic 0.9*I_R limit over-restricts low-intensity fuels at
+            # modest wind (Andrews, Cruz & Rothermel 2013).
+            if effective_wind_limit:
+                phi_eff = kernel.limit_combined_factor(phi_eff)
+
             r = kernel.r0 * (1.0 + phi_eff)
             ros_max[sub] = r
             heading[sub] = head
             fli[sub] = kernel.heat_per_unit_area * r / 60.0   # Byram, Btu/ft/s
 
-            # Effective wind speed = the wind that alone would give this combined
-            # factor (invert the Rothermel wind factor), then Anderson L/B -> ecc.
+            # Effective wind speed = the wind that alone would give this (limited)
+            # combined factor (invert the Rothermel wind factor), then Anderson L/B.
             if kernel.c > 0.0 and kernel.b > 0.0:
                 u_ftmin = np.where(
                     phi_eff > 0.0,

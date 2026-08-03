@@ -219,6 +219,30 @@ def test_dead_fuel_moisture_model_equilibrium_init():
     assert model.m_1h == model.m_10h == model.m_100h
 
 
+def test_dead_fuel_moisture_model_per_cell_arrays():
+    """A gridded state steps the model per cell (arrays), matching scalar cells."""
+    T = np.array([[35.0, 20.0], [35.0, 20.0]])
+    RH = np.array([[15.0, 60.0], [15.0, 60.0]])
+    st = atm.AtmosphericState(wind_speed=np.full((2, 2), 4.0),
+                              wind_direction=np.full((2, 2), 270.0),
+                              temperature=T, relative_humidity=RH)
+    model = atm.DeadFuelMoistureModel(
+        m_1h=np.full((2, 2), 0.12), m_10h=np.full((2, 2), 0.12),
+        m_100h=np.full((2, 2), 0.12))
+    for _ in range(3):
+        out = model.update(st, dt_minutes=60)
+    assert out["m_1h"].shape == (2, 2)
+    # the dry column dries below the humid column across every lag class
+    assert np.all(out["m_1h"][:, 0] < out["m_1h"][:, 1])
+    # per-cell result equals the equivalent scalar run
+    scalar = atm.DeadFuelMoistureModel(m_1h=0.12, m_10h=0.12, m_100h=0.12)
+    dry = atm.AtmosphericState(wind_speed=4, wind_direction=270,
+                               temperature=35, relative_humidity=15)
+    for _ in range(3):
+        sc = scalar.update(dry, dt_minutes=60)
+    assert out["m_100h"][0, 0] == pytest.approx(sc["m_100h"], abs=1e-9)
+
+
 # --- per-cell atmospheric fields ----------------------------------------------
 
 def test_constant_field_broadcasts():
@@ -463,3 +487,312 @@ def test_state_at_with_scalar_time_coordinate():
     st = prov.state_at(40.9, 11.2, time=datetime(2026, 6, 24, 14, 0))
     assert st.relative_humidity == pytest.approx(30.0)
     assert st.temperature == pytest.approx(305.0 - 273.15, abs=0.1)
+
+
+def test_critical_growth_rate_inverts_the_pft():
+    """dA/dt_crit must round-trip Tory & Kepert appendix D: FP = alpha * h * w_a * dA/dt."""
+    import numpy as np
+    from pyflam.atmosphere import critical_growth_rate_grid, capability_margin
+
+    pft_gw, w_a, alpha, h = 139.0, 1.49, 0.7, 15.0e6
+    crit = float(critical_growth_rate_grid(np.array([pft_gw]), fuel_load_kg_m2=w_a)[0])
+
+    # feeding the critical rate back through appendix D must return the PFT
+    fp_gw = alpha * h * w_a * (crit * 1.0e4 / 3600.0) / 1.0e9
+    assert fp_gw == pytest.approx(pft_gw, rel=1e-9)
+
+    # Guissona: 139 GW threshold -> ~3.2 kha/h, and its observed 7869 ha/h clears it
+    assert 3100.0 < crit < 3300.0
+    assert capability_margin(7869.0, crit) == pytest.approx(0.39, abs=0.02)
+    assert capability_margin(358.0, crit) < 0.0        # Santa Coloma does not
+
+    # a richer fuel bed lowers the growth rate the same atmosphere demands
+    assert float(critical_growth_rate_grid(np.array([pft_gw]), fuel_load_kg_m2=3.0)[0]) < crit
+
+    # nan PFT (profile too shallow to reach the free-convection height) propagates
+    assert np.isnan(critical_growth_rate_grid(np.array([np.nan]))[0])
+    assert np.isnan(capability_margin(0.0, crit))      # a fire with no growth has no margin
+
+
+# --- cost ladder + form field -------------------------------------------------
+
+def _synthetic_column(*, rh=25.0, abl=1800.0, gamma_free=6.0e-3, wind=8.0,
+                      sfc_theta=308.0, nlev=40, top_m=12000.0):
+    """Well-mixed ABL of depth ``abl`` under a free troposphere with a constant theta lapse.
+
+    Shaped ``(nlev, 1, 1)`` so the gridded diagnostics run on a single column.
+    """
+    import numpy as np
+    z = np.linspace(10.0, top_m, nlev)
+    theta = np.where(z <= abl, sfc_theta, sfc_theta + gamma_free * (z - abl))
+    ps = 100000.0
+    p = ps * np.exp(-z / 8500.0)
+    T = theta * (p / ps) ** 0.286
+    es = 611.2 * np.exp(17.67 * (T - 273.15) / (T - 29.65))
+    e = np.where(z <= abl, rh, max(rh - 15.0, 5.0)) / 100.0 * es
+    q = 0.622 * e / np.maximum(p - 0.378 * e, 1.0)
+    col = lambda a: a.reshape(-1, 1, 1)
+    return dict(height_agl_m=col(z), temperature_k=col(T), pressure_pa=col(p),
+                spec_humidity=col(q), wind_u=col(np.full_like(z, wind)),
+                wind_v=col(np.zeros_like(z)), surface_pressure_pa=np.full((1, 1), ps),
+                abl_m=np.full((1, 1), float(abl)))
+
+
+def test_density_explicit_firepower_reproduces_eq31():
+    """eq 25 with rho written out must collapse onto eq 31 at the density it folds in."""
+    from pyflam.atmosphere import (_firepower_required_gw, _PFT_C, _PFT_C_RHO, _PFT_RHO_REF)
+
+    assert _PFT_C_RHO * _PFT_RHO_REF == pytest.approx(_PFT_C, rel=1e-12)
+
+    # Tory & Kepert's Black Saturday 1000 LST case: z_fc 4.8 km, U_ML 20 m/s, dtheta 9 K
+    # -> their stated 1240 GW.
+    fp = _firepower_required_gw(4800.0, 9.0, 20.0, _PFT_RHO_REF)
+    assert float(fp) == pytest.approx(1244.0, abs=1.0)
+
+    # denser air at a lower target costs proportionally more for the same (z, U, dtheta)
+    assert float(_firepower_required_gw(4800.0, 9.0, 20.0, 1.10)) == pytest.approx(
+        float(fp) * 1.10 / _PFT_RHO_REF, rel=1e-12)
+
+
+def test_pft_rho_mode_leaves_the_published_form_alone():
+    """``rho_mode`` must default to eq 31 verbatim and reject anything it does not implement."""
+    import numpy as np
+    from pyflam.atmosphere import pyrocb_firepower_threshold_grid, _PFT_RHO_REF
+
+    c = _synthetic_column()
+    args = (c["height_agl_m"], c["temperature_k"], c["pressure_pa"], c["spec_humidity"],
+            c["wind_u"], c["wind_v"])
+    paper = pyrocb_firepower_threshold_grid(*args, surface_pressure_pa=c["surface_pressure_pa"])
+    column = pyrocb_firepower_threshold_grid(*args, surface_pressure_pa=c["surface_pressure_pa"],
+                                             rho_mode="column")
+    assert float(paper["rho_kg_m3"][0, 0]) == pytest.approx(_PFT_RHO_REF)
+    # same (z_fc, dtheta, U) either way -- only the density differs
+    assert float(paper["z_fc_m"][0, 0]) == pytest.approx(float(column["z_fc_m"][0, 0]))
+    ratio = float(column["pft_gw"][0, 0]) / float(paper["pft_gw"][0, 0])
+    assert ratio == pytest.approx(float(column["rho_kg_m3"][0, 0]) / _PFT_RHO_REF, rel=1e-9)
+
+    with pytest.raises(ValueError):
+        pyrocb_firepower_threshold_grid(*args, surface_pressure_pa=c["surface_pressure_pa"],
+                                        rho_mode="whatever")
+
+
+def test_cost_ladder_is_ordered_and_keeps_nan_as_impossible():
+    """escape <= condense <= deep, and an unreachable pyroCb stays nan rather than a big number."""
+    import numpy as np
+    from pyflam.atmosphere import pyroconvection_cost_grid, PYROCONVECTION_COST_RUNGS
+
+    out = pyroconvection_cost_grid(**_synthetic_column(rh=60.0, abl=900.0, gamma_free=3.0e-3),
+                                   fuel_load_kg_m2=1.49)
+    esc, con, deep = (float(out[f"cost_{r}_gw"][0, 0]) for r in PYROCONVECTION_COST_RUNGS)
+    assert np.isfinite([esc, con, deep]).all()
+    assert esc < con <= deep
+
+    # the targets are nested the same way the criteria are
+    assert (float(out["z_escape_m"][0, 0]) < float(out["z_condense_m"][0, 0])
+            <= float(out["z_deep_m"][0, 0]))
+
+    # a dry, strongly capped column: no beta makes a buoyant cloud to the -20 C level, and the
+    # monotone clamp must not launder that nan into "expensive but possible"
+    dry = pyroconvection_cost_grid(**_synthetic_column(rh=20.0, abl=2500.0, gamma_free=7.0e-3))
+    assert np.isnan(dry["cost_deep_gw"][0, 0])
+    assert np.isfinite(dry["cost_escape_gw"][0, 0])
+
+
+def test_cost_ladder_prices_the_moist_column_lower():
+    """A shallow, moist, weakly capped column must cost less on every rung than a dry deep one."""
+    import numpy as np
+    from pyflam.atmosphere import pyroconvection_cost_grid
+
+    moist = pyroconvection_cost_grid(**_synthetic_column(rh=60.0, abl=900.0, gamma_free=3.0e-3))
+    dry = pyroconvection_cost_grid(**_synthetic_column(rh=30.0, abl=2200.0, gamma_free=6.0e-3))
+    for rung in ("escape", "condense"):
+        assert float(moist[f"cost_{rung}_gw"][0, 0]) < float(dry[f"cost_{rung}_gw"][0, 0])
+
+
+def test_cost_ha_h_is_the_gw_ladder_through_appendix_d():
+    """The ha/h fields must be exactly critical_growth_rate_grid of the GW fields."""
+    import numpy as np
+    from pyflam.atmosphere import (pyroconvection_cost_grid, critical_growth_rate_grid,
+                                   PYROCONVECTION_COST_RUNGS)
+
+    c = _synthetic_column(rh=55.0, abl=1000.0, gamma_free=3.5e-3)
+    bare = pyroconvection_cost_grid(**c)
+    with_fuel = pyroconvection_cost_grid(**c, fuel_load_kg_m2=2.2)
+    for rung in PYROCONVECTION_COST_RUNGS:
+        assert f"cost_{rung}_ha_h" not in bare        # no fuel load, no ha/h
+        expect = critical_growth_rate_grid(with_fuel[f"cost_{rung}_gw"], fuel_load_kg_m2=2.2)
+        assert with_fuel[f"cost_{rung}_ha_h"] == pytest.approx(expect, nan_ok=True)
+
+
+def test_form_field_is_categorical_and_admits_the_indeterminate_band():
+    """Form carries no firepower, no ordinal, and refuses to take a side near ratio 1."""
+    import numpy as np
+    from pyflam.atmosphere import (pyroconvection_form, pyroconvection_form_grid,
+                                   pyroconvection_cost_grid, PYROCONVECTION_FORM_CODE)
+
+    assert pyroconvection_form(0.4) == "resilient"
+    assert pyroconvection_form(1.8) == "overshooting"
+    assert pyroconvection_form(1.03) == "indeterminate"      # the ABL depth cannot resolve this
+    assert pyroconvection_form(0.95) == "indeterminate"
+    assert pyroconvection_form(float("nan")) == "undefined"
+
+    codes = pyroconvection_form_grid(np.array([0.4, 0.95, 1.03, 1.8, np.nan]))
+    assert codes.tolist() == [PYROCONVECTION_FORM_CODE["resilient"],
+                              PYROCONVECTION_FORM_CODE["indeterminate"],
+                              PYROCONVECTION_FORM_CODE["indeterminate"],
+                              PYROCONVECTION_FORM_CODE["overshooting"],
+                              PYROCONVECTION_FORM_CODE["undefined"]]
+    # "undefined" (no ratio) is distinct from "indeterminate" (diagnosed, inside the band)
+    assert PYROCONVECTION_FORM_CODE["undefined"] != PYROCONVECTION_FORM_CODE["indeterminate"]
+
+    # a wider band swallows a call the default resolves
+    assert pyroconvection_form(1.15, band=(0.5, 1.5)) == "indeterminate"
+
+    # the field rides along with the cost ladder without entering any of its rungs
+    c = _synthetic_column()
+    plain = pyroconvection_cost_grid(**c)
+    labelled = pyroconvection_cost_grid(**c, lcl_abl_ratio=np.array([[1.6]]))
+    assert int(labelled["form"][0, 0]) == PYROCONVECTION_FORM_CODE["overshooting"]
+    assert int(plain["form"][0, 0]) == PYROCONVECTION_FORM_CODE["undefined"]
+    for rung in ("escape", "condense", "deep"):
+        assert plain[f"cost_{rung}_gw"] == pytest.approx(labelled[f"cost_{rung}_gw"], nan_ok=True)
+
+
+def test_escape_rung_is_the_briggs_inversion_without_double_counting_alpha():
+    """The escape rung must be Briggs' stable rise solved for the source, alpha applied once."""
+    import numpy as np
+    from pyflam.atmosphere import (pyroconvection_cost_grid, briggs_plume_rise,
+                                   critical_growth_rate_grid, _BRIGGS_C)
+
+    # 120 levels to 12 km = 100 m spacing, so the ~240 m entrainment zone is resolved and the
+    # rung returns a number rather than declining (see the resolution-guard test below)
+    c = _synthetic_column(rh=35.0, abl=1600.0, gamma_free=4.5e-3, wind=8.0, nlev=120)
+    out = pyroconvection_cost_grid(**c)
+    cost_gw = float(out["cost_escape_gw"][0, 0])
+    s = float(out["stability_escape_s2"][0, 0])
+    u = float(out["u_escape_ms"][0, 0])
+    abl = float(out["z_escape_m"][0, 0])
+    assert s > 0.0 and np.isfinite(cost_gw)
+
+    # round trip: feed the cost back through the forward Briggs law and recover the ABL top.
+    # briggs_plume_rise takes the *convective* flux, so the total must be scaled by alpha --
+    # which is precisely the step the rung must NOT have taken internally.
+    alpha = 0.7
+    rise = briggs_plume_rise(cost_gw * 1.0e9 * alpha, u, stability_s2=s)
+    # the rung uses the column's own rho/T at the ABL top where briggs_plume_rise uses
+    # reference values, so allow the resulting offset rather than an exact identity
+    assert 0.75 * abl < rise < 1.35 * abl
+
+    # alpha appears exactly once, in the GW -> ha/h conversion. If the rung had already
+    # divided by it, this round trip would come back 1/alpha too large.
+    ha_h = critical_growth_rate_grid(np.array([cost_gw]), fuel_load_kg_m2=1.49)[0]
+    back = alpha * 15.0e6 * 1.49 * (ha_h * 1.0e4 / 3600.0) / 1.0e9
+    assert back == pytest.approx(cost_gw, rel=1e-9)
+
+    # the threshold must scale as Briggs says: linear in wind, cubic in the ABL depth
+    fast = pyroconvection_cost_grid(**_synthetic_column(rh=35.0, abl=1600.0,
+                                                        gamma_free=4.5e-3, wind=16.0,
+                                                        nlev=120))
+    assert float(fast["cost_escape_gw"][0, 0]) == pytest.approx(2.0 * cost_gw, rel=0.02)
+
+
+def test_escape_rung_declines_when_the_entrainment_zone_is_unresolved():
+    """A gradient across a layer with no level in it is an interpolation, not a measurement."""
+    import numpy as np
+    from pyflam.atmosphere import (pyroconvection_cost_grid, entrainment_zone_levels_grid,
+                                   _EZ_MIN_LEVELS)
+
+    fine = _synthetic_column(rh=35.0, abl=1600.0, gamma_free=4.5e-3, nlev=120, top_m=12000.0)
+    coarse = _synthetic_column(rh=35.0, abl=1600.0, gamma_free=4.5e-3, nlev=6, top_m=12000.0)
+
+    # the zone is max(0.15*1600, 100) = 240 m; 120 levels to 12 km resolve it, 6 do not
+    n_fine = entrainment_zone_levels_grid(fine["height_agl_m"], fine["abl_m"])
+    n_coarse = entrainment_zone_levels_grid(coarse["height_agl_m"], coarse["abl_m"])
+    assert int(n_fine[0, 0]) >= _EZ_MIN_LEVELS
+    assert int(n_coarse[0, 0]) < _EZ_MIN_LEVELS
+
+    ok = pyroconvection_cost_grid(**fine)
+    bad = pyroconvection_cost_grid(**coarse)
+    assert np.isfinite(ok["cost_escape_gw"][0, 0])
+    assert np.isnan(bad["cost_escape_gw"][0, 0])          # declines rather than fabricating
+    assert int(bad["levels_in_ez"][0, 0]) == int(n_coarse[0, 0])
+
+    # the refusal is reported, not silent, and the rungs above are unaffected by it
+    assert np.isfinite(bad["cost_condense_gw"][0, 0])
+    # and it can be overridden deliberately, for a caller that accepts the interpolation
+    forced = pyroconvection_cost_grid(**coarse, ez_min_levels=0)
+    assert np.isfinite(forced["cost_escape_gw"][0, 0])
+
+
+def test_energy_level_collapses_the_geometry_pair_and_leaves_storage_alone():
+    """The raster encoding is frozen; the ordinal used for statistics must not count geometry."""
+    from pyflam.atmosphere import (PYROCONVECTION_TYPE_LEVEL, PYROCONVECTION_ENERGY_LEVEL,
+                                   PYROCONVECTION_TYPES)
+
+    # storage encoding: unchanged, because published GeoTIFFs are read back through it
+    assert [PYROCONVECTION_TYPE_LEVEL[t] for t in PYROCONVECTION_TYPES] == [0, 1, 2, 3, 4]
+
+    # energy ordinal: overshooting and resilient are one level, separated only by LCL/ABL
+    assert (PYROCONVECTION_ENERGY_LEVEL["overshooting_pyrocu"]
+            == PYROCONVECTION_ENERGY_LEVEL["resilient_pyrocu"])
+    assert [PYROCONVECTION_ENERGY_LEVEL[t] for t in PYROCONVECTION_TYPES] == [0, 1, 2, 2, 3]
+    assert set(PYROCONVECTION_ENERGY_LEVEL) == set(PYROCONVECTION_TYPES)
+
+    # a column that flips overshooting <-> resilient must not move the severity statistic
+    a = PYROCONVECTION_ENERGY_LEVEL["overshooting_pyrocu"]
+    b = PYROCONVECTION_ENERGY_LEVEL["resilient_pyrocu"]
+    assert a - b == 0
+    assert PYROCONVECTION_TYPE_LEVEL["resilient_pyrocu"] - \
+        PYROCONVECTION_TYPE_LEVEL["overshooting_pyrocu"] == 1     # the step being retired
+
+
+def test_plume_top_inverts_the_ladder_and_matches_the_validated_scalar_path():
+    """The gridded solver must be the one the MISR validation scored, not a lookalike."""
+    import os, sys
+    import numpy as np
+    from pyflam.atmosphere import plume_top_height_grid, PLUME_TOP_FORMS
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
+    from escape_calibration import _predicted_top
+
+    rng = np.random.default_rng(0)
+    for _ in range(8):
+        c = _synthetic_column(rh=float(rng.uniform(20, 65)), abl=float(rng.uniform(700, 2600)),
+                              gamma_free=float(rng.uniform(1.5e-3, 9e-3)),
+                              wind=float(rng.uniform(2, 18)), nlev=120)
+        fp = float(rng.uniform(1, 300))
+        col = [c[k][:, 0, 0] for k in ("height_agl_m", "temperature_k", "pressure_pa",
+                                       "wind_u", "wind_v")]
+        for form in PLUME_TOP_FORMS:
+            grid = float(plume_top_height_grid(
+                c["height_agl_m"], c["temperature_k"], c["pressure_pa"], c["wind_u"],
+                c["wind_v"], firepower_gw=np.array([[fp]]), abl_m=c["abl_m"], form=form)[0, 0])
+            assert grid == pytest.approx(
+                _predicted_top(*col, float(c["abl_m"][0, 0]), fp, form=form), abs=1.0)
+
+    c = _synthetic_column(rh=35.0, abl=1600.0, gamma_free=4.5e-3, wind=8.0, nlev=120)
+    args = (c["height_agl_m"], c["temperature_k"], c["pressure_pa"], c["wind_u"], c["wind_v"])
+    top = lambda fp, **kw: float(plume_top_height_grid(
+        *args, firepower_gw=np.array([[fp]]), abl_m=c["abl_m"], **kw)[0, 0])
+
+    # more firepower never buys a lower plume, and the floor is the source layer
+    heights = [top(fp) for fp in (0.01, 1.0, 5.0, 20.0, 100.0, 500.0)]
+    assert all(a <= b for a, b in zip(heights, heights[1:]))
+    # A vanishing fire still reaches the top of the *well-mixed* layer: theta there equals
+    # theta_ML, so the demand is zero and rising through a neutral layer costs nothing. The
+    # first height that costs anything is the base of the cap.
+    assert 1400.0 < heights[0] <= 1600.0
+    assert heights[-1] > 3000.0                                   # and a big fire punches out
+
+    # a stronger cap costs height for the same fire
+    capped = _synthetic_column(rh=35.0, abl=1600.0, gamma_free=1.1e-2, wind=8.0, nlev=120)
+    weak = _synthetic_column(rh=35.0, abl=1600.0, gamma_free=1.5e-3, wind=8.0, nlev=120)
+    t = lambda col: float(plume_top_height_grid(
+        col["height_agl_m"], col["temperature_k"], col["pressure_pa"], col["wind_u"],
+        col["wind_v"], firepower_gw=np.array([[50.0]]), abl_m=col["abl_m"])[0, 0])
+    assert t(capped) < t(weak)
+
+    # nan firepower propagates rather than defaulting to a height
+    assert np.isnan(plume_top_height_grid(*args, firepower_gw=np.array([[np.nan]]),
+                                          abl_m=c["abl_m"])[0, 0])
+    with pytest.raises(ValueError):
+        top(10.0, form="whatever")

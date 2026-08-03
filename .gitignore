@@ -15,3 +15,32 @@ htmlcov/
 # Generated report renders (rebuild with docs/report/build.sh or the docs CI)
 docs/report/*.pdf
 docs/report/*.docx
+
+# Internal Tuscany-scale test data (licensed inputs + derived rasters) — NOT for public release
+TEST_DATA/
+
+# Daily pyroconvection GeoTIFF stacks: regenerable from tests/pyroconv_daily.py and
+# ~3.5 MB per run day. The PNG panels + PDF brief are committed; the rasters are not.
+docs/daily/rasters_*/
+
+# Daily outputs from the previous standard-atmosphere classifier (June 2026). Superseded
+# by the profile-based path (a8eb3b4) and not comparable with it -- keeping them alongside
+# the current product would put two different methods in one directory.
+docs/daily/*2026-06-*
+
+# ERA5 validation inputs (~1 MB, re-fetchable via era5_fetch_catalonia.py)
+scripts/validation/*.nc
+
+# 3-day forecast GeoTIFF stacks (regenerable, ~3.5 MB/day)
+docs/forecast_*/rasters_*/
+
+# Reanalysis and satellite downloads for the escape-rung calibration (~1 GB, all
+# re-fetchable): scripts/misr_plume_catalogue.py re-pulls the MISR catalogue from MERLIN
+# in one request, scripts/escape_calibration.py --era5/--era5-ml re-pulls ERA5 from CDS.
+# The L137 coefficient table beside it is small and hand-checked, so that one is tracked.
+data/misr/
+
+# Per-run diagnostic GeoTIFFs (224 per daily run). The .md/.pdf/.png products are tracked;
+# the rasters are reproducible from the same command and would add ~12 MB per day.
+docs/daily/rasters_*/
+docs/forecast_*/rasters_*/

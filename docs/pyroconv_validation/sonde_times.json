@@ -1,0 +1,362 @@
+{
+ "100": {
+  "kind": "WF",
+  "name": "Tortosa (CAT, ESP)",
+  "date": "28/05/2024",
+  "time": "10:38:18"
+ },
+ "105": {
+  "kind": "WF",
+  "name": "Granja d\u2019Escarp (CAT, ESP)",
+  "date": "03/07/2024",
+  "time": "17:51:37"
+ },
+ "106": {
+  "kind": "WF",
+  "name": "Granja d\u2019Escarp (CAT, ESP)",
+  "date": "03/07/2024",
+  "time": "17:51:37"
+ },
+ "11": {
+  "kind": "WF",
+  "name": "Jubrique (ESP)",
+  "date": "13/09/2021",
+  "time": "05:14:37"
+ },
+ "113": {
+  "kind": "WF",
+  "name": "Ciutadilla (CAT, ESP)",
+  "date": "31/07/2024",
+  "time": "19:30:33"
+ },
+ "116": {
+  "kind": "WF",
+  "name": "Vilanova de Mei\u00e0 (CAT, ESP)",
+  "date": "09/08/2024",
+  "time": "16:35:00"
+ },
+ "120": {
+  "kind": "PF",
+  "name": "Rojals (CAT, ESP)",
+  "date": "16/12/2024",
+  "time": "11:31:11"
+ },
+ "121": {
+  "kind": "PF",
+  "name": "Coll de Banyuls (CAT)",
+  "date": "21/01/2025",
+  "time": "10:51:47"
+ },
+ "124": {
+  "kind": "WF",
+  "name": "La Capellan\u00eda (CHL)",
+  "date": "03/02/2025",
+  "time": "23:34:29"
+ },
+ "128": {
+  "kind": "WF",
+  "name": "Manuel Rodr\u00edguez (CHL)",
+  "date": "05/02/2025",
+  "time": "23:18:32"
+ },
+ "13": {
+  "kind": "WF",
+  "name": "Jubrique (ESP)",
+  "date": "13/09/2021",
+  "time": "09:10:52"
+ },
+ "130": {
+  "kind": "WF",
+  "name": "Patagual (CHL)",
+  "date": "08/02/2025",
+  "time": "22:00:18"
+ },
+ "136": {
+  "kind": "WF",
+  "name": "Vega Honda (CHL)",
+  "date": "09/02/2025",
+  "time": "22:12:06"
+ },
+ "137": {
+  "kind": "WF",
+  "name": "Junquillos (CHL)",
+  "date": "10/02/2025",
+  "time": "22:19:24"
+ },
+ "14": {
+  "kind": "WF",
+  "name": "Ser\u00f2s (CAT, ESP)",
+  "date": "07/05/2022",
+  "time": "14:56:56"
+ },
+ "140": {
+  "kind": "WF",
+  "name": "El Valle 2 (CHL)",
+  "date": "11/02/2025",
+  "time": "21:46:19"
+ },
+ "144": {
+  "kind": "WF",
+  "name": "El Valle 2 (CHL)",
+  "date": "12/02/2025",
+  "time": "23:04:51"
+ },
+ "146": {
+  "kind": "WF",
+  "name": "San Patricio (CHL)",
+  "date": "14/02/2025",
+  "time": "19:18:11"
+ },
+ "149": {
+  "kind": "WF",
+  "name": "San Patricio (CHL)",
+  "date": "15/02/2025",
+  "time": "14:54:09"
+ },
+ "15": {
+  "kind": "WF",
+  "name": "Baldomar (CAT, ESP)",
+  "date": "15/06/2022",
+  "time": "13:05:31"
+ },
+ "151": {
+  "kind": "WF",
+  "name": "San Patricio (CHL)",
+  "date": "15/02/2025",
+  "time": "22:24:53"
+ },
+ "152": {
+  "kind": "WF",
+  "name": "Ede (NLD)",
+  "date": "03/04/2025",
+  "time": "14:38:31"
+ },
+ "155": {
+  "kind": "WF",
+  "name": "Drunen (NLD)",
+  "date": "12/04/2025",
+  "time": "16:44:15"
+ },
+ "158": {
+  "kind": "WF",
+  "name": "Granyena (CAT, ESP)",
+  "date": "21/06/2025",
+  "time": "16:04:05"
+ },
+ "159": {
+  "kind": "WF",
+  "name": "Granyena (CAT, ESP)",
+  "date": "21/06/2025",
+  "time": "17:35:55"
+ },
+ "160": {
+  "kind": "WF",
+  "name": "Guissona (CAT, ESP)",
+  "date": "01/07/2025",
+  "time": "15:59:10"
+ },
+ "166": {
+  "kind": "WF",
+  "name": "Pa\u00fcls (CAT, ESP)",
+  "date": "07/07/2025",
+  "time": "14:17:39"
+ },
+ "167": {
+  "kind": "WF",
+  "name": "Pa\u00fcls (CAT, ESP)",
+  "date": "07/07/2025",
+  "time": "14:50:00"
+ },
+ "169": {
+  "kind": "WF",
+  "name": "Pa\u00fcls (CAT, ESP)",
+  "date": "07/07/2025",
+  "time": "20:57:13"
+ },
+ "2": {
+  "kind": "WF",
+  "name": "Martorell (CAT, ESP)",
+  "date": "13/07/2021",
+  "time": "16:25:11"
+ },
+ "24": {
+  "kind": "WF",
+  "name": "El Pont de Vilomara (CAT, ESP)",
+  "date": "17/07/2022",
+  "time": "15:09:41"
+ },
+ "36": {
+  "kind": "WF",
+  "name": "Gomero- Quihiue (CHL)",
+  "date": "02/02/2022",
+  "time": "19:21:58"
+ },
+ "37": {
+  "kind": "WF",
+  "name": "Gomero- Quihiue (CHL)",
+  "date": "02/02/2022",
+  "time": "22:00:53"
+ },
+ "38": {
+  "kind": "WF",
+  "name": "Cortijo (CHL)",
+  "date": "03/02/2023",
+  "time": "17:03:50"
+ },
+ "40": {
+  "kind": "WF",
+  "name": "Cabrero (CHL)",
+  "date": "03/02/2023",
+  "time": "23:46:12"
+ },
+ "41": {
+  "kind": "WF",
+  "name": "Santa Ana - Angol (CHL)",
+  "date": "04/02/2023",
+  "time": "21:01:09"
+ },
+ "42": {
+  "kind": "WF",
+  "name": "Santa Ana Angol (CHL)",
+  "date": "05/02/2023",
+  "time": "03:33:04"
+ },
+ "43": {
+  "kind": "WF",
+  "name": "Toscas de R\u00edo Claro (CHL)",
+  "date": "06/02/2023",
+  "time": "20:25:12"
+ },
+ "45": {
+  "kind": "WF",
+  "name": "Toscas de R\u00edo Claro (CHL)",
+  "date": "07/02/2023",
+  "time": "17:02:57"
+ },
+ "48": {
+  "kind": "WF",
+  "name": "Quill\u00f3n (CHL)",
+  "date": "07/02/2023",
+  "time": "21:33:27"
+ },
+ "5": {
+  "kind": "WF",
+  "name": "Sta Coloma de Queralt (CAT, ESP)",
+  "date": "24/07/2021",
+  "time": "19:17:38"
+ },
+ "50": {
+  "kind": "WF",
+  "name": "Casablanca 3 (CHL)",
+  "date": "08/02/2023",
+  "time": "21:46:38"
+ },
+ "53": {
+  "kind": "WF",
+  "name": "Trancoyab (CHL)",
+  "date": "09/02/2025",
+  "time": "18:32:37"
+ },
+ "56": {
+  "kind": "WF",
+  "name": "Trancoyab (CHL)",
+  "date": "09/02/2023",
+  "time": "22:45:41"
+ },
+ "58": {
+  "kind": "WF",
+  "name": "Casablanca 3 (CHL)",
+  "date": "10/02/2023",
+  "time": "19:44:59"
+ },
+ "61": {
+  "kind": "WF",
+  "name": "Casablanca 3 (CHL)",
+  "date": "10/02/2023",
+  "time": "22:08:35"
+ },
+ "62": {
+  "kind": "WF",
+  "name": "Purema (CHL)",
+  "date": "11/02/2023",
+  "time": "20:34:54"
+ },
+ "65": {
+  "kind": "WF",
+  "name": "Purema (CHL)",
+  "date": "11/02/2023",
+  "time": "22:07:14"
+ },
+ "73": {
+  "kind": "WF",
+  "name": "San Rafael (CHL)",
+  "date": "19/02/2023",
+  "time": "16:32:43"
+ },
+ "74": {
+  "kind": "WF",
+  "name": "Santa Ana (CHL)",
+  "date": "19/02/2023",
+  "time": "21:04:58"
+ },
+ "77": {
+  "kind": "WF",
+  "name": "Santa Ana (CHL)",
+  "date": "20/02/2023",
+  "time": "00:33:55"
+ },
+ "80": {
+  "kind": "WF",
+  "name": "Santa Ana (CHL)",
+  "date": "20/02/2023",
+  "time": "17:58:59"
+ },
+ "82": {
+  "kind": "WF",
+  "name": "Santa Ana (CHL)",
+  "date": "20/02/2023",
+  "time": "19:56:15"
+ },
+ "84": {
+  "kind": "WF",
+  "name": "Santa Ana (CHL)",
+  "date": "21/02/2023",
+  "time": "02:59:57"
+ },
+ "85": {
+  "kind": "WF",
+  "name": "La Selva del Camp (CAT, ESP)",
+  "date": "03/08/2023",
+  "time": "15:33:06"
+ },
+ "86": {
+  "kind": "PF",
+  "name": "Tivissa (CAT, ESP)",
+  "date": "10/08/2023",
+  "time": "09:30:12"
+ },
+ "9": {
+  "kind": "WF",
+  "name": "La Pobla de Massaluca (CAT, ESP)",
+  "date": "12/08/2021",
+  "time": "15:10:09"
+ },
+ "94": {
+  "kind": "PF",
+  "name": "Orist\u00e0 (CAT, ESP)",
+  "date": "18/10/2023",
+  "time": "12:03:33"
+ },
+ "96": {
+  "kind": "PF",
+  "name": "Orist\u00e0 (CAT, ESP)",
+  "date": "19/10/2023",
+  "time": "10:20:22"
+ },
+ "97": {
+  "kind": "PF",
+  "name": "Rojals (CAT, ESP)",
+  "date": "21/03/2024",
+  "time": "11:21:33"
+ }
+}
