@@ -50,6 +50,9 @@ FIG = {
         "decoup_title_daily": "Dry-pyrocloud decoupling  fireABL / ABL",
         "decoup_ref": "reference fire: {k:.0f} K plume excess -- DIAGNOSTIC, no class",
         "decoup_cb": "fireABL / ABL   (1 = no decoupling; higher = deeper dry decoupling)",
+        "ptop_title_daily": "Predicted plume-top height  --  the cost ladder inverted",
+        "ptop_ref": "declared reference fire {fp:.0f} GW -- a scenario, not a per-cell estimate; validated on 1231 MISR plumes, rho +0.46",
+        "ptop_cb": "plume top (m above ground)",
         "margin_title": "Tuscany pyroCb firepower margin -- 3-day forecast -- firepower / PFT",
         "margin_title_daily": "PyroCb firepower margin  firepower / PFT",
         "margin_bridge": "head fire {m:.0f} m, convective fraction {c:g}",
@@ -76,6 +79,9 @@ FIG = {
         "decoup_title_daily": "Disaccoppiamento pirogeno secco  fireABL / ABL",
         "decoup_ref": "incendio di riferimento: eccesso di {k:.0f} K nel pennacchio -- DIAGNOSTICO, nessuna classe",
         "decoup_cb": "fireABL / ABL   (1 = nessun disaccoppiamento; valori maggiori = disaccoppiamento secco piu profondo)",
+        "ptop_title_daily": "Altezza di cima del pennacchio prevista  --  la scala dei costi invertita",
+        "ptop_ref": "incendio di riferimento dichiarato {fp:.0f} GW -- uno scenario, non una stima per cella; validata su 1231 pennacchi MISR, rho +0,46",
+        "ptop_cb": "cima del pennacchio (m dal suolo)",
         "margin_title": "Margine di potenza per pyroCb in Toscana -- previsione 3 giorni -- potenza / PFT",
         "margin_title_daily": "Margine di potenza per pyroCb  potenza / PFT",
         "margin_bridge": "fronte di testa {m:.0f} m, frazione convettiva {c:g}",
@@ -133,6 +139,37 @@ the moist class ladder and carries no class label. Read class *counts* as indica
 "h2": "2. Fuel-gated -- is there enough fire for a plume at all?",
 "h3": "3. PFT margin -- is there enough fire for a pyroCb in *this* column?",
 "h4": "{n}. Dry-pyrocloud decoupling -- DIAGNOSTIC (no class label)",
+"h_ptop": "{n}. Predicted plume-top height -- the only field validated against observation",
+"cap_ptop": "PREDICTED PLUME TOP. The cost ladder solved for height instead of firepower, for a declared {fp:.0f} GW fire. Continuous, no class label.",
+"p_ptop": """The three questions above ask *how much fire* a given height costs. Solving the same
+inequality the other way -- for the largest height a given fire can afford -- answers the
+question a forecaster actually has, and returns a continuous field instead of a class.
+
+It is also the only product here that has been **checked against observation end to end**.
+Comparing a plume top against a rung's own target height puts that target on both sides of the
+test and measures mostly its own circularity; solving for the height puts a predicted number
+against a measured one and nothing else. Scored that way against 1231 plumes digitised from
+MISR stereo imagery over 7 regions and 11 biomes, with nothing fitted: Spearman **+0.46**
+against the observed top, **+125 m** median bias, 576 m mean absolute error, and 12.8 % better
+than predicting a constant on a scale-free error -- ahead of firepower alone (+0.37) and of
+boundary-layer depth alone (+0.34), and ordering the regional medians at rho +0.61.
+
+**Read the firepower as a scenario.** The map is drawn for a declared {fp:.0f} GW *total*
+power, stated here because a total power cannot be built from a Byram intensity without
+assuming a head-fire length, and that assumption is exactly what this line of work exists to
+avoid. Doubling the reference fire does not double the height -- the cost grows with the cube
+of the climb -- but the field does shift, and it must not be read as a per-cell estimate of
+what will actually burn.
+
+**Two limits worth stating.** The validation sample is MISR's, so it is fixed at roughly 10:30
+local solar time: the boundary layer is still growing and fires are smaller than they will be
+in the afternoon this product forecasts. And the field is produced only where the vertical
+grid resolves the layer the cap is read across, which on this run means the model-level source;
+a pressure-level fallback leaves it blank rather than interpolating one.
+
+Unlike the class rasters, `diag_plume_top_*.tif` and `diag_form_*.tif` are written **already
+masked** to the classifier's `valid` field, so a zonal statistic taken straight off them cannot
+include columns the classifier rejected. The other `diag_*.tif` stay raw, as they always have.""",
 "h_margin_table": "PyroCb firepower margin -- daytime, % of the burnable classifiable land",
 
 "cap1": "Question 1 -- POTENTIAL. Pyroconvection class from the atmosphere alone, no fire-side condition. Upper bound, not an expectation.",
@@ -403,6 +440,41 @@ controparte secca della scala umida delle classi e non porta alcuna etichetta di
 "h2": "2. Filtrato per combustibile -- c'è abbastanza fuoco per un pennacchio?",
 "h3": "3. Margine PFT -- c'è abbastanza fuoco per un pyroCb in *questa* colonna?",
 "h4": "{n}. Disaccoppiamento pirogeno secco -- DIAGNOSTICO (nessuna etichetta di classe)",
+"h_ptop": "{n}. Altezza di cima prevista -- l'unico campo validato contro osservazioni",
+"cap_ptop": "CIMA DEL PENNACCHIO PREVISTA. La scala dei costi risolta per l'altezza invece che per la potenza, per un incendio dichiarato di {fp:.0f} GW. Continua, nessuna etichetta di classe.",
+"p_ptop": """Le tre domande precedenti chiedono *quanto fuoco* costi una data quota. Risolvendo la
+stessa disequazione nell'altro verso -- per la quota massima che un dato incendio puo
+permettersi -- si risponde alla domanda che un previsore ha davvero, e si ottiene un campo
+continuo invece di una classe.
+
+E anche l'unico prodotto qui **verificato contro osservazioni da un capo all'altro**.
+Confrontare la cima di un pennacchio con la quota-bersaglio di un gradino mette quel bersaglio
+su entrambi i lati del test e misura per lo piu la propria circolarita; risolvere per l'altezza
+mette un numero previsto contro un numero misurato e nient'altro. Valutato cosi su 1231
+pennacchi digitalizzati dalle immagini stereo MISR su 7 regioni e 11 biomi, senza nulla di
+adattato: Spearman **+0,46** rispetto alla cima osservata, **+125 m** di bias mediano, 576 m di
+errore assoluto medio e 12,8 % meglio del predire una costante su un errore adimensionale --
+davanti alla sola potenza (+0,37) e alla sola profondita dello strato limite (+0,34), e con le
+mediane regionali ordinate a rho +0,61.
+
+**La potenza va letta come scenario.** La mappa e disegnata per una potenza *totale* dichiarata
+di {fp:.0f} GW, esplicitata qui perche una potenza totale non si ricava da un'intensita di Byram
+senza assumere una lunghezza del fronte di testa, ed e proprio quell'assunzione che questo
+filone di lavoro esiste per evitare. Raddoppiare l'incendio di riferimento non raddoppia
+l'altezza -- il costo cresce con il cubo della salita -- ma il campo si sposta, e non va letto
+come stima per cella di cio che brucera davvero.
+
+**Due limiti da dichiarare.** Il campione di validazione e quello di MISR, quindi e fissato
+intorno alle 10:30 solari locali: lo strato limite sta ancora crescendo e gli incendi sono piu
+piccoli di quanto saranno nel pomeriggio che questo prodotto prevede. E il campo viene prodotto
+solo dove la griglia verticale risolve lo strato su cui si legge la cappa, che in questa corsa
+significa la sorgente a livelli modello; un ripiego su livelli di pressione lo lascia vuoto
+invece di interpolarlo.
+
+A differenza dei raster di classe, `diag_plume_top_*.tif` e `diag_form_*.tif` sono scritti
+**gia mascherati** con il campo `valid` del classificatore: una statistica zonale presa
+direttamente su di essi non puo includere colonne che il classificatore ha rifiutato. Gli altri
+`diag_*.tif` restano grezzi, come sono sempre stati.""",
 "h_margin_table": "Margine di potenza per pyroCb -- ore diurne, % del suolo bruciabile e classificabile",
 
 "cap1": "Domanda 1 -- POTENZIALE. Classe di piroconvezione dalla sola atmosfera, nessuna condizione sul fuoco. Limite superiore, non un'attesa.",

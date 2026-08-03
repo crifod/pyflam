@@ -26,6 +26,8 @@ separates the *expected* map from the *potential* upper bound.
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 
 # Standard geopotential heights (m) of the pressure levels used (ICON/GFS levels).
@@ -82,6 +84,14 @@ PYROCONV_NODATA = -1
 # on the 4 usable campaign observations (mean |error| 1156 m against observations of
 # 371-2850 m). The forcing is now on measured ground; the model it feeds is not yet skilful.
 _REFERENCE_THETA_EXCESS_K = 10.0
+# Declared reference fire for the predicted plume-top field, in GW of *total*
+# power. 5 GW is a fire at the 10 MW/m pyroCu gate (Tedim et al. 2018) over a
+# 700 m head fire with a 0.7 convective fraction -- the same scenario the PFT
+# margin already assumes, made explicit here instead of buried. Tory & Kepert
+# put real events at ~100 GW (Chisholm) to ~1240 GW (Black Saturday), so this
+# is deliberately a modest fire: the field reads as 'how high would an
+# ordinary pyroCu-capable fire get here', not as a worst case.
+_REFERENCE_FIREPOWER_GW = float(os.environ.get('PYROCONV_REFERENCE_FP_GW', 5.0))
 # Tuscany 10 m FBFM40 median available load (scripts/fuel_load_10m.py); used where no
 # fuel map is supplied, so the critical growth rate is always defined.
 _DEFAULT_FUEL_LOAD_KG_M2 = 1.49
@@ -756,6 +766,7 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True,
         lcl_height_bolton_m, relative_humidity_from_dewpoint, DEFAULT_PYROCONV_THRESHOLDS,
         shear_height_grid, shear_distance_grid, _EPSILON, max_rh_abl_grid,
         entrainment_jump_grid, fire_cape_grid, residual_layer_grid,
+        plume_top_height_grid,
         pyrocb_firepower_threshold_grid, plume_entrainment_fraction,
         critical_growth_rate_grid, continuous_haines_grid,
         critical_rh_for_cloud_persistence)
@@ -896,6 +907,21 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True,
     pft = pyrocb_firepower_threshold_grid(z, T, d["P"], d["QV"], U, V,
                                           surface_pressure_pa=ps)
 
+    # Predicted plume-top height for a DECLARED reference fire (the cost ladder inverted:
+    # the largest z with cost(z) <= FP). This is the only product here that is validated
+    # against observation end to end -- 1231 MISR-digitised plumes, 7 regions, 11 biomes,
+    # Spearman +0.461 with +125 m bias and nothing fitted (atmosphere.plume_top_height_grid).
+    #
+    # The firepower is a *scenario*, not a per-cell estimate: a total power cannot be built
+    # from a Byram intensity without a head-fire length, and inventing one is what the whole
+    # capability-margin line of work exists to avoid. _REFERENCE_FIREPOWER_GW is stated in
+    # the caption for exactly that reason. Where a genuine per-cell power exists (an observed
+    # FRP), pass it instead.
+    plume_top = plume_top_height_grid(z, T, d["P"], U, V,
+                                      firepower_gw=np.full(abl.shape,
+                                                           _REFERENCE_FIREPOWER_GW),
+                                      abl_m=abl)
+
     # Derived ABL-top moisture criterion (DIAGNOSTIC; the ladder still uses the scalar
     # threshold). A pyrocloud persists while its buoyancy excess covers the latent cooling of
     # evaporating condensate into the sub-saturated air entrained between its base (the LCL)
@@ -944,6 +970,7 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True,
                 penetration=penetration,
                 pft_gw=pft["pft_gw"], z_fc=pft["z_fc_m"],
                 delta_theta_fc=pft["delta_theta_fc_k"], u_ml=pft["u_ml_ms"],
+                plume_top=plume_top,
                 n_levels=n_levels_land, ml_fit_support=ml_fit_support)
 
 
@@ -978,7 +1005,7 @@ def regrid_diagnostics(diag, lat_src, lon_src, lat_dst, lon_dst, *, abl_min_m=AB
               "shear_dist", "fireabl", "decoupling", "residual_ml", "delta_theta",
               "firecape", "penetration", "pft_gw", "z_fc", "delta_theta_fc", "u_ml",
               "abl_rib", "rh_top_critical", "rh_top_margin", "entrainment_fraction",
-              "chaines", "crit_growth_ha_h")
+              "chaines", "crit_growth_ha_h", "plume_top")
     out = {k: regrid_to(diag[k], lat_src, lon_src, lat_dst, lon_dst)
            for k in fields if k in diag}
     out["valid"] = (np.isfinite(out["abl"]) & np.isfinite(out["lcl_ratio"])

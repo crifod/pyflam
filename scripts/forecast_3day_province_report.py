@@ -37,6 +37,27 @@ import numpy as np
 import rasterio
 from rasterio.features import rasterize
 
+from pyflam.atmosphere import (PYROCONVECTION_TYPES,
+                               PYROCONVECTION_TYPE_LEVEL,
+                               PYROCONVECTION_ENERGY_LEVEL)
+
+# Raster codes are PYROCONVECTION_TYPE_LEVEL (frozen: the GeoTIFFs are read
+# back through it). A *peak class* taken on that scale counts the
+# overshooting -> resilient step as severity, but the two differ only in the
+# LCL/ABL ratio -- geometry, not energy, and no firepower converts one into
+# the other. This lookup maps a stored code onto the energetic ordinal so the
+# peak means what the column header says it means.
+_ENERGY_OF = np.array([PYROCONVECTION_ENERGY_LEVEL[t]
+                       for t in sorted(PYROCONVECTION_TYPES,
+                                       key=PYROCONVECTION_TYPE_LEVEL.get)])
+
+
+def energy_level(cls):
+    """Stored class codes -> energetic ordinal (0..3); nodata (-1) passes through."""
+    c = np.asarray(cls, int)
+    return np.where(c >= 0, _ENERGY_OF[np.clip(c, 0, len(_ENERGY_OF) - 1)], -1)
+
+
 warnings.simplefilter("ignore")
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
@@ -186,6 +207,10 @@ def pyroconv_metrics(gdf, lbl):
             # rather than letting it read as class 0.
             pot_peak = int(max((pot[h][land].max(initial=-1)) for h in dt_idx))
             gate_peak = int(max((gate[h][land].max(initial=-1)) for h in dt_idx))
+            # the same peaks on the energetic ordinal, where overshooting and resilient are
+            # one level: this is the number to rank provinces by
+            pot_peak_e = int(max((energy_level(pot[h])[land].max(initial=-1)) for h in dt_idx))
+            gate_peak_e = int(max((energy_level(gate[h])[land].max(initial=-1)) for h in dt_idx))
             lr = float(np.nanmean(np.where(land, lcl_ratio, np.nan)))
             ab = float(np.nanmean(np.where(land, abl, np.nan)))
             rht = float(np.nanmin(np.where(land[None], rh_top, np.nan)))
@@ -193,7 +218,8 @@ def pyroconv_metrics(gdf, lbl):
             dcm = float(dc[np.isfinite(dc)].max()) if np.isfinite(dc).any() else float("nan")
             rows.append(dict(
                 province=name, day=valid,
-                pot_peak=pot_peak, pot_pyroCu=round(cover(pot, 2), 1),
+                pot_peak=pot_peak, pot_peak_energy=pot_peak_e,
+                gate_peak_energy=gate_peak_e, pot_pyroCu=round(cover(pot, 2), 1),
                 pot_deep=round(cover(pot, 4), 1),
                 gate_peak=gate_peak, gate_pyroCu=round(cover(gate, 2), 1),
                 decoup_max=round(dcm, 1),
@@ -404,7 +430,12 @@ the classifier rejects (ABL below {int(ABL_MIN_M)} m, or no usable profile) are 
 ## Per-province pyroconvection potential metrics
 
 Peak-of-day (09-18Z) statistics per province. *Pot peak* / *Gate peak* are the highest
-class reached (0 surface plume -> 4 deep pyroCu/pyroCb); *%pyroCu* is the maximum daytime
+class reached on the stored scale (0 surface plume -> 4 deep pyroCu/pyroCb); *Pot/Gate
+peak E* are the same peaks on the **energetic** ordinal (0 none, 1 out of the mixed layer,
+2 pyroCu of either form, 3 deep pyroCu/pyroCb), which is what provinces should be ranked by --
+the stored scale separates overshooting from resilient pyroCu, but that is the LCL/ABL ratio,
+i.e. whether the cloud persists, not how severe it is, and no firepower converts one into the
+other. *%pyroCu* is the maximum daytime
 areal coverage of class >= 2 (pyrocumulus), *%deep* of class 4. *Decoup max* is the peak
 daytime fireABL/ABL ratio over the province -- read it alongside the classes, since a high
 ratio with a low class is the dry-decoupling case the moist ladder does not score. LCL/ABL,

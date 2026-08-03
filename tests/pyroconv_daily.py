@@ -48,6 +48,8 @@ from pyflam.atmosphere import (
     equilibrium_moisture_content, relative_humidity_from_dewpoint,
     fetch_icon2i_mistral, fetch_icon_eu, ICON2I_PROFILE_FIELDS, ICON_EU_MODEL_LEVELS,
     PYROCONVECTION_TYPES, PYROCONVECTION_TYPE_LEVEL,
+    PYROCONVECTION_ENERGY_LEVEL, pyroconvection_form_grid,
+    PYROCONVECTION_FORM_CODE,
     PYROCONVECTION_TYPE_LABEL, pyroconvection_colors,
 )
 
@@ -280,6 +282,62 @@ def render_decoupling(diags, lat, lon, lang="en"):
     return png
 
 
+# Plume-top colour scale. Fixed rather than per-run so two days are comparable at a glance,
+# and capped at 6 km: above that the field is extrapolating past the levels most sources
+# publish, and a reader should not be invited to read a number off it.
+PTOP_VMIN, PTOP_VMAX = 500.0, 6000.0
+
+
+def render_plume_top(diags, lat, lon, lang="en"):
+    """Render the predicted plume-top height as an 8-hour panel, or ``None``.
+
+    The cost ladder solved for height instead of firepower, for the declared reference fire
+    (``pyflam_gui.core.pyroconv._REFERENCE_FIREPOWER_GW``). Returns ``None`` where the run
+    produced no field -- the pressure-level fallback cannot resolve the layer the cap is read
+    across and leaves it out rather than interpolating one, which is the whole point of the
+    guard in ``atmosphere._EZ_MIN_LEVELS``.
+
+    Continuous and sequential, deliberately unlike the class maps: this field has no classes,
+    and giving it the class ramp would invite reading a severity level off it.
+    """
+    if not any("plume_top" in d for d in diags):
+        return None
+    import matplotlib; matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from pyflam_gui.core.pyroconv import _REFERENCE_FIREPOWER_GW
+    os.makedirs(RASTERDIR, exist_ok=True)
+    flip = lat[0] > lat[-1]; ext = [lon.min(), lon.max(), lat.min(), lat.max()]
+    prov = _tuscany_provinces()
+    fig, ax = plt.subplots(1, len(HOURS), figsize=(2.1*len(HOURS), 3.0),
+                           constrained_layout=True, squeeze=False)
+    ax = ax[0]
+    cmap = plt.get_cmap("viridis").copy(); cmap.set_bad("0.9")
+    im = None
+    for hi, hour in enumerate(HOURS):
+        r = np.asarray(diags[hi].get("plume_top", np.nan), float)
+        r = np.where(np.asarray(diags[hi]["valid"], bool), r, np.nan)
+        a = r[::-1] if flip else r
+        im = ax[hi].imshow(a, origin="lower", extent=ext, cmap=cmap,
+                           vmin=PTOP_VMIN, vmax=PTOP_VMAX, aspect="auto",
+                           interpolation="nearest")
+        if prov is not None:
+            prov.plot(ax=ax[hi], color="0.15", linewidth=0.4)
+            ax[hi].set_xlim(ext[0], ext[1]); ax[hi].set_ylim(ext[2], ext[3])
+        ax[hi].set_title(f"{DATE} {hour:02d}Z", fontsize=8)
+        ax[hi].set_xticks([]); ax[hi].set_yticks([])
+    src_label = I18N.f(lang, "src_hybrid" if EFFECTIVE_SOURCE == "hybrid" else "src_icon2i")
+    fig.suptitle(f"{I18N.f(lang, 'ptop_title_daily')}  "
+                 f"({I18N.f(lang, 'ptop_ref', fp=_REFERENCE_FIREPOWER_GW)})\n"
+                 f"{src_label} -- {I18N.f(lang, 'tuscany')} -- {I18N.f(lang, 'valid')} {DATE} "
+                 f"({I18N.f(lang, 'run')} {RUNDATE} {RUN:02d}Z)", fontsize=11)
+    cb = fig.colorbar(im, ax=ax, shrink=0.72, aspect=30, pad=0.01)
+    cb.set_label(I18N.f(lang, "ptop_cb"), fontsize=8)
+    png = os.path.join(OUTDIR,
+                       f"pyroconv_tuscany_{MODEL_TAG}_plumetop_{DATE}{I18N.SUFFIX[lang]}.png")
+    fig.savefig(png, dpi=140, bbox_inches="tight"); plt.close(fig)
+    return png
+
+
 PFT_MARGIN_VMIN, PFT_MARGIN_VMAX = 1.0e-3, 10.0
 PFT_MARGIN_LEVELS = (1.0, 0.1)      # the criterion, and the within-one-decade band
 NOFUEL_COLOR = "#ffffff"            # zero firepower: a categorical no, not a small margin
@@ -392,7 +450,7 @@ def pft_margin_rows(diags, gate):
 
 
 def build_pdf(png_pot, png_gate, ladders, n_levels, png_decoup=None, ml_fit_support=None,
-              png_margin=None, margin_rows=None, lang="en"):
+              png_margin=None, margin_rows=None, png_ptop=None, lang="en"):
     """Write the .md and build the .pdf for one language, from one set of computed values.
 
     Called once per language from :func:`main`; the numbers are formatted here and only the
@@ -444,6 +502,16 @@ def build_pdf(png_pot, png_gate, ladders, n_levels, png_decoup=None, ml_fit_supp
             f"## {T('h4', n=4 if png_margin else 3)}\n\n"
             f"![{T('cap4')}]({png_decoup}){{width=100%}}\n\n"
             f"{T('p_decoup', k=_REFERENCE_THETA_EXCESS_K, abl=abl)}\n\n")
+    # Placed last on purpose: it is the only field validated against observation, so it reads
+    # as the conclusion the three questions build towards rather than as a fourth question.
+    ptop_block = ""
+    if png_ptop:
+        from pyflam_gui.core.pyroconv import _REFERENCE_FIREPOWER_GW as _fp
+        n_sec = 3 + bool(png_margin) + bool(png_decoup)
+        ptop_block = (
+            f"## {T('h_ptop', n=n_sec)}\n\n"
+            f"![{T('cap_ptop', fp=_fp)}]({png_ptop}){{width=100%}}\n\n"
+            f"{T('p_ptop', fp=_fp)}\n\n")
     with open(md, "w") as f:
         f.write(f"""---
 title: "{T('title_daily', src=src_title, date=DATE)}"
@@ -486,7 +554,7 @@ header-includes: |
 
 {T('p2')}
 
-{margin_block}{decoup_block}## {T('h_classscale')}
+{margin_block}{decoup_block}{ptop_block}## {T('h_classscale')}
 
 {T('classscale')}
 
@@ -550,11 +618,28 @@ def ml_fit_resolution(diags):
     return n, (float(np.mean(sup)) if sup else None)
 
 
+# Diagnostics written **masked** to the classifier's own `valid` field, so a zonal statistic
+# taken straight off the GeoTIFF cannot include columns the classifier rejected.
+#
+# Only these two. Every other diag_*.tif is published raw and has been for many runs, and the
+# downstream readers already mask at read time (scripts/forecast_3day_province_report.py wraps
+# them in `classifiable(...)`). Masking them now would silently change artefacts people already
+# hold, to fix a problem their consumers have already solved. These two are new, have no
+# consumers yet, and are the ones where a raw value is actively misleading: a plume-top height
+# for a column with no usable profile is a number computed from a profile the product declined
+# to classify, and a form label on it is a geometry read off the same rejected column.
+_MASKED_DIAGS = frozenset({"plume_top", "form"})
+
+
 def export_diagnostics(diags, lat, lon):
     """Write the per-hour profile diagnostics (ABL, LCL, ML dtheta/dz, cap, RH-top).
 
     The intermediate fields the class is built from, so a forecaster can see *why* a
     cell got its class rather than only the class.
+
+    Fields in :data:`_MASKED_DIAGS` are written with the classifier's ``valid`` mask already
+    applied; the rest are raw, as they have always been. See the note there for why the split
+    exists rather than one rule for all of them.
     """
     import rasterio
     from rasterio.transform import from_origin
@@ -570,10 +655,12 @@ def export_diagnostics(diags, lat, lon):
                      "residual_ml", "delta_theta", "firecape", "penetration",
                      "pft_gw", "z_fc", "delta_theta_fc", "u_ml", "abl_rib", "chaines",
                      "fuel_load", "burnable_fraction", "firepower_gw", "pft_margin",
-                     "crit_growth_ha_h"):
+                     "crit_growth_ha_h", "form", "plume_top"):
             if name not in diags[hi]:
                 continue
             arr = np.asarray(diags[hi][name], "float32")
+            if name in _MASKED_DIAGS and "valid" in diags[hi]:
+                arr = np.where(np.asarray(diags[hi]["valid"], bool), arr, np.nan)
             arr = arr if flip else arr[::-1]
             path = os.path.join(RASTERDIR, f"diag_{name}_{hour:02d}Z.tif")
             with rasterio.open(path, "w", driver="GTiff", height=arr.shape[0],
@@ -681,6 +768,24 @@ def main():
     hybrid_diags = hybrid_diags_or_none(lat, lon) if SOURCE == "hybrid" else None
     _apply_source("hybrid" if hybrid_diags is not None else "icon2i")
     sys.stderr.write(f"[pyroconv_daily] effective source: {EFFECTIVE_SOURCE}\n")
+    if SOURCE == "hybrid" and EFFECTIVE_SOURCE == "icon2i":
+        # The downgrade used to be a filename change and nothing else. It is a change of
+        # *instrument*: ICON-2I open data publishes 5-6 pressure levels, ~500 m apart in the
+        # lower troposphere, against an entrainment zone ~265 m deep. Every cap-dependent
+        # diagnostic below -- gamma-theta, the entrainment jump, anything the escape rung
+        # would price -- is then read off an interpolation between levels straddling the
+        # layer, which scored exactly chance on the MISR calibration
+        # (docs/graf_vs_pyflam_2026-07-26.md; atmosphere._EZ_MIN_LEVELS). The product is
+        # still worth publishing, but not silently under the same name.
+        sys.stderr.write(
+            "[pyroconv_daily] *** DOWNGRADED hybrid -> icon2i: ICON-EU model levels were "
+            "unavailable.\n"
+            "[pyroconv_daily] *** 5-6 pressure levels cannot resolve the entrainment zone, "
+            "so cap-dependent\n"
+            "[pyroconv_daily] *** diagnostics in this run are interpolations, not "
+            "measurements. Treat the\n"
+            "[pyroconv_daily] *** cap thresholds as indicative and say so wherever this run "
+            "is published.\n")
 
     pot, gate, diags, ladders = [], [], [], set()
     fli_by_hour = []
@@ -700,6 +805,15 @@ def main():
             gate.append(g)
 
     # Fire-side conditioning: per-cell firepower against the column's own PFT.
+    # Form: overshooting vs resilient, from LCL/ABL alone. A property of the column, carrying
+    # no firepower and no ordinal level -- it says whether a pyroCu here would be transient or
+    # persistent, and it is meaningful even where no fire can buy the cloud. Kept as its own
+    # raster rather than folded into the class ramp, because collapsing a geometry flag into a
+    # severity scale is what put a spurious step into PYROCONVECTION_TYPE_LEVEL.
+    for diag in diags:
+        if "lcl_ratio" in diag:
+            diag["form"] = pyroconvection_form_grid(diag["lcl_ratio"]).astype("float32")
+
     fuel_load, burn_frac = sample_fuel_grid(lat, lon)
     for hi, diag in enumerate(diags):
         if fuel_load is not None:
@@ -730,9 +844,10 @@ def main():
                   if gate else p_pot)
         p_margin = render_pft_margin(diags, gate, lat, lon, lang)
         p_decoup = render_decoupling(diags, lat, lon, lang)
+        p_ptop = render_plume_top(diags, lat, lon, lang)
         pdf_l = build_pdf(p_pot, p_gate, sorted(ladders), n_lev, png_decoup=p_decoup,
                           ml_fit_support=support, png_margin=p_margin, margin_rows=mrows,
-                          lang=lang)
+                          png_ptop=p_ptop, lang=lang)
         if li == 0:
             png_pot, pdf = p_pot, pdf_l
     print(f"OK {DATE} {RUN:02d}Z [ladder={','.join(sorted(ladders))}]: {png_pot}"

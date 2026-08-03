@@ -680,6 +680,27 @@ PYROCONVECTION_TYPES = (
     "resilient_pyrocu", "deep_pyrocu_pyrocb",
 )
 PYROCONVECTION_TYPE_LEVEL = {t: i for i, t in enumerate(PYROCONVECTION_TYPES)}
+
+# The **storage** encoding above is what goes into the GeoTIFFs and is read back by name, so it
+# is frozen: changing it would silently reinterpret every published raster.
+#
+# It is not, however, an ordering. `overshooting_pyrocu` and `resilient_pyrocu` sit one step
+# apart in it, but they are the same energetic level -- the LCL/ABL ratio separates them, which
+# is the column's *geometry*, and no firepower converts one into the other (see the cost-ladder
+# block below). Rank statistics, colour ramps keyed on severity and zonal "mean class" figures
+# want this map instead, which collapses the pair and leaves three genuine steps:
+#
+#     0 no plume   1 out of the ML   2 a pyroCu (either form)   3 deep pyroCu / pyroCb
+#
+# Reporting a mean class off PYROCONVECTION_TYPE_LEVEL counts a geometry change as half a
+# severity step; reporting it off this one does not.
+PYROCONVECTION_ENERGY_LEVEL = {
+    "surface_plume": 0,
+    "convection_plume": 1,
+    "overshooting_pyrocu": 2,
+    "resilient_pyrocu": 2,
+    "deep_pyrocu_pyrocb": 3,
+}
 PYROCONVECTION_TYPE_COLOR = {
     "surface_plume": "#ffffff", "convection_plume": "#a6d96a",
     "overshooting_pyrocu": "#fee08b", "resilient_pyrocu": "#f46d43",
@@ -1671,6 +1692,38 @@ _PFT_CLOUD_TOP_C = -20.0       # conservative electrification level (their assum
 _PFT_BUOY_BUFFER_K = 0.5       # dtheta_b, for evaporative loss to entrained dry air
 _PFT_HEAT_TO_MOISTURE = 15.0   # K per g/kg, the fire's heat:moisture ratio (assumption 4)
 
+# The density eq 31 folds in is not a free constant: 0.755 kg/m3 is the standard-atmosphere
+# density at ~4.8 km, which is the z_fc of the Black Saturday case they calibrate on. Read
+# that way, eq 25 is a mass-flux statement -- the plume must deliver, at the target height,
+# entrained air warm by dtheta, and a bent-over plume entrains ~rho * U * z^2 -- so the
+# firepower is linear in the density *at the target*:
+#
+#     FP[GW] = _PFT_C_RHO * rho(z_t) * (z_t[km])^2 * U[m/s] * dtheta[K]
+#
+# _PFT_C_RHO * 0.755 == _PFT_C, so scoring z_fc with the column's own density reproduces
+# eq 31 wherever the column resembles the standard atmosphere at that height, and corrects
+# it where it does not. This matters for the lower rungs of the cost ladder, whose targets
+# sit at 1-2 km where rho is 1.0-1.1: reusing 0.3 there understates the cost by 25-45 %.
+_PFT_RHO_REF = 0.755           # kg m-3, the density eq 31 assumes (std. atmosphere at z_fc)
+_PFT_C_RHO = _PFT_C / _PFT_RHO_REF
+PFT_RHO_MODES = ("paper", "column")
+
+# Briggs (1969) stable bent-over final rise, dh = 2.6 (F/(U s))^(1/3) -- inverted at the ABL
+# top it is the classical criterion for penetrating an elevated inversion, and it is what
+# prices the `escape` rung of the cost ladder. See _escape_cost_gw.
+_BRIGGS_C = 2.6
+_BRIGGS_MIN_WIND_MS = 0.5      # the bent-over scaling fails as U -> 0
+_ESCAPE_EZ_FRAC = 0.15         # entrainment-zone depth as a fraction of the ABL (Stull 1988)
+_ESCAPE_EZ_MIN_M = 100.0
+# A stability cannot be read across a layer thinner than the gap between levels. Measured on
+# the MISR calibration: ERA5 pressure levels (50 hPa, ~500 m below 4 km) put *no* level inside
+# the ~265 m entrainment zone in 46-56 % of columns, and `s` came out of an interpolation
+# between levels straddling it -- which scored exactly chance. ERA5 L137 model levels (91 m)
+# gave 1.63 levels and 0 % empty. ICON-2I open data publishes 5-6 pressure levels, which is
+# worse than the grid that failed, so the escape rung must decline on it rather than return a
+# number. Same contract as _SHEAR_MIN_LEVELS: refuse, do not fabricate.
+_EZ_MIN_LEVELS = 1
+
 
 def _moist_lapse_rate(temp_k, pressure_pa):
     """Saturated (pseudo)adiabatic lapse rate, K/m. Array-safe."""
@@ -1683,13 +1736,103 @@ def _moist_lapse_rate(temp_k, pressure_pa):
     return _G / _CP_DRY * num / den
 
 
+def _mean_wind_below(z, wind_u, wind_v, z_top):
+    """Magnitude of the *vector* mean wind from the surface to ``z_top`` (Tory & Kepert step 5).
+
+    Shared by the PFT and by every rung of :func:`pyroconvection_cost_grid` so the three
+    cannot drift apart in how they average a wind. Columns whose target falls below the
+    lowest sampled level fall back to that level rather than to no wind at all -- a zero
+    wind would silently price the rung at zero.
+    """
+    z = np.asarray(z, float)
+    u, v = np.asarray(wind_u, float), np.asarray(wind_v, float)
+    valid = np.isfinite(u) & np.isfinite(v) & np.isfinite(z)
+    top = np.where(np.isfinite(z_top), z_top, 0.0)
+    inlay = valid & (z <= top[None, ...])
+    empty = ~inlay.any(axis=0)
+    if empty.any():
+        lowest = valid & (np.cumsum(valid, axis=0) == 1)
+        inlay = inlay | (lowest & empty[None, ...])
+    n = np.maximum(inlay.sum(0), 1)
+    return np.hypot(np.where(inlay, u, 0.0).sum(0) / n, np.where(inlay, v, 0.0).sum(0) / n)
+
+
+def _density_at(z, temperature_k, pressure_pa, z_target):
+    """Environmental air density (kg/m3) interpolated to a 2-D target height."""
+    t_t = _interp_profile_at(z, temperature_k, z_target)
+    p_t = _interp_profile_at(z, pressure_pa, z_target)
+    return p_t / (_RD * np.maximum(t_t, 1.0))
+
+
+def _firepower_required_gw(z_target_m, delta_theta_k, u_ms, rho_kg_m3):
+    """Total firepower (GW) to deliver ``delta_theta`` at ``z_target`` -- eq 25, density explicit.
+
+    ``rho_kg_m3`` may be the scalar ``_PFT_RHO_REF`` (recovering eq 31 verbatim) or a
+    per-column density at the target height.
+    """
+    return _PFT_C_RHO * rho_kg_m3 * (np.asarray(z_target_m, float) / 1000.0) ** 2 \
+        * np.asarray(u_ms, float) * np.asarray(delta_theta_k, float)
+
+
+def _mixed_layer_state(z, theta, q, surface_pressure_pa, usable, shape, *, iterations: int = 6):
+    """Height-weighted mixed-layer ``theta``/``q`` and the ML depth (Tory & Kepert eqs 15-16).
+
+    Extracted from :func:`pyrocb_firepower_threshold_grid` so the cost ladder scores every
+    rung off the *same* mixed layer. The window is measured from each column's own lowest
+    usable level -- see that function for why an absolute window breaks on radiosondes.
+    """
+    ps = np.asarray(surface_pressure_pa, float)
+    z_base = np.min(np.where(usable, z, np.inf), axis=0)
+    z_base = np.where(np.isfinite(z_base), z_base, 0.0)
+    depth = np.full(shape, 500.0)
+    th_ml = q_ml = None
+    for _ in range(iterations):
+        w = usable & (z <= (z_base + depth)[None, ...])
+        if not w.any():
+            w = usable & (z <= (z_base + 1e-6)[None, ...])
+        else:
+            empty = ~w.any(axis=0)
+            if empty.any():
+                w = w | (usable & empty[None, ...] & (z <= (z_base + 1e-6)[None, ...]))
+        wt = np.where(w, np.maximum(z, 1.0), 0.0)
+        tot = np.maximum(wt.sum(0), 1e-9)
+        th_ml = (wt * np.where(w, theta, 0.0)).sum(0) / tot
+        q_ml = (wt * np.where(w, q, 0.0)).sum(0) / tot
+        t_sfc = th_ml * (ps / 100000.0) ** _KAPPA_DRY
+        e = q_ml * ps / (_EPSILON + (1.0 - _EPSILON) * q_ml)
+        td = 243.5 * np.log(np.maximum(e, 1.0) / 611.2) / (17.67 - np.log(np.maximum(e, 1.0) / 611.2))
+        depth = np.clip(lcl_height_bolton_m(t_sfc, td + 273.15, ps), 100.0, 5000.0)
+    return th_ml, q_ml, depth
+
+
+def _saturation_point(beta, th_ml, q_ml, surface_pressure_pa, heat_to_moisture):
+    """Saturation-point height/state of a plume parcel with buoyancy increment ``beta``.
+
+    Tory et al. (2018) eqs 29-30: the parcel leaves the surface at ``(1+beta) theta_ML``,
+    moistened by the fire at ``heat_to_moisture`` K per g/kg, and ascends dry to where it
+    condenses. Returns ``(z_sp, t_sp, p_sp, t_parcel_surface)``.
+    """
+    ps = np.asarray(surface_pressure_pa, float)
+    th_p = (1.0 + beta) * th_ml
+    q_p = q_ml + beta * th_ml / heat_to_moisture * 1e-3          # g/kg -> kg/kg
+    t_p = th_p * (ps / 100000.0) ** _KAPPA_DRY
+    e = q_p * ps / (_EPSILON + (1.0 - _EPSILON) * q_p)
+    le = np.log(np.maximum(e, 1.0) / 611.2)
+    td = 243.5 * le / (17.67 - le)
+    z_sp = lcl_height_bolton_m(t_p, td + 273.15, ps)
+    t_sp = t_p - _G / _CP_DRY * z_sp                             # dry ascent to the SP
+    p_sp = ps * np.maximum(t_sp / np.maximum(t_p, 1.0), 1e-6) ** (1.0 / _KAPPA_DRY)
+    return z_sp, t_sp, p_sp, t_p
+
+
 def pyrocb_firepower_threshold_grid(height_agl_m, temperature_k, pressure_pa,
                                     spec_humidity, wind_u, wind_v, *,
                                     surface_pressure_pa,
                                     buoyancy_buffer_k: float = _PFT_BUOY_BUFFER_K,
                                     cloud_top_temp_c: float = _PFT_CLOUD_TOP_C,
                                     heat_to_moisture: float = _PFT_HEAT_TO_MOISTURE,
-                                    beta_max: float = 0.12, beta_steps: int = 60):
+                                    beta_max: float = 0.12, beta_steps: int = 60,
+                                    rho_mode: str = "paper"):
     """PyroCb Firepower Threshold (GW), gridded -- Tory & Kepert (2021) eq 31.
 
     The minimum **total** firepower that, in this atmosphere, lifts a fire plume to where
@@ -1724,6 +1867,12 @@ def pyrocb_firepower_threshold_grid(height_agl_m, temperature_k, pressure_pa,
     4. **Wind.** ``U_ML`` is the magnitude of the *vector* mean wind between the surface and
        ``z_fc`` (their step 5) -- not the 10 m wind.
 
+    ``rho_mode`` selects the density in eq 25. ``"paper"`` (default) keeps eq 31 verbatim,
+    with their ``rho_0 = 0.755``; ``"column"`` uses this column's own density at ``z_fc``,
+    which is what :func:`pyroconvection_cost_grid` needs for its rungs to be mutually
+    comparable. The two agree wherever the column resembles the standard atmosphere at
+    ``z_fc``, so the default is left alone and the published scale check below still holds.
+
     ``nan`` where no ``beta <= beta_max`` produces a buoyant cloud: the column cannot make a
     pyroCb at any firepower, which is a stronger statement than a large threshold.
 
@@ -1752,28 +1901,7 @@ def pyrocb_firepower_threshold_grid(height_agl_m, temperature_k, pressure_pa,
     # as "no firepower suffices" when it actually meant "the mixed layer was never sampled".
     theta = theta_kelvin(T - 273.15, p / 100.0)
     usable = np.isfinite(theta) & np.isfinite(q) & np.isfinite(z)
-    z_base = np.min(np.where(usable, z, np.inf), axis=0)
-    z_base = np.where(np.isfinite(z_base), z_base, 0.0)
-    depth = np.full(shape, 500.0)
-    for _ in range(6):
-        w = usable & (z <= (z_base + depth)[None, ...])
-        # Empty window (a coarse profile whose first level already clears the ML-LCL): fall
-        # back to the lowest usable level so the column still yields a mixed-layer state.
-        if not w.any():
-            w = usable & (z <= (z_base + 1e-6)[None, ...])
-        else:
-            empty = ~w.any(axis=0)
-            if empty.any():
-                w = w | (usable & empty[None, ...] & (z <= (z_base + 1e-6)[None, ...]))
-        # linear-in-height weighting: entrained mass flux grows with height (eqs 15-16)
-        wt = np.where(w, np.maximum(z, 1.0), 0.0)
-        tot = np.maximum(wt.sum(0), 1e-9)
-        th_ml = (wt * np.where(w, theta, 0.0)).sum(0) / tot
-        q_ml = (wt * np.where(w, q, 0.0)).sum(0) / tot
-        t_sfc = th_ml * (ps / 100000.0) ** _KAPPA_DRY
-        e = q_ml * ps / (_EPSILON + (1.0 - _EPSILON) * q_ml)
-        td = 243.5 * np.log(np.maximum(e, 1.0) / 611.2) / (17.67 - np.log(np.maximum(e, 1.0) / 611.2))
-        depth = np.clip(lcl_height_bolton_m(t_sfc, td + 273.15, ps), 100.0, 5000.0)
+    th_ml, q_ml, depth = _mixed_layer_state(z, theta, q, ps, usable, shape)
 
     # --- 2-3. walk the saturation-point curve for the critical beta
     z_fc = np.full(shape, np.nan)
@@ -1782,15 +1910,7 @@ def pyrocb_firepower_threshold_grid(height_agl_m, temperature_k, pressure_pa,
         todo = ~np.isfinite(z_fc)
         if not todo.any():
             break
-        th_p = (1.0 + beta) * th_ml
-        q_p = q_ml + beta * th_ml / heat_to_moisture * 1e-3      # g/kg -> kg/kg
-        t_p = th_p * (ps / 100000.0) ** _KAPPA_DRY
-        e = q_p * ps / (_EPSILON + (1.0 - _EPSILON) * q_p)
-        le = np.log(np.maximum(e, 1.0) / 611.2)
-        td = 243.5 * le / (17.67 - le)
-        z_sp = lcl_height_bolton_m(t_p, td + 273.15, ps)
-        t_sp = t_p - _G / _CP_DRY * z_sp                          # dry ascent to the SP
-        p_sp = ps * np.maximum(t_sp / np.maximum(t_p, 1.0), 1e-6) ** (1.0 / _KAPPA_DRY)
+        z_sp, t_sp, p_sp, _t_p = _saturation_point(beta, th_ml, q_ml, ps, heat_to_moisture)
 
         # moist ascent from the SP; must beat the environment by the buffer up to the
         # cloud-top level, else this beta is not enough
@@ -1815,13 +1935,15 @@ def pyrocb_firepower_threshold_grid(height_agl_m, temperature_k, pressure_pa,
         dth_fc = np.where(good, beta * th_ml, dth_fc)
 
     # --- 4. vector-mean wind between the surface and z_fc
-    inlay = (z <= np.where(np.isfinite(z_fc), z_fc, 0.0)[None, ...]) & np.isfinite(u) & np.isfinite(v)
-    n = np.maximum(inlay.sum(0), 1)
-    u_ml = np.hypot((np.where(inlay, u, 0.0)).sum(0) / n, (np.where(inlay, v, 0.0)).sum(0) / n)
+    u_ml = _mean_wind_below(z, u, v, z_fc)
 
-    pft = _PFT_C * (z_fc / 1000.0) ** 2 * u_ml * dth_fc
+    if rho_mode not in PFT_RHO_MODES:
+        raise ValueError(f"rho_mode must be one of {PFT_RHO_MODES}, got {rho_mode!r}")
+    rho = _PFT_RHO_REF if rho_mode == "paper" else _density_at(z, T, p, z_fc)
+    pft = _firepower_required_gw(z_fc, dth_fc, u_ml, rho)
     return dict(pft_gw=pft, z_fc_m=z_fc, delta_theta_fc_k=dth_fc, u_ml_ms=u_ml,
-                theta_ml_k=th_ml, q_ml=q_ml, ml_depth_m=depth)
+                theta_ml_k=th_ml, q_ml=q_ml, ml_depth_m=depth,
+                rho_kg_m3=np.broadcast_to(np.asarray(rho, float), shape).copy())
 
 
 def critical_growth_rate_grid(pft_gw, *, fuel_load_kg_m2=1.49,
@@ -1861,6 +1983,96 @@ def critical_growth_rate_grid(pft_gw, *, fuel_load_kg_m2=1.49,
     return pft * 1.0e9 / denom * 3600.0 / 1.0e4        # m2/s -> ha/h
 
 
+PLUME_TOP_FORMS = ("differential", "integral")
+
+
+def plume_top_height_grid(height_agl_m, temperature_k, pressure_pa, wind_u, wind_v, *,
+                          firepower_gw, abl_m, form: str = "differential",
+                          prefactor: float = 1.0):
+    """Height (m AGL) a plume of ``firepower_gw`` reaches in this column -- the ladder inverted.
+
+    The cost ladder asks "how much fire to reach height z". Solving the same inequality the
+    other way, for the largest ``z`` with ``cost(z) <= FP``, answers the question a forecaster
+    actually has -- *how high does it go* -- and yields a continuous field instead of a class.
+
+    Posing it this way is also what makes the ladder testable. Comparing a plume top against a
+    rung's own target puts that target on both sides of the test; solving for the height puts a
+    predicted height against a measured one and nothing else. Validated that way against 1231
+    MISR-digitised plumes over 7 regions and 11 biomes (FRP >= 400 MW), with nothing fitted --
+    ``prefactor = 1`` is Briggs' own geometry:
+
+        Spearman +0.461 against the observed plume top, +125 m median bias, 576 m MAE,
+        12.8 % scale-free skill over predicting a constant, beating FRP^(1/3) alone (+0.367)
+        and ABL depth alone (+0.338), and ordering the regional medians at rho +0.607.
+
+    ``form`` selects how the demand is written (:data:`PLUME_TOP_FORMS`). ``"differential"``
+    uses the bulk stability over the rise -- Briggs, which with that stability *is* Tory &
+    Kepert eq 25. ``"integral"`` uses the work done against the whole stratification climbed
+    through. They coincide for a linear theta profile and differ on ~89 % of real columns; the
+    MISR sample prefers ``"differential"`` (the integral ranks the same but calibrates 7 %
+    *below* a constant), which reads as a bent-over plume entraining continuously rather than
+    carrying an undiluted parcel's energy debt.
+
+    **Supplying ``firepower_gw``.** It is a *total* power, so it does not come from a Byram
+    intensity without a head-fire length -- the assumption this whole line of work exists to
+    avoid. Two honest sources: an observed FRP (satellite, divided by a declared radiative
+    fraction), or a **declared reference fire**, stated in the caption, exactly as the
+    fireABL diagnostic already does. Do not quietly reconstruct it from ``I_B * L``.
+
+    Returns ``nan`` where the column cannot be scored. The floor is the plume source layer,
+    ``max(abl/2, 200 m)``: below that the plume has not left the fire.
+    """
+    if form not in PLUME_TOP_FORMS:
+        raise ValueError(f"form must be one of {PLUME_TOP_FORMS}, got {form!r}")
+    z = np.asarray(height_agl_m, float)
+    T = np.asarray(temperature_k, float)
+    p = np.asarray(pressure_pa, float)
+    u, v = np.asarray(wind_u, float), np.asarray(wind_v, float)
+    fp = np.asarray(firepower_gw, float)
+    abl = np.asarray(abl_m, float)
+
+    theta = theta_kelvin(T - 273.15, p / 100.0)
+    src = np.maximum(abl * 0.5, 200.0)
+    below = (z <= src[None, ...]) & np.isfinite(theta)
+    n_below = np.maximum(below.sum(0), 1)
+    th_ml = np.where(below, theta, 0.0).sum(0) / n_below
+    th_ml = np.where(below.any(0), th_ml, theta[0])
+
+    rho = p / (_RD * np.maximum(T, 1.0))
+    k = np.arange(1, z.shape[0] + 1).reshape((-1,) + (1,) * (z.ndim - 1))
+    U = np.maximum(np.hypot(np.cumsum(u, 0) / k, np.cumsum(v, 0) / k), _BRIGGS_MIN_WIND_MS)
+    zz = np.maximum(z, 1.0)
+    dth = theta - th_ml[None, ...]
+
+    if form == "integral":
+        integ = np.maximum(_G * dth / th_ml[None, ...], 0.0)
+        dz = np.diff(z, axis=0)
+        W = np.concatenate([np.zeros_like(z[:1]),
+                            np.cumsum(0.5 * (integ[1:] + integ[:-1]) * dz, axis=0)], axis=0)
+        demand = 2.0 * W / zz ** 2                       # == the bulk gradient when theta is linear
+    else:
+        demand = np.maximum(_G / th_ml[None, ...] * dth / zz, 0.0)
+
+    cost = (prefactor * (zz / _BRIGGS_C) ** 3 * U * demand
+            * _PI * rho * _CP_DRY * T / _G / 1.0e9)      # GW
+
+    usable = np.isfinite(cost) & (z > src[None, ...])
+    unaffordable = usable & (cost > fp[None, ...])
+    any_bad = unaffordable.any(0)
+    first = np.argmax(unaffordable, axis=0)              # 0 where none, guarded by any_bad
+
+    idx = np.clip(first, 1, z.shape[0] - 1)
+    take = lambda a, i: np.take_along_axis(a, i[None, ...], axis=0)[0]
+    z1, z0 = take(z, idx), take(z, idx - 1)
+    c1, c0 = take(cost, idx), take(cost, idx - 1)
+    frac = np.clip((fp - c0) / np.where(c1 != c0, c1 - c0, np.inf), 0.0, 1.0)
+    crossed = z0 + frac * (z1 - z0)
+
+    z_top_usable = np.max(np.where(usable, z, -np.inf), axis=0)
+    out = np.where(any_bad, np.where(first == 0, src, crossed), z_top_usable)
+    return np.where(usable.any(0) & np.isfinite(fp) & np.isfinite(abl), out, np.nan)
+
+
 def capability_margin(growth_rate_ha_h, critical_growth_rate_ha_h):
     """``log10(observed / critical)`` -- how far a fire is from this atmosphere's pyroCb bar.
 
@@ -1871,6 +2083,391 @@ def capability_margin(growth_rate_ha_h, critical_growth_rate_ha_h):
     crit = np.asarray(critical_growth_rate_ha_h, dtype=float)
     with np.errstate(divide="ignore", invalid="ignore"):
         return np.log10(np.where(obs > 0, obs, np.nan) / np.where(crit > 0, crit, np.nan))
+
+
+# --- cost ladder + form field -------------------------------------------------
+#
+# The Castellnou ladder's five classes are not five energetic steps. `overshooting_pyrocu`
+# and `resilient_pyrocu` are separated by the LCL/ABL ratio -- the *geometry* of the column,
+# not its energy -- and no firepower converts one into the other: with the LCL above the ABL
+# top the cloud is transient at any intensity. PYROCONVECTION_TYPE_LEVEL nonetheless ranks
+# resilient one step above overshooting, so any ordinal statistic computed on it is partly
+# measuring an ordering that does not exist (this is one reason the rank correlations in
+# docs/graf_vs_pyflam_2026-07-26.md sec. 21.6 are hard to read).
+#
+# The decomposition here splits the two apart:
+#
+#   COST (continuous, ha/h) -- the three transitions a fire can actually buy:
+#       escape    1 -> 2  leave the mixed layer            Briggs (1969) penetration of the
+#                                                          inversion sitting on the ABL
+#       condense  2 -> 3  make a pyroCu at all             target = the plume parcel's own
+#                                                          saturation point
+#       deep      3 -> 4  hold to the electrification level  target = z_fc (the PFT)
+#
+#   FORM (categorical, no ha/h) -- overshooting vs resilient, from the LCL/ABL ratio alone.
+#
+# The form is *not* orthogonal information bolted on: with LCL/ABL > 1 the saturation point
+# sits above the inversion, so the `condense` rung already pays for that geometry through a
+# higher target. The form field reports the sign of a quantity the cost has integrated, which
+# is why the two can be published side by side without risk of contradicting each other.
+PYROCONVECTION_COST_RUNGS = ("escape", "condense", "deep")
+PYROCONVECTION_COST_TRANSITION = {
+    "escape":   ("surface_plume", "convection_plume"),
+    "condense": ("convection_plume", "resilient_pyrocu"),
+    "deep":     ("resilient_pyrocu", "deep_pyrocu_pyrocb"),
+}
+
+# Form: the ABL depth is the shakiest link in the chain -- atmosphere.py's own Rib notes record
+# the Tuscany median moving 225 m -> 404 m on one run purely from the search start height. A
+# factor approaching two in the denominator flips the label on any cell near 1, so a band around
+# 1 is reported as indeterminate rather than forced to a side. Since the form enters no decision
+# threshold, admitting it costs the product nothing.
+PYROCONVECTION_FORMS = ("resilient", "indeterminate", "overshooting")
+PYROCONVECTION_FORM_CODE = {"undefined": -1, "resilient": 0, "indeterminate": 1,
+                            "overshooting": 2}
+PYROCONVECTION_FORM_LABEL = {v: k for k, v in PYROCONVECTION_FORM_CODE.items()}
+DEFAULT_FORM_BAND = (0.90, 1.10)
+
+
+def pyroconvection_form(lcl_abl_ratio, *, band=DEFAULT_FORM_BAND) -> str:
+    """``"overshooting"`` / ``"resilient"`` / ``"indeterminate"`` from the LCL/ABL ratio.
+
+    A property of the column, carrying no firepower and no ordinal level: it says whether a
+    pyroCu *here* would be transient (LCL above the ABL top, the cloud loses its base) or
+    persistent (LCL inside the mixed layer), and it is meaningful even where the cost ladder
+    says no fire can buy the cloud in the first place -- exactly as the potential map is
+    meaningful where no fire can exploit it.
+
+    ``band`` brackets the ratios the ABL diagnosis cannot separate; see the note above.
+    """
+    r = float(lcl_abl_ratio)
+    if not np.isfinite(r):
+        return "undefined"
+    if r < band[0]:
+        return "resilient"
+    if r > band[1]:
+        return "overshooting"
+    return "indeterminate"
+
+
+def pyroconvection_form_grid(lcl_abl_ratio, *, band=DEFAULT_FORM_BAND):
+    """Gridded :func:`pyroconvection_form`, as ``int8`` codes (:data:`PYROCONVECTION_FORM_CODE`).
+
+    ``-1`` marks a column with no usable ratio -- distinct from ``1`` (indeterminate), which
+    is a column that *was* diagnosed and landed inside the band.
+    """
+    r = np.asarray(lcl_abl_ratio, float)
+    out = np.full(r.shape, PYROCONVECTION_FORM_CODE["indeterminate"], dtype=np.int8)
+    out = np.where(r < band[0], PYROCONVECTION_FORM_CODE["resilient"], out)
+    out = np.where(r > band[1], PYROCONVECTION_FORM_CODE["overshooting"], out)
+    out = np.where(np.isfinite(r), out, PYROCONVECTION_FORM_CODE["undefined"])
+    return out.astype(np.int8)
+
+
+def entrainment_zone_levels_grid(height_agl_m, abl_m, *, ez_frac: float = _ESCAPE_EZ_FRAC,
+                                 ez_min_m: float = _ESCAPE_EZ_MIN_M):
+    """How many profile levels fall inside the entrainment zone, per column.
+
+    The resolution test the escape rung declines on. The zone is
+    ``[abl, abl + max(ez_frac*abl, ez_min_m)]`` -- ~265 m for a 1.8 km ABL -- and a
+    potential-temperature gradient read across it is only a measurement if a level is
+    actually in there. Returns an integer count; compare against :data:`_EZ_MIN_LEVELS`.
+
+    Cheap enough to call before committing to a forecast run, which is the point: it turns
+    "is this profile good enough for a cap diagnostic" from a guess about the product name
+    into a number measured on the column in hand.
+    """
+    z = np.asarray(height_agl_m, float)
+    abl = np.asarray(abl_m, float)
+    top = abl + np.maximum(ez_frac * abl, ez_min_m)
+    inside = (z >= abl[None, ...]) & (z <= top[None, ...]) & np.isfinite(z)
+    return inside.sum(axis=0).astype(int)
+
+
+def _escape_cost_gw(z, T, p, theta, u, v, abl_m, *,
+                    ez_frac: float = _ESCAPE_EZ_FRAC, ez_min_m: float = _ESCAPE_EZ_MIN_M,
+                    min_levels: int = _EZ_MIN_LEVELS):
+    """Rung 1->2: firepower to carry the plume out of the mixed layer, dry.
+
+    [PRIMARY] Briggs (1969, 1975): whether a bent-over buoyant plume penetrates an elevated
+    inversion is the classical stable plume-rise problem, and inverting his final rise
+    ``dh = 2.6 (F/(U s))^(1/3)`` at the ABL top is the standard operational criterion (it is
+    what EPA dispersion models use for penetration). pyflam already carries the forward law in
+    :func:`briggs_plume_rise`; this is that law solved for the source instead of the height::
+
+        F_req = (z_abl / 2.6)^3 * U * s          s = (g/theta) dtheta/dz over the entrainment zone
+        FP    = F_req * pi rho cp T / g
+
+    Castellnou et al. (2022) sec.2.1.2 name the entrainment jump as the control on penetration
+    but publish no threshold for it; Briggs supplies the threshold their sentence implies.
+
+    **No convective fraction here.** Briggs' ``F`` is built from the *convective* heat flux, so
+    the classical route ends by dividing by alpha to recover total firepower. Tory & Kepert's FP
+    is already a total, with alpha appearing in their appendix D -- which is exactly where
+    :func:`critical_growth_rate_grid` applies it. Dividing at both ends double-counts alpha and
+    inflates every escape cost by ~1.43.
+
+    **Cross-check.** Expanding Briggs with ``dtheta = gamma * ez_frac * z`` gives
+    ``FP ~ (pi/2.6^3)(T/theta) rho cp U z^3 gamma`` against eq 25's ``c * ez_frac`` on the same
+    group -- the *same* law, differing only in prefactor (0.179 (T/theta) vs 0.060). Measured
+    across synthetic columns spanning cap strength, ABL depth and wind, the two agree within a
+    factor 0.84-2.9, and the wind cancels exactly. The residual spread is mostly the eq-25
+    buoyancy buffer, which dominates the jump itself in a weakly capped column.
+
+    ``ez_frac`` is *not* removed by using Briggs -- the stability is evaluated over the same
+    entrainment zone the jump was measured across, so the layer choice moves rather than
+    disappears. Mixed-layer theory (Stull 1988) bounds it to 0.1-0.2 of the ABL depth.
+
+    **Attempted validation: the observable could not adjudicate.**
+    ``scripts/escape_calibration.py`` scored 645 MISR-digitised boreal-forest plumes
+    (FRP >= 400 MW) against ERA5 L137 model levels, which resolve the ~265 m entrainment zone
+    with 1.6 levels at 91 m spacing. Every binary test returned AUC ~0.5 for the atmospheric
+    terms, which first read as a refutation -- but the tests put the target height on both
+    sides (the outcome compares the plume top against the rung's own target, and the cost goes
+    as target^3), and ``1/z_target`` alone scored up to 0.887. The circularity, not the
+    physics, was doing the work.
+
+    Removing it -- solving ``FP >= cost(z)`` for the largest admissible ``z`` and comparing
+    that height against the observed top, no target chosen -- is the test that works. On the
+    single-region boreal sample it still looked null (Spearman +0.245, below FRP^(1/3) alone
+    at +0.312, and 0.9 % scale-free skill over predicting a constant), but that was the
+    *sample*: one regime, one season, columns near-linear in theta, nothing to rank.
+
+    Pooled over all seven MISR regions and 11 biomes (1231 plumes, FRP >= 400 MW), the same
+    unmodified law separates cleanly:
+
+        model                       rho     bias    MAE   <=500m   skill vs constant
+        this ladder, C = 1       +0.461   +125 m   576 m   54.9 %        +12.8 %
+        constant = sample median      --      0 m   590 m   53.5 %          0.0 %
+        FRP^(1/3) alone          +0.367       --     --       --             --
+        ABL depth alone          +0.338       --     --       --             --
+
+    Nothing is fitted -- ``C = 1`` is Briggs' own geometry and ``f_rad = 0.12``. It beats both
+    single-variable proxies, and it orders the *regimes*: regional median plume tops run
+    1323-2328 m and the predicted medians rank them at rho +0.607 across the seven. Per-region
+    rho runs +0.33 to +0.62, positive everywhere.
+
+    One theoretical result did come out of it. Taking the *bulk* stability over the whole rise,
+    ``s(z) = (g/theta_ML)(theta(z) - theta_ML)/z``, which is what a final-rise formula actually
+    integrates, Briggs' ``z^3 U s`` collapses onto eq 25's ``z^2 dtheta U``: the two laws whose
+    prefactors we could not choose between are **the same law**, which is why they never
+    disagreed by more than a factor 2.5 and why no fit could separate them.
+
+    A path-integral variant was tried against it -- demanding the work done against the whole
+    stratification climbed through, ``W(z) = int g (theta_env - theta_ML)/theta_ML dzeta``,
+    rather than the endpoint excess (the two coincide for a linear profile and differ on 89 %
+    of real columns). It ranks the same (+0.452) but calibrates worse: bias +385 m and 7.2 %
+    *below* a constant on scale-free error. The reading is physical -- ``W`` is the energy debt
+    of an undiluted parcel, while a bent-over plume entrains continuously, so the endpoint
+    excess is the right measure and the data says so.
+
+    One theoretical result did come out of it. Taking the *bulk* stability over the whole rise,
+    ``s(z) = (g/theta_ML)(theta(z) - theta_ML)/z``, which is what a final-rise formula actually
+    integrates, Briggs' ``z^3 U s`` collapses onto eq 25's ``z^2 dtheta U``: the two laws whose
+    prefactors we could not choose between are **the same law**, which is why they never
+    disagreed by more than a factor 2.5 and why no fit could separate them.
+
+    **Resolution guard.** ``s`` is a gradient across a ~265 m layer. Where fewer than
+    ``min_levels`` profile levels fall inside that layer the gradient is an interpolation
+    between levels straddling it, not a measurement, and the rung returns ``nan`` rather than
+    a number -- the same contract :data:`_SHEAR_MIN_LEVELS` enforces for shear. On the MISR
+    calibration the unresolved case scored exactly chance (AUC 0.498), which is what an
+    interpolation should score; the resolved case is what the +0.461 result rests on.
+
+    Returns ``(cost_gw, entrainment_jump_k, u_ms, stability_s2, levels_in_ez)``. The jump is no
+    longer what prices the rung, but it stays in the output: it is the quantity Castellnou
+    et al. name, and it is what ``s`` is computed from.
+    """
+    abl = np.asarray(abl_m, float)
+    z_top = abl + np.maximum(ez_frac * abl, ez_min_m)
+    th_lo = _interp_profile_at(z, theta, abl)
+    th_hi = _interp_profile_at(z, theta, z_top)
+    dz = np.maximum(z_top - abl, 1.0)
+    s = np.maximum(_G / (0.5 * (th_lo + th_hi)) * (th_hi - th_lo) / dz, 0.0)
+
+    u_ml = np.maximum(_mean_wind_below(z, u, v, abl), _BRIGGS_MIN_WIND_MS)
+    rho = _density_at(z, T, p, abl)
+    t_abl = _interp_profile_at(z, T, abl)
+    f_req = (abl / _BRIGGS_C) ** 3 * u_ml * s
+    cost = f_req * _PI * rho * _CP_DRY * t_abl / _G / 1.0e9     # W -> GW, total firepower
+
+    n_lev = entrainment_zone_levels_grid(z, abl, ez_frac=ez_frac, ez_min_m=ez_min_m)
+    cost = np.where(n_lev >= min_levels, cost, np.nan)
+    jump = entrainment_jump_grid(z, theta, abl)
+    return cost, jump, u_ml, s, n_lev
+
+
+def _condense_cost_gw(z, T, p, ps, th_ml, q_ml, ml_depth, u, v, shape, *,
+                      buoyancy_buffer_k, heat_to_moisture, beta_max, beta_steps):
+    """Rung 2->3: firepower for a pyroCu at all -- the plume reaches its own saturation point.
+
+    The same beta search as the PFT with the stopping criterion weakened: instead of holding
+    buoyancy through a moist ascent to the electrification level, the parcel need only stay
+    warmer than the environment on the *dry* ascent up to its saturation point. Nested inside
+    the PFT criterion by construction, which is what makes the ladder monotone.
+
+    The check starts above the mixed layer on purpose. Inside a superadiabatic surface layer
+    theta_env exceeds theta_ML by a couple of K, so testing from the ground would reject small
+    beta for a reason that has nothing to do with penetrating the cap -- the fire is what heats
+    the parcel there. Where the saturation point falls *inside* the ML there is nothing to
+    cross and the rung is cheap, which is the physically right answer: that is the resilient
+    geometry, where the cloud forms readily.
+    """
+    z_sp_out = np.full(shape, np.nan)
+    dth_out = np.full(shape, np.nan)
+    for beta in np.linspace(0.0, beta_max, beta_steps)[1:]:
+        todo = ~np.isfinite(z_sp_out)
+        if not todo.any():
+            break
+        z_sp, _t_sp, _p_sp, t_p = _saturation_point(beta, th_ml, q_ml, ps, heat_to_moisture)
+        ok = np.ones(shape, bool)
+        for k in range(z.shape[0]):
+            zk = z[k]
+            crossing = (zk > ml_depth) & (zk <= z_sp) & np.isfinite(T[k]) & np.isfinite(zk)
+            t_par = t_p - _G / _CP_DRY * zk                      # dry ascent
+            ok &= ~(crossing & (t_par < T[k] + buoyancy_buffer_k))
+        good = todo & ok & np.isfinite(z_sp)
+        z_sp_out = np.where(good, z_sp, z_sp_out)
+        dth_out = np.where(good, beta * th_ml, dth_out)
+
+    u_ml = _mean_wind_below(z, u, v, z_sp_out)
+    rho = _density_at(z, T, p, z_sp_out)
+    return _firepower_required_gw(z_sp_out, dth_out, u_ml, rho), z_sp_out, dth_out, u_ml
+
+
+def _monotone(higher, lower):
+    """Clamp a rung to the one below it, preserving ``nan`` as "impossible at any firepower"."""
+    both = np.isfinite(higher) & np.isfinite(lower)
+    return np.where(both, np.maximum(higher, lower), higher)
+
+
+def pyroconvection_cost_grid(height_agl_m, temperature_k, pressure_pa, spec_humidity,
+                             wind_u, wind_v, *, surface_pressure_pa, abl_m,
+                             lcl_abl_ratio=None, fuel_load_kg_m2=None,
+                             buoyancy_buffer_k: float = _PFT_BUOY_BUFFER_K,
+                             cloud_top_temp_c: float = _PFT_CLOUD_TOP_C,
+                             heat_to_moisture: float = _PFT_HEAT_TO_MOISTURE,
+                             beta_max: float = 0.12, beta_steps: int = 60,
+                             form_band=DEFAULT_FORM_BAND,
+                             ez_min_levels: int = _EZ_MIN_LEVELS):
+    """Three-rung pyroconvection **cost** ladder (GW, and ha/h) plus the **form** field.
+
+    Answers, per column, *how much fire* each energetic step of the Castellnou ladder costs --
+    and, separately and without a price, which **form** a pyroCu here would take. The two are
+    deliberately different kinds of product: a continuous cost the fire can pay down, and a
+    categorical shape it cannot.
+
+    Each rung is priced by the source that owns its physics, in one currency (GW of total
+    firepower) and on one density convention (the column's own, at each rung's target):
+
+    ===========  ================================  ==============================================
+    rung         target height                     threshold, and where it comes from
+    ===========  ================================  ==============================================
+    ``escape``   ABL top                           Briggs (1969) stable rise inverted at the ABL
+                                                   top, against the entrainment-zone stability
+    ``condense`` plume parcel's saturation point   Tory & Kepert eq 25 for ``beta theta_ML``,
+                                                   smallest beta that survives the dry ascent
+    ``deep``     ``z_fc``                          the PFT -- eq 25 for the PFT's own beta
+    ===========  ================================  ==============================================
+
+    The escape rung uses a different law on purpose: crossing a cap is a plume-rise problem
+    (does the rise stop below the inversion?), not a mass-flux delivery problem. Expanded on
+    the same variables the two laws turn out to share a scaling and agree within a factor ~3,
+    so the change of law does not fracture the ladder -- see :func:`_escape_cost_gw`.
+
+    ``deep`` is :func:`pyrocb_firepower_threshold_grid` with ``rho_mode="column"``, so all
+    three rungs share one density convention and are mutually comparable. Its ``"paper"``
+    default is untouched: call that function directly for eq 31 verbatim.
+
+    **Monotonicity.** The rung criteria are nested, so the ladder should already be ordered;
+    ``_monotone`` clamps any residual inversion and, critically, does *not* fill a ``nan``.
+    A ``nan`` at ``deep`` means no firepower whatsoever makes a pyroCb here -- a stronger
+    statement than a large number, and it must not be laundered into one by the clamp.
+
+    **Floor.** The cheapest resolvable cost is set by the beta grid (``beta_max/beta_steps``),
+    not by physics. Cells at the floor mean "very cheap", not "free".
+
+    **Validation status** (``scripts/escape_calibration.py``, 645 MISR boreal-forest plumes,
+    FRP >= 400 MW, ERA5 L137 model levels). Read it as three different verdicts, not one:
+
+    * ``escape`` -- **supported, once the test is posed correctly.** See
+      :func:`_escape_cost_gw`: the binary per-rung tests were circular and read as a null;
+      solving the system for the height instead, on a 7-region 11-biome sample, the unmodified
+      law scores Spearman +0.461 against the observed plume top with +125 m bias and 12.8 %
+      scale-free skill over a constant, beating FRP^(1/3) (+0.367) and ABL depth (+0.338).
+    * ``condense`` -- **weakly consistent, not confirmed.** Same circularity (``1/z_condense``
+      alone scores AUC 0.887 against the model's 0.575 +/- 0.067, whose interval contains 0.5).
+      The non-circular reading: ``z_condense`` is *anti*-correlated with the observed plume top,
+      rho = -0.134 (p = 6.5e-4), and that sign is the rung working -- a high saturation point
+      means condensation is expensive, the plume gets no latent boost and stays low. Small
+      against FRP^(1/3) at +0.312 on the same plumes. Directionally right, evidentially thin.
+    * ``deep`` -- **untestable on this data.** 597 of 645 columns return ``nan``: the module
+      states that a mid-morning boreal column cannot make a pyroCb at *any* firepower. Of the
+      48 that resolve, 8 plumes reached ``z_fc`` -- one class, no ROC. MISR neither confirms
+      nor refutes; it is consistent, which is not the same thing.
+
+    Treating the rungs as a *system* rather than three separate equations is what removed the
+    circularity, and it is also the better product framing: solving ``FP >= cost(z)`` for the
+    largest admissible ``z`` yields a predicted plume-top height directly, with the rungs as
+    labels on where it lands rather than as separate tests.
+
+    One design claim did hold outright: the ladder was **monotone on 100 % of 645 real
+    columns** (escape <= condense, and condense <= deep on all 48 where both resolve). The
+    ``_monotone`` clamp never had to bind, so the nesting of the criteria is doing the work
+    rather than the safety net.
+
+    Returns a dict with, per rung, ``cost_<rung>_gw``, ``z_<rung>_m``, ``dtheta_<rung>_k``,
+    ``u_<rung>_ms``, plus ``cost_<rung>_ha_h`` when ``fuel_load_kg_m2`` is given (the unit
+    that published isochrones can falsify -- see :func:`critical_growth_rate_grid`), plus
+    ``form`` and ``lcl_abl_ratio``.
+    """
+    z = np.asarray(height_agl_m, float)
+    T = np.asarray(temperature_k, float)
+    p = np.asarray(pressure_pa, float)
+    q = np.asarray(spec_humidity, float)
+    u, v = np.asarray(wind_u, float), np.asarray(wind_v, float)
+    ps = np.asarray(surface_pressure_pa, float)
+    abl = np.asarray(abl_m, float)
+    shape = ps.shape
+
+    theta = theta_kelvin(T - 273.15, p / 100.0)
+    usable = np.isfinite(theta) & np.isfinite(q) & np.isfinite(z)
+    th_ml, q_ml, ml_depth = _mixed_layer_state(z, theta, q, ps, usable, shape)
+
+    esc, dth_esc, u_esc, s_esc, n_ez = _escape_cost_gw(z, T, p, theta, u, v, abl,
+                                                       min_levels=ez_min_levels)
+    con, z_con, dth_con, u_con = _condense_cost_gw(
+        z, T, p, ps, th_ml, q_ml, ml_depth, u, v, shape,
+        buoyancy_buffer_k=buoyancy_buffer_k, heat_to_moisture=heat_to_moisture,
+        beta_max=beta_max, beta_steps=beta_steps)
+    pft = pyrocb_firepower_threshold_grid(
+        z, T, p, q, u, v, surface_pressure_pa=ps, buoyancy_buffer_k=buoyancy_buffer_k,
+        cloud_top_temp_c=cloud_top_temp_c, heat_to_moisture=heat_to_moisture,
+        beta_max=beta_max, beta_steps=beta_steps, rho_mode="column")
+
+    con = _monotone(con, esc)
+    deep = _monotone(pft["pft_gw"], con)
+
+    out = {
+        "cost_escape_gw": esc, "z_escape_m": abl,
+        "dtheta_escape_k": dth_esc, "u_escape_ms": u_esc, "stability_escape_s2": s_esc,
+        "levels_in_ez": n_ez,
+        "cost_condense_gw": con, "z_condense_m": z_con,
+        "dtheta_condense_k": dth_con, "u_condense_ms": u_con,
+        "cost_deep_gw": deep, "z_deep_m": pft["z_fc_m"],
+        "dtheta_deep_k": pft["delta_theta_fc_k"], "u_deep_ms": pft["u_ml_ms"],
+        "theta_ml_k": th_ml, "q_ml": q_ml, "ml_depth_m": ml_depth,
+    }
+    if fuel_load_kg_m2 is not None:
+        for rung in PYROCONVECTION_COST_RUNGS:
+            out[f"cost_{rung}_ha_h"] = critical_growth_rate_grid(
+                out[f"cost_{rung}_gw"], fuel_load_kg_m2=fuel_load_kg_m2)
+
+    ratio = (np.full(shape, np.nan) if lcl_abl_ratio is None
+             else np.asarray(lcl_abl_ratio, float))
+    out["lcl_abl_ratio"] = ratio
+    out["form"] = pyroconvection_form_grid(ratio, band=form_band)
+    return out
 
 
 def shear_height_grid(height_agl_m, wind_u, wind_v, *, zmin: float = 200.0,

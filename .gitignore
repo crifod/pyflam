@@ -33,3 +33,14 @@ scripts/validation/*.nc
 
 # 3-day forecast GeoTIFF stacks (regenerable, ~3.5 MB/day)
 docs/forecast_*/rasters_*/
+
+# Reanalysis and satellite downloads for the escape-rung calibration (~1 GB, all
+# re-fetchable): scripts/misr_plume_catalogue.py re-pulls the MISR catalogue from MERLIN
+# in one request, scripts/escape_calibration.py --era5/--era5-ml re-pulls ERA5 from CDS.
+# The L137 coefficient table beside it is small and hand-checked, so that one is tracked.
+data/misr/
+
+# Per-run diagnostic GeoTIFFs (224 per daily run). The .md/.pdf/.png products are tracked;
+# the rasters are reproducible from the same command and would add ~12 MB per day.
+docs/daily/rasters_*/
+docs/forecast_*/rasters_*/
