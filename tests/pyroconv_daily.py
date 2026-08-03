@@ -492,7 +492,7 @@ def build_pdf(png_pot, png_gate, ladders, n_levels, png_decoup=None, ml_fit_supp
         hf, cf = _HEADFIRE_LENGTH_M, _CONVECTIVE_FRACTION
         margin_block = (
             f"## {T('h3')}\n\n"
-            f"![{T('cap3')}]({png_margin}){{width=100%}}\n\n"
+            f"![{T('cap3')}]({os.path.basename(png_margin)}){{width=100%}}\n\n"
             f"{T('p3a')}\n\n{T('p3b', m=hf, c=cf)}\n\n{T('p3c')}\n\n"
             f"### {T('h_nested')}\n\n{T('p_nested')}\n\n"
             + "\n".join(mlines) + "\n\n" + T("p_mtbl") + "\n\n")
@@ -500,7 +500,7 @@ def build_pdf(png_pot, png_gate, ladders, n_levels, png_decoup=None, ml_fit_supp
     if png_decoup:
         decoup_block = (
             f"## {T('h4', n=4 if png_margin else 3)}\n\n"
-            f"![{T('cap4')}]({png_decoup}){{width=100%}}\n\n"
+            f"![{T('cap4')}]({os.path.basename(png_decoup)}){{width=100%}}\n\n"
             f"{T('p_decoup', k=_REFERENCE_THETA_EXCESS_K, abl=abl)}\n\n")
     # Placed last on purpose: it is the only field validated against observation, so it reads
     # as the conclusion the three questions build towards rather than as a fourth question.
@@ -510,7 +510,7 @@ def build_pdf(png_pot, png_gate, ladders, n_levels, png_decoup=None, ml_fit_supp
         n_sec = 3 + bool(png_margin) + bool(png_decoup)
         ptop_block = (
             f"## {T('h_ptop', n=n_sec)}\n\n"
-            f"![{T('cap_ptop', fp=_fp)}]({png_ptop}){{width=100%}}\n\n"
+            f"![{T('cap_ptop', fp=_fp)}]({os.path.basename(png_ptop)}){{width=100%}}\n\n"
             f"{T('p_ptop', fp=_fp)}\n\n")
     with open(md, "w") as f:
         f.write(f"""---
@@ -544,13 +544,13 @@ header-includes: |
 
 ## {T('h1')}
 
-![{T('cap1')}]({png_pot}){{width=100%}}
+![{T('cap1')}]({os.path.basename(png_pot)}){{width=100%}}
 
 {T('p1')}
 
 ## {T('h2')}
 
-![{T('cap2')}]({png_gate}){{width=100%}}
+![{T('cap2')}]({os.path.basename(png_gate)}){{width=100%}}
 
 {T('p2')}
 
@@ -576,8 +576,14 @@ header-includes: |
 {T('p_footer_daily', ver=code_ver, at=gen_at)}
 """)
     try:
-        subprocess.run(["pandoc", md, "-o", pdf, "--pdf-engine=tectonic"], check=True,
-                       capture_output=True, timeout=300)
+        # Run from OUTDIR with basename links, matching scripts/forecast_3day_*.py: pandoc
+        # resolves relative image paths against the working directory, not the .md's location,
+        # so from anywhere else the figures silently drop out and the PDF builds without them.
+        # Absolute links would work too, but they bake this machine's home directory into a
+        # report that gets committed to a public repo.
+        subprocess.run(["pandoc", os.path.basename(md), "-o", os.path.basename(pdf),
+                        "--pdf-engine=tectonic"], check=True, capture_output=True,
+                       timeout=300, cwd=OUTDIR)
         return pdf
     except Exception as e:
         sys.stderr.write(f"PDF build skipped for {lang} ({e}); PNGs + GeoTIFFs still written\n")

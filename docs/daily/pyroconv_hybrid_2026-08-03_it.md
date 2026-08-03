@@ -68,7 +68,7 @@ derivate dalla letteratura, non validate localmente.
 
 ## 1. Potenziale -- che cosa potrebbe sostenere questa colonna? (limite superiore atmosferico)
 
-![Domanda 1 -- POTENZIALE. Classe di piroconvezione dalla sola atmosfera, nessuna condizione sul fuoco. Limite superiore, non un'attesa.](/Users/cristianofoderi/-softEST/firelab-flammap6_install_0828_2025/pyflam/docs/daily/pyroconv_tuscany_hybrid_potential_2026-08-03_it.png){width=100%}
+![Domanda 1 -- POTENZIALE. Classe di piroconvezione dalla sola atmosfera, nessuna condizione sul fuoco. Limite superiore, non un'attesa.](pyroconv_tuscany_hybrid_potential_2026-08-03_it.png){width=100%}
 
 La scala diagnostica con la condizione sul fuoco completamente disattivata: questa è dunque la
 risposta della sola atmosfera. È la piroconvezione più intensa che la colonna sosterrebbe **dato
@@ -81,7 +81,7 @@ zonale ricavata direttamente da essi va limitata alla terraferma.
 
 ## 2. Filtrato per combustibile -- c'è abbastanza fuoco per un pennacchio?
 
-![Domanda 2 -- FILTRATO PER COMBUSTIBILE. La stessa scala diagnostica, con ogni cella sotto i 10 MW/m di intensità di Byram sui combustibili .lcp toscani forzata alla classe 0. È il prodotto atteso.](/Users/cristianofoderi/-softEST/firelab-flammap6_install_0828_2025/pyflam/docs/daily/pyroconv_tuscany_hybrid_gated_2026-08-03_it.png){width=100%}
+![Domanda 2 -- FILTRATO PER COMBUSTIBILE. La stessa scala diagnostica, con ogni cella sotto i 10 MW/m di intensità di Byram sui combustibili .lcp toscani forzata alla classe 0. È il prodotto atteso.](pyroconv_tuscany_hybrid_gated_2026-08-03_it.png){width=100%}
 
 La stessa scala diagnostica, sulle stesse colonne, con ogni cella forzata alla classe 0 dove i
 combustibili .lcp toscani e la meteorologia superficiale prevista non sostengono **10 MW/m** di
@@ -93,7 +93,7 @@ il prodotto operativo atteso.
 
 ## 3. Margine PFT -- c'è abbastanza fuoco per un pyroCb in *questa* colonna?
 
-![Domanda 3 -- MARGINE PFT. Potenza dell'incendio rapportata alla PyroCb Firepower Threshold propria di ciascuna colonna, scala logaritmica imperniata sul criterio. I cerchi soddisfano il criterio e superano il filtro combustibile; le croci lo soddisfano solo perché la PFT è degenerata.](/Users/cristianofoderi/-softEST/firelab-flammap6_install_0828_2025/pyflam/docs/daily/pyroconv_tuscany_hybrid_pft_margin_2026-08-03_it.png){width=100%}
+![Domanda 3 -- MARGINE PFT. Potenza dell'incendio rapportata alla PyroCb Firepower Threshold propria di ciascuna colonna, scala logaritmica imperniata sul criterio. I cerchi soddisfano il criterio e superano il filtro combustibile; le croci lo soddisfano solo perché la PFT è degenerata.](pyroconv_tuscany_hybrid_pft_margin_2026-08-03_it.png){width=100%}
 
 Potenza **totale** dell'incendio per cella, divisa per la **PyroCb Firepower Threshold** propria
 di quella colonna (Tory & Kepert 2021, eq. 31: `PFT = 0.3 z_fc^2 U_ML dtheta_fc`, in GW). Da 1
@@ -161,7 +161,7 @@ congiunto della sezione precedente ed è il conteggio su cui agire; lo scarto fr
 
 ## 4. Disaccoppiamento pirogeno secco -- DIAGNOSTICO (nessuna etichetta di classe)
 
-![Diagnostico di supporto -- DISACCOPPIAMENTO PIROGENO SECCO. fireABL/ABL per un incendio intenso di riferimento. Continuo, nessuna etichetta di classe.](/Users/cristianofoderi/-softEST/firelab-flammap6_install_0828_2025/pyflam/docs/daily/pyroconv_tuscany_hybrid_decoupling_2026-08-03_it.png){width=100%}
+![Diagnostico di supporto -- DISACCOPPIAMENTO PIROGENO SECCO. fireABL/ABL per un incendio intenso di riferimento. Continuo, nessuna etichetta di classe.](pyroconv_tuscany_hybrid_decoupling_2026-08-03_it.png){width=100%}
 
 Il **rapporto di disaccoppiamento** fireABL / ABL indica quanto in alto un incendio intenso di
 riferimento (un eccesso di temperatura di 10 K nel pennacchio, l'estremo intenso delle
@@ -180,7 +180,7 @@ theta(z); le celle che il classificatore rifiuta (nessuna colonna utilizzabile, 
 
 ## 5. Altezza di cima prevista -- l'unico campo validato contro osservazioni
 
-![CIMA DEL PENNACCHIO PREVISTA. La scala dei costi risolta per l'altezza invece che per la potenza, per un incendio dichiarato di 5 GW. Continua, nessuna etichetta di classe.](/Users/cristianofoderi/-softEST/firelab-flammap6_install_0828_2025/pyflam/docs/daily/pyroconv_tuscany_hybrid_plumetop_2026-08-03_it.png){width=100%}
+![CIMA DEL PENNACCHIO PREVISTA. La scala dei costi risolta per l'altezza invece che per la potenza, per un incendio dichiarato di 5 GW. Continua, nessuna etichetta di classe.](pyroconv_tuscany_hybrid_plumetop_2026-08-03_it.png){width=100%}
 
 Le tre domande precedenti chiedono *quanto fuoco* costi una data quota. Risolvendo la
 stessa disequazione nell'altro verso -- per la quota massima che un dato incendio puo
@@ -266,5 +266,5 @@ dtheta/dz dello strato rimescolato, gamma-theta del tappo, RH alla sommità, fir
 e (solo ibrido) delta_theta, firecape, penetration, pft_gw (PyroCb Firepower Threshold, GW),
 z_fc, delta_theta_fc, u_ml, firepower_gw, pft_margin.
 Confini provinciali: derivati ISTAT (openpolis geojson-italy).
-Generato da tests/pyroconv_daily.py con pyflam `894a4b9+local-changes`, 2026-08-03 10:21 UTC -- congelato con la fisica di quel
+Generato da tests/pyroconv_daily.py con pyflam `d27c493+local-changes`, 2026-08-03 10:38 UTC -- congelato con la fisica di quel
 commit, poiché DWD ritira la corsa dopo ~24 h.
