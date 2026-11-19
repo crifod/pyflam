@@ -44,3 +44,8 @@ data/misr/
 # the rasters are reproducible from the same command and would add ~12 MB per day.
 docs/daily/rasters_*/
 docs/forecast_*/rasters_*/
+
+# Run logs and ad-hoc archives of bytecode caches -- regenerable, not source
+scripts/*.log
+docs/forecast_multiregion_*/*_run.log
+scripts/validation.zip

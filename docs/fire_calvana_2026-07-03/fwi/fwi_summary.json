@@ -1,0 +1,47 @@
+{
+  "system": "Canadian Forest Fire Weather Index System (Van Wagner 1987)",
+  "spinup_state": {
+    "ffmc": 90.1,
+    "dmc": 101.3,
+    "dc": 254.6
+  },
+  "fire_day_grid": {
+    "ffmc": {
+      "mean": 91.58,
+      "min": 88.84,
+      "max": 93.78
+    },
+    "dmc": {
+      "mean": 105.92,
+      "min": 103.85,
+      "max": 107.17
+    },
+    "dc": {
+      "mean": 263.63,
+      "min": 262.07,
+      "max": 264.31
+    },
+    "isi": {
+      "mean": 12.79,
+      "min": 7.92,
+      "max": 21.97
+    },
+    "bui": {
+      "mean": 105.96,
+      "min": 104.36,
+      "max": 107.15
+    },
+    "fwi": {
+      "mean": 37.83,
+      "min": 27.53,
+      "max": 53.89
+    },
+    "fine_fuel_moisture": {
+      "mean": 9.19,
+      "min": 6.93,
+      "max": 12.07
+    }
+  },
+  "fwi_danger_class": "very high",
+  "note": "Codes FFMC/DMC/DC are fuel-layer moisture (fast->deep drought); indexes ISI/BUI/FWI are behaviour. DMC/DC are near-uniform (broadcast from the spun-up point state); FFMC/ISI/FWI vary with the per-cell ICON-2I weather."
+}

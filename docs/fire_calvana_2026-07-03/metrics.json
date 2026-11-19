@@ -1,0 +1,130 @@
+{
+  "meta": {
+    "lat": 43.93561,
+    "lon": 11.09635,
+    "start_utc": "2026-07-03T12:00:00+00:00",
+    "start_local": "2026-07-03 14:00 CEST",
+    "total_min": 120.0,
+    "dt_min": 30.0,
+    "aoi_shape": [
+      180,
+      180
+    ],
+    "ignition_cell": [
+      90,
+      90
+    ],
+    "fuel_model_at_ignition": 165,
+    "physics": "ICON-2I + Cruz2005 crown + OpenFOAM RANS plume + pyroconvection + spotting"
+  },
+  "intervals": [
+    {
+      "t_min": 30,
+      "clock_local": "14:30",
+      "burned_ha": 136.0,
+      "step_ha": 132.0,
+      "ros_head_p95_mmin": 47.2,
+      "ros_mean_mmin": 38.9,
+      "fli_max_kwm": 27006.0,
+      "fli_mean_kwm": 10439.0,
+      "flame_max_m": 8.5,
+      "wind_ms": 4.8,
+      "wind_dir": 59.0,
+      "rh_pct": 36.0,
+      "m1h_pct": 6.3,
+      "plume_factor": 1.05,
+      "spots_cum": 0,
+      "spot_maxdist_m": 0.0
+    },
+    {
+      "t_min": 60,
+      "clock_local": "15:00",
+      "burned_ha": 491.9,
+      "step_ha": 355.9,
+      "ros_head_p95_mmin": 38.7,
+      "ros_mean_mmin": 25.0,
+      "fli_max_kwm": 22943.0,
+      "fli_mean_kwm": 6656.0,
+      "flame_max_m": 7.9,
+      "wind_ms": 4.8,
+      "wind_dir": 59.0,
+      "rh_pct": 36.0,
+      "m1h_pct": 6.5,
+      "plume_factor": 1.05,
+      "spots_cum": 0,
+      "spot_maxdist_m": 0.0
+    },
+    {
+      "t_min": 90,
+      "clock_local": "15:30",
+      "burned_ha": 815.8,
+      "step_ha": 323.9,
+      "ros_head_p95_mmin": 33.6,
+      "ros_mean_mmin": 14.9,
+      "fli_max_kwm": 17165.0,
+      "fli_mean_kwm": 3440.0,
+      "flame_max_m": 6.9,
+      "wind_ms": 4.6,
+      "wind_dir": 55.0,
+      "rh_pct": 33.0,
+      "m1h_pct": 6.6,
+      "plume_factor": 1.05,
+      "spots_cum": 0,
+      "spot_maxdist_m": 0.0
+    },
+    {
+      "t_min": 120,
+      "clock_local": "16:00",
+      "burned_ha": 1211.8,
+      "step_ha": 395.9,
+      "ros_head_p95_mmin": 30.8,
+      "ros_mean_mmin": 13.9,
+      "fli_max_kwm": 18181.0,
+      "fli_mean_kwm": 3994.0,
+      "flame_max_m": 7.1,
+      "wind_ms": 4.6,
+      "wind_dir": 55.0,
+      "rh_pct": 33.0,
+      "m1h_pct": 6.4,
+      "plume_factor": 1.05,
+      "spots_cum": 2,
+      "spot_maxdist_m": 1720.0
+    }
+  ],
+  "fire_type_cells": {
+    "0": 132,
+    "1": 71,
+    "2": 100
+  },
+  "crown_area_ha": 639.9,
+  "convection": {
+    "continuous_haines": 5.5,
+    "inverted_v": false,
+    "sfc_dewpoint_depression_C": 18.9,
+    "mid_rh_pct": 40.0,
+    "lcl_m": 2357.0,
+    "plume_factor_max": 1.05,
+    "pyroconvection_type": "PyroconvectionPotential(lcl_height_m=2282.0968627929688, continuous_haines=5.4982319969443, inverted_v=False, mid_level_rh_pct=39.610490499715034, mixed_layer_depth_m=None, plume_dominated_favorable=False, notes='C-Haines 5.5; inverted-V False; sfc dewpoint depression 18.9C; mid RH 40%')",
+    "pyrocb_firepower_threshold_GW": 106.12
+  },
+  "fire_weather": {
+    "spinup_state": {
+      "ffmc": 90.1,
+      "dmc": 101.3,
+      "dc": 254.6
+    },
+    "fire_day_aoi_mean": {
+      "ffmc": 91.6,
+      "dmc": 105.9,
+      "dc": 263.6,
+      "isi": 12.8,
+      "bui": 106.0,
+      "fwi": 37.8,
+      "fine_fuel_moisture_pct": 9.2
+    },
+    "fwi_danger_class": "very high",
+    "rasters": "fwi/  (ffmc/dmc/dc/isi/bui/fwi/fine_fuel_moisture .tif + fwi_map.png)"
+  },
+  "operative": "Operative analysis at t=120 min (fire heading 235 deg):\n  head             n=  28 ROS   85.3 ft/min | resultant 11.51@239 | driver: wind\n      wind 12.11@235  slope  0.73@ 43  fuel  0.80@319\n  right flank      n=  30 ROS   58.0 ft/min | resultant 12.65@248 | driver: wind\n      wind 12.90@235  slope  0.81@ 45  fuel  2.77@320\n  tail             n=  47 ROS   31.6 ft/min | resultant  8.74@234 | driver: wind\n      wind  9.64@235  slope  0.86@ 55  fuel  0.12@130\n  left flank       n=  45 ROS   36.0 ft/min | resultant 10.20@239 | driver: wind\n      wind 10.37@235  slope  0.49@ 49  fuel  0.80@304",
+  "total_burned_ha": 1211.8
+}
