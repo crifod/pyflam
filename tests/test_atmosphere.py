@@ -523,11 +523,12 @@ def _synthetic_column(*, rh=25.0, abl=1800.0, gamma_free=6.0e-3, wind=8.0,
     Shaped ``(nlev, 1, 1)`` so the gridded diagnostics run on a single column.
     """
     import numpy as np
+    from pyflam.atmosphere import _KAPPA_DRY, _P0_PA
     z = np.linspace(10.0, top_m, nlev)
     theta = np.where(z <= abl, sfc_theta, sfc_theta + gamma_free * (z - abl))
-    ps = 100000.0
+    ps = _P0_PA
     p = ps * np.exp(-z / 8500.0)
-    T = theta * (p / ps) ** 0.286
+    T = theta * (p / _P0_PA) ** _KAPPA_DRY
     es = 611.2 * np.exp(17.67 * (T - 273.15) / (T - 29.65))
     e = np.where(z <= abl, rh, max(rh - 15.0, 5.0)) / 100.0 * es
     q = 0.622 * e / np.maximum(p - 0.378 * e, 1.0)
@@ -536,6 +537,114 @@ def _synthetic_column(*, rh=25.0, abl=1800.0, gamma_free=6.0e-3, wind=8.0,
                 spec_humidity=col(q), wind_u=col(np.full_like(z, wind)),
                 wind_v=col(np.zeros_like(z)), surface_pressure_pa=np.full((1, 1), ps),
                 abl_m=np.full((1, 1), float(abl)))
+
+
+def test_reference_gauge_is_single_and_consistent():
+    """p0 and kappa are defined once, and every theta<->T conversion uses that one pair.
+
+    The forward theta map used to carry a literal 0.286 while the PFT inverted it with
+    Rd/cp = 0.28591 -- two gauges in one module. This pins the single one and guards the
+    source against a re-typed literal creeping back in.
+    """
+    import inspect
+    import re
+    import numpy as np
+    import pyflam.atmosphere as atm
+
+    assert atm._KAPPA_DRY == atm._RD / atm._CP_DRY
+    assert atm._CP_AIR == atm._CP_DRY
+    assert atm._P0_PA == atm._P0_HPA * 100.0
+
+    # theta equals T exactly at the reference pressure
+    tc = np.array([-40.0, 0.0, 15.0, 42.0])
+    np.testing.assert_array_equal(atm.theta_kelvin(tc, atm._P0_HPA), tc + 273.15)
+
+    # forward and inverse are exact inverses at every pressure (the audited mismatch)
+    p_hpa = np.array([1013.25, 925.0, 850.0, 700.0, 500.0, 300.0])[:, None]
+    back = atm.theta_kelvin(tc, p_hpa) * (p_hpa / atm._P0_HPA) ** atm._KAPPA_DRY
+    np.testing.assert_allclose(back, np.broadcast_to(tc + 273.15, back.shape), rtol=1e-12)
+
+    src = inspect.getsource(atm)
+    for literal in (r"\*\*\s*0\.28", r"287\.0\s*\*", r"/\s*100000\.0", r"\b1005\.0\s*$"):
+        hits = [ln for ln in src.splitlines()
+                if re.search(literal, ln) and not ln.lstrip().startswith("#")
+                and "was a separate" not in ln]
+        assert not hits, f"second reference gauge reintroduced ({literal}): {hits}"
+
+
+def _regauge(monkeypatch, p0_hpa):
+    """Move the module's reference pressure; return the theta scale factor c = (p0'/p0)^kappa."""
+    import pyflam.atmosphere as atm
+    c = (p0_hpa / atm._P0_HPA) ** atm._KAPPA_DRY
+    monkeypatch.setattr(atm, "_P0_HPA", p0_hpa)
+    monkeypatch.setattr(atm, "_P0_PA", p0_hpa * 100.0)
+    return c
+
+
+def test_theta_rescales_exactly_under_a_change_of_reference_pressure(monkeypatch):
+    """The gauge acts on theta as a pure dilation: theta' = c theta, T untouched."""
+    import numpy as np
+    import pyflam.atmosphere as atm
+    tc, p = np.array([5.0, 25.0]), np.array([850.0, 700.0])
+    th = atm.theta_kelvin(tc, p)
+    c = _regauge(monkeypatch, 1013.25)
+    np.testing.assert_allclose(atm.theta_kelvin(tc, p), c * th, rtol=1e-12)
+
+
+@pytest.mark.parametrize("p_pa,t_k", [(85000.0, 290.0), (70000.0, 280.0)])
+def test_critical_rh_is_independent_of_the_reference_pressure(monkeypatch, p_pa, t_k):
+    """theta excess in, RH out: re-gauging p0 (and the excess with it) must not move RH_crit.
+
+    Fails on the pre-2026-11 form, which equated the theta excess to a temperature cooling.
+    """
+    import pyflam.atmosphere as atm
+    base = float(atm.critical_rh_for_cloud_persistence(10.0, t_k, p_pa))
+    c = _regauge(monkeypatch, 1013.25)
+    assert float(atm.critical_rh_for_cloud_persistence(10.0 * c, t_k, p_pa)) == \
+        pytest.approx(base, rel=1e-12)
+
+
+def test_fire_cape_and_rib_abl_are_independent_of_the_reference_pressure():
+    """Buoyancy is a theta ratio: scaling every theta (and the theta excess) by c changes nothing."""
+    import numpy as np
+    from pyflam.atmosphere import fire_cape_grid, bulk_richardson_abl_grid, \
+        virtual_potential_temperature
+    col = _synthetic_column()
+    z, q = col["height_agl_m"], col["spec_humidity"]
+    from pyflam.atmosphere import theta_kelvin
+    thv = virtual_potential_temperature(theta_kelvin(col["temperature_k"] - 273.15,
+                                                     col["pressure_pa"] / 100.0), q)
+    c = (1013.25 / 1000.0) ** 0.2859
+    exc = np.full((1, 1), 4.0)
+    np.testing.assert_allclose(fire_cape_grid(z, c * thv, theta_excess=c * exc),
+                               fire_cape_grid(z, thv, theta_excess=exc), rtol=1e-10)
+    kw = dict(wind_u_surface=np.full((1, 1), 3.0), wind_v_surface=np.zeros((1, 1)))
+    a = bulk_richardson_abl_grid(z, thv, col["wind_u"], col["wind_v"],
+                                 theta_v_surface=thv[0] + 0.3, **kw)
+    b = bulk_richardson_abl_grid(z, c * thv, col["wind_u"], col["wind_v"],
+                                 theta_v_surface=c * (thv[0] + 0.3), **kw)
+    np.testing.assert_allclose(b, a, rtol=1e-10)
+
+
+def test_pft_is_defined_in_the_papers_gauge(monkeypatch):
+    """PFT is *not* reference-free, by construction of the published method.
+
+    Tory & Kepert (2021) fix P0 = 1e5 Pa (their Table 2), take dtheta_fc relative to it
+    (eq 25, from dry static energy referenced to z(P0), appendix B) and apply the 15 K per
+    g/kg fire ratio to beta*theta_ML (eq 30). pyflam reproduces that gauge; this pins it, so a
+    future change of p0 cannot silently shift every PFT value.
+    """
+    import pyflam.atmosphere as atm
+    assert atm._P0_PA == 1.0e5
+    col = _synthetic_column(rh=45.0, abl=1200.0, gamma_free=4.5e-3)
+    args = [col[k] for k in ("height_agl_m", "temperature_k", "pressure_pa",
+                             "spec_humidity", "wind_u", "wind_v")]
+    base = float(atm.pyrocb_firepower_threshold_grid(
+        *args, surface_pressure_pa=col["surface_pressure_pa"], beta_steps=600)["pft_gw"][0, 0])
+    _regauge(monkeypatch, 1013.25)
+    moved = float(atm.pyrocb_firepower_threshold_grid(
+        *args, surface_pressure_pa=col["surface_pressure_pa"], beta_steps=600)["pft_gw"][0, 0])
+    assert moved != pytest.approx(base, rel=1e-6)      # gauge-dependent, as published
 
 
 def test_density_explicit_firepower_reproduces_eq31():
@@ -796,3 +905,22 @@ def test_plume_top_inverts_the_ladder_and_matches_the_validated_scalar_path():
                                           abl_m=c["abl_m"])[0, 0])
     with pytest.raises(ValueError):
         top(10.0, form="whatever")
+
+
+def test_pft_surface_t_moisture_reference_is_opt_in_and_reference_free():
+    """surface_t equals the paper at a 1000 hPa surface and differs from it on high ground."""
+    import pyflam.atmosphere as atm
+    col = _synthetic_column(rh=45.0, abl=1200.0, gamma_free=4.5e-3)
+    args = [col[k] for k in ("height_agl_m", "temperature_k", "pressure_pa",
+                             "spec_humidity", "wind_u", "wind_v")]
+
+    def pft(ps_scale, ref):
+        a = list(args); a[2] = args[2] * ps_scale          # same column, lower surface pressure
+        return float(atm.pyrocb_firepower_threshold_grid(
+            *a, surface_pressure_pa=col["surface_pressure_pa"] * ps_scale,
+            beta_steps=600, moisture_reference=ref)["pft_gw"][0, 0])
+
+    assert pft(1.0, "surface_t") == pytest.approx(pft(1.0, "theta"), rel=1e-12)
+    assert pft(0.85, "surface_t") != pytest.approx(pft(0.85, "theta"), rel=1e-3)
+    with pytest.raises(ValueError):
+        pft(1.0, "kelvin")

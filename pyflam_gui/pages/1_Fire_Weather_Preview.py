@@ -128,10 +128,11 @@ if go_pyro:
         prog = st.progress(0.0)
         for j, si in enumerate(idx):
             Tl = {p: d["T"][p][si] for p in pc.DEFAULT_LEVELS}
-            pot.append(pc.classify(d["T2m"][si], RH[si], Tl))
+            ps = None if d.get("PS") is None else d["PS"][si]
+            pot.append(pc.classify(d["T2m"][si], RH[si], Tl, ps_hpa=ps))
             if lf is not None:
                 wsp = np.hypot(d["U"][si], d["V"][si])
-                gate.append(pc.classify(d["T2m"][si], RH[si], Tl,
+                gate.append(pc.classify(d["T2m"][si], RH[si], Tl, ps_hpa=ps,
                                         fli=pc.fli_grid(d["T2m"][si], RH[si], wsp, lf, burn)))
             prog.progress((j + 1) / len(idx))
 

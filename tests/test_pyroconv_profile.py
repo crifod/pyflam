@@ -503,7 +503,8 @@ def test_iconeu_diagnostics_measures_a_well_mixed_column():
     theta1d = np.where(z1d <= 1400, 305.0, 305.0 + 6.0e-3 * (z1d - 1400))   # ~0 in ML
     # pressure from a rough hydrostatic column; RH moderate; light sheared wind
     p1d = 1000e2 * np.exp(-z1d / 8500.0)
-    T1d = theta1d * (p1d / 1e5) ** 0.286
+    from pyflam.atmosphere import _KAPPA_DRY, _P0_PA
+    T1d = theta1d * (p1d / _P0_PA) ** _KAPPA_DRY
     QV1d = np.full(nlev, 0.008)
     U1d = 2.0 + 0.004 * z1d; V1d = np.zeros(nlev)
     g = lambda a: np.repeat(np.repeat(a[:, None, None], ny, 1), nx, 2)

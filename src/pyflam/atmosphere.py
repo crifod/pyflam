@@ -50,8 +50,19 @@ from .units import (
 
 _G = 9.81
 _RHO_AIR = 1.2
-_CP_AIR = 1005.0
-_KAPPA = 0.4
+_KAPPA = 0.4                   # von Karman constant -- NOT the Poisson exponent (_KAPPA_DRY)
+
+# The reference gauge of dry thermodynamics, defined once. Potential temperature is
+# theta = T (P0 / p)^kappa; p0 and kappa are arbitrary references, and every theta<->T
+# conversion in this module must use these same two values, or results start to depend on
+# the reference (see docs/deep_research_gauge_thermodynamics_2026-11-19.md).
+_RD = 287.05                   # J kg-1 K-1, gas constant for dry air
+_CP_DRY = 1004.0               # J kg-1 K-1, specific heat of dry air at constant pressure
+_KAPPA_DRY = _RD / _CP_DRY     # Poisson exponent Rd/cp, ~0.28591
+_EPSILON = 0.622               # Rd/Rv
+_P0_HPA = 1000.0               # reference pressure of potential temperature (hPa)
+_P0_PA = _P0_HPA * 100.0       # same, in Pa
+_CP_AIR = _CP_DRY              # alias kept for older call sites; was a separate 1005.0 until 2026-11
 # Reference CAPE (J/kg) at which the convective plume factor reaches ~2x; a
 # moderately unstable atmosphere. Tunable.
 _CAPE_REF = 1500.0
@@ -587,11 +598,11 @@ def brunt_vaisala_squared(profile: AtmosphericProfile,
     """
     t_lo, _ = profile._at(low_hpa)
     t_hi, _ = profile._at(high_hpa)
-    th_lo = (t_lo + 273.15) * (1000.0 / low_hpa) ** 0.286
-    th_hi = (t_hi + 273.15) * (1000.0 / high_hpa) ** 0.286
+    th_lo = float(theta_kelvin(t_lo, low_hpa))
+    th_hi = float(theta_kelvin(t_hi, high_hpa))
     # Approx layer thickness (m): hypsometric, mean T.
     tbar = 0.5 * (t_lo + t_hi) + 273.15
-    dz = 287.0 * tbar / _G * math.log(low_hpa / high_hpa)
+    dz = _RD * tbar / _G * math.log(low_hpa / high_hpa)
     if dz <= 0.0:
         return 0.0
     dtheta_dz = (th_hi - th_lo) / dz
@@ -749,12 +760,6 @@ _ML_STABLE = 1.1e-3
 _GAMMA_DEEP = 4.0e-3            # gamma-theta below this -> deep pyroCu/pyroCb
 _FLI_PYROCU_KW = 1.0e4         # fireline intensity gate for pyroCu (Tedim 2018)
 
-# Dry-air thermodynamics for the profile diagnostics. (_KAPPA above is von Karman,
-# hence _KAPPA_DRY for the Poisson exponent Rd/cp.)
-_RD = 287.05                   # J kg-1 K-1, gas constant for dry air
-_CP_DRY = 1004.0               # J kg-1 K-1
-_KAPPA_DRY = _RD / _CP_DRY     # ~0.286
-_EPSILON = 0.622               # Rd/Rv
 
 # Bulk-Richardson ABL + profile diagnostics.
 _RIB_CRITICAL = 0.33           # Rib crossing that marks the ABL top (Zhang et al. 2014)
@@ -889,8 +894,14 @@ DEFAULT_PYROCONV_THRESHOLDS = PyroconvThresholds()
 
 
 def theta_kelvin(temp_c, pressure_hpa):
-    """Potential temperature (K) from temperature (C) and pressure (hPa)."""
-    return (np.asarray(temp_c, float) + 273.15) * (1000.0 / np.asarray(pressure_hpa, float)) ** 0.286
+    """Potential temperature (K) from temperature (C) and pressure (hPa).
+
+    Uses the module's reference gauge: ``theta = T (_P0_HPA / p) ** _KAPPA_DRY`` with
+    ``_P0_HPA = 1000`` and ``_KAPPA_DRY = _RD / _CP_DRY``. Invert with the same two
+    constants (``T = theta * (p / _P0_HPA) ** _KAPPA_DRY``), never with a re-typed 0.286.
+    """
+    return (np.asarray(temp_c, float) + 273.15) \
+        * (_P0_HPA / np.asarray(pressure_hpa, float)) ** _KAPPA_DRY
 
 
 def theta_gradient(profile: "AtmosphericProfile", low_hpa: float, high_hpa: float) -> float:
@@ -905,7 +916,7 @@ def theta_gradient(profile: "AtmosphericProfile", low_hpa: float, high_hpa: floa
     th_lo = theta_kelvin(t_lo, low_hpa)
     th_hi = theta_kelvin(t_hi, high_hpa)
     tbar = 0.5 * (t_lo + t_hi) + 273.15
-    dz = 287.0 * tbar / _G * math.log(low_hpa / high_hpa)
+    dz = _RD * tbar / _G * math.log(low_hpa / high_hpa)
     return float((th_hi - th_lo) / dz) if dz > 0 else 0.0
 
 
@@ -1498,12 +1509,13 @@ def critical_rh_for_cloud_persistence(theta_excess_k, temp_k, pressure_pa, *,
     ``mixing_fraction`` of environmental air costs the parcel
 
         ``dq   = q_s(T, p) * (1 - RH/100)``      moisture deficit of the entrained air
-        ``dth  = (Lv/cp) * mixing_fraction * dq``  latent cooling paid to close it
+        ``dT   = (Lv/cp) * mixing_fraction * dq``  latent cooling paid to close it
 
     and the cloud persists while the plume's own buoyancy excess covers that cost. Setting
-    ``dth = theta_excess`` and solving for RH gives the criterion returned here:
+    ``dT`` equal to the excess expressed as a temperature at ``p`` and solving for RH gives
+    the criterion returned here:
 
-        ``RH_crit = 100 * (1 - theta_excess * cp / (Lv * mixing_fraction * q_s(T, p)))``
+        ``RH_crit = 100 * (1 - theta_excess (p/P0)^kappa * cp / (Lv * mixing_fraction * q_s(T, p)))``
 
     ``mixing_fraction = 1`` is equal-mass mixing, the conservative limit and the usual choice
     in the cloud-top entrainment instability literature (Randall 1980; Deardorff 1980).
@@ -1523,16 +1535,25 @@ def critical_rh_for_cloud_persistence(theta_excess_k, temp_k, pressure_pa, *,
     a ~13 K plume, at the very top of the observed range. That is why 60 % over-produced the
     deep class.
 
+    **Excess in theta, cooling in T.** The plume excess is a *potential*-temperature
+    difference (what the GRAF sondes measure, and what is conserved as the plume rises dry),
+    while the latent cooling ``(Lv/cp) dq`` is an actual-temperature change. The two are
+    compared at the evaluation level by converting the excess with the Exner factor,
+    ``dT = theta_excess * (p / P0) ** kappa`` -- without it the criterion depends on the
+    arbitrary reference pressure, and at 700 hPa a 10 K excess was treated as 11 % more
+    buoyancy than it is (RH_crit 54.7 % instead of 59.1 %). Corrected 2026-11-19.
+
     Returns RH in percent, clipped to [0, 100]. A cloud in air already at 100 % RH loses nothing
     to evaporation, so the criterion is always satisfiable in a saturated environment.
     """
     thx = np.asarray(theta_excess_k, float)
     t = np.asarray(temp_k, float)
     p = np.asarray(pressure_pa, float)
+    dt_excess = thx * (p / _P0_PA) ** _KAPPA_DRY        # theta excess -> T excess at p
     es = saturation_vapour_pressure_pa(t)
     qs = _EPSILON * es / np.maximum(p - (1.0 - _EPSILON) * es, 1.0)
     denom = _LV * max(mixing_fraction, 1e-6) * np.maximum(qs, 1e-9)
-    return np.clip(100.0 * (1.0 - thx * _CP_DRY / denom), 0.0, 100.0)
+    return np.clip(100.0 * (1.0 - dt_excess * _CP_DRY / denom), 0.0, 100.0)
 
 
 def max_rh_abl_grid(height_agl_m, relative_humidity, *, zmin: float = 150.0,
@@ -1707,6 +1728,11 @@ _PFT_HEAT_TO_MOISTURE = 15.0   # K per g/kg, the fire's heat:moisture ratio (ass
 _PFT_RHO_REF = 0.755           # kg m-3, the density eq 31 assumes (std. atmosphere at z_fc)
 _PFT_C_RHO = _PFT_C / _PFT_RHO_REF
 PFT_RHO_MODES = ("paper", "column")
+# Which temperature the fire heat:moisture ratio is "per K" of. "theta" is the paper's eq 30
+# (beta * theta_ML, i.e. relative to P0 = 1e5 Pa); "surface_t" takes the same ratio per K of
+# the mixed layer's actual surface temperature, which removes the reference-pressure
+# dependence over high ground. Research option -- see pyrocb_firepower_threshold_grid.
+PFT_MOISTURE_REFERENCES = ("theta", "surface_t")
 
 # Briggs (1969) stable bent-over final rise, dh = 2.6 (F/(U s))^(1/3) -- inverted at the ABL
 # top it is the classical criterion for penetrating an elevated inversion, and it is what
@@ -1798,14 +1824,15 @@ def _mixed_layer_state(z, theta, q, surface_pressure_pa, usable, shape, *, itera
         tot = np.maximum(wt.sum(0), 1e-9)
         th_ml = (wt * np.where(w, theta, 0.0)).sum(0) / tot
         q_ml = (wt * np.where(w, q, 0.0)).sum(0) / tot
-        t_sfc = th_ml * (ps / 100000.0) ** _KAPPA_DRY
+        t_sfc = th_ml * (ps / _P0_PA) ** _KAPPA_DRY
         e = q_ml * ps / (_EPSILON + (1.0 - _EPSILON) * q_ml)
         td = 243.5 * np.log(np.maximum(e, 1.0) / 611.2) / (17.67 - np.log(np.maximum(e, 1.0) / 611.2))
         depth = np.clip(lcl_height_bolton_m(t_sfc, td + 273.15, ps), 100.0, 5000.0)
     return th_ml, q_ml, depth
 
 
-def _saturation_point(beta, th_ml, q_ml, surface_pressure_pa, heat_to_moisture):
+def _saturation_point(beta, th_ml, q_ml, surface_pressure_pa, heat_to_moisture,
+                      moisture_reference: str = "theta"):
     """Saturation-point height/state of a plume parcel with buoyancy increment ``beta``.
 
     Tory et al. (2018) eqs 29-30: the parcel leaves the surface at ``(1+beta) theta_ML``,
@@ -1814,8 +1841,13 @@ def _saturation_point(beta, th_ml, q_ml, surface_pressure_pa, heat_to_moisture):
     """
     ps = np.asarray(surface_pressure_pa, float)
     th_p = (1.0 + beta) * th_ml
-    q_p = q_ml + beta * th_ml / heat_to_moisture * 1e-3          # g/kg -> kg/kg
-    t_p = th_p * (ps / 100000.0) ** _KAPPA_DRY
+    # the fire's moisture per kelvin of heating: per K of theta (eq 30, the paper's P0 gauge) or
+    # per K of the mixed layer's actual surface temperature (reference-free)
+    heat_k = beta * th_ml
+    if moisture_reference == "surface_t":
+        heat_k = heat_k * (ps / _P0_PA) ** _KAPPA_DRY
+    q_p = q_ml + heat_k / heat_to_moisture * 1e-3                # g/kg -> kg/kg
+    t_p = th_p * (ps / _P0_PA) ** _KAPPA_DRY
     e = q_p * ps / (_EPSILON + (1.0 - _EPSILON) * q_p)
     le = np.log(np.maximum(e, 1.0) / 611.2)
     td = 243.5 * le / (17.67 - le)
@@ -1832,7 +1864,8 @@ def pyrocb_firepower_threshold_grid(height_agl_m, temperature_k, pressure_pa,
                                     cloud_top_temp_c: float = _PFT_CLOUD_TOP_C,
                                     heat_to_moisture: float = _PFT_HEAT_TO_MOISTURE,
                                     beta_max: float = 0.12, beta_steps: int = 60,
-                                    rho_mode: str = "paper"):
+                                    rho_mode: str = "paper",
+                                    moisture_reference: str = "theta"):
     """PyroCb Firepower Threshold (GW), gridded -- Tory & Kepert (2021) eq 31.
 
     The minimum **total** firepower that, in this atmosphere, lifts a fire plume to where
@@ -1873,6 +1906,23 @@ def pyrocb_firepower_threshold_grid(height_agl_m, temperature_k, pressure_pa,
     comparable. The two agree wherever the column resembles the standard atmosphere at
     ``z_fc``, so the default is left alone and the published scale check below still holds.
 
+    **Reference gauge.** ``dtheta_fc`` and the fire moisture increment ``beta theta_ML /
+    heat_to_moisture`` are potential-temperature quantities relative to P0 = 1e5 Pa, as in the
+    paper (Table 2; eq 10 / appendix B; eq 30). PFT therefore depends on that reference by
+    construction, slightly more over high terrain where theta_ML exceeds the surface T by
+    (P0/ps)^kappa. That is the published method, reproduced deliberately and pinned by
+    ``test_pft_is_defined_in_the_papers_gauge``.
+
+    ``moisture_reference="surface_t"`` is the reference-free alternative: the 15 K per g/kg
+    ratio is applied per kelvin of the mixed layer's actual surface temperature, so a fire on
+    a 850 hPa plateau adds the same water per unit heat as one at sea level. ``dtheta_fc`` and
+    eq 31 are untouched. It changes PFT by 0 at 1000 hPa and by roughly +1 to +9 % over
+    750-925 hPa surfaces. It is a research option, not the published method. On the GRAF
+    capability-margin set (27 columns) it moved the critical growth rate by -0.04 to +0.5 %
+    on 24 columns and by +5.5 to +15.5 % on three (Rojals, Guissona, Orista), left Guissona's margin
+    positive (+0.39 -> +0.34), and changed no detection count, Fisher p or rank correlation
+    (docs/gauge_audit/score_moisture_reference.py, margin_*.txt).
+
     ``nan`` where no ``beta <= beta_max`` produces a buoyant cloud: the column cannot make a
     pyroCb at any firepower, which is a stronger statement than a large threshold.
 
@@ -1906,11 +1956,15 @@ def pyrocb_firepower_threshold_grid(height_agl_m, temperature_k, pressure_pa,
     # --- 2-3. walk the saturation-point curve for the critical beta
     z_fc = np.full(shape, np.nan)
     dth_fc = np.full(shape, np.nan)
+    if moisture_reference not in PFT_MOISTURE_REFERENCES:
+        raise ValueError(f"moisture_reference must be one of {PFT_MOISTURE_REFERENCES}, "
+                         f"got {moisture_reference!r}")
     for beta in np.linspace(0.0, beta_max, beta_steps)[1:]:
         todo = ~np.isfinite(z_fc)
         if not todo.any():
             break
-        z_sp, t_sp, p_sp, _t_p = _saturation_point(beta, th_ml, q_ml, ps, heat_to_moisture)
+        z_sp, t_sp, p_sp, _t_p = _saturation_point(beta, th_ml, q_ml, ps, heat_to_moisture,
+                                                   moisture_reference)
 
         # moist ascent from the SP; must beat the environment by the buffer up to the
         # cloud-top level, else this beta is not enough
@@ -3280,12 +3334,14 @@ ICON2I_MISTRAL_BASE = ("https://meteohub.agenziaitaliameteo.it/nwp/"
                        "ICON-2I_SURFACE_PRESSURE_LEVELS")
 
 # (local_name, variable_subdir, typeOfLevel, level) -- the fields the pyroconvection
-# classifier + fuel gate need: pressure-level T, 2 m T/dewpoint, 10 m wind.
+# classifier + fuel gate need: pressure-level T, 2 m T/dewpoint, 10 m wind, and the surface
+# pressure (the 2 m state is at ps, not at 1000 hPa -- the classifier needs it over terrain).
 ICON2I_FIRE_FIELDS = [
     ("T850", "T", "isobaricInhPa", 850), ("T700", "T", "isobaricInhPa", 700),
     ("T500", "T", "isobaricInhPa", 500),
     ("T2M", "T_2M", "heightAboveGround", 2), ("TD2M", "TD_2M", "heightAboveGround", 2),
     ("U10", "U_10M", "heightAboveGround", 10), ("V10", "V_10M", "heightAboveGround", 10),
+    ("PS", "PS", "surface", 0),
 ]
 
 # Pressure levels the ICON-2I open-data archive actually publishes. 250 hPa (~10 km)

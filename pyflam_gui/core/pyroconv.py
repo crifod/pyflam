@@ -128,7 +128,9 @@ def read_icon2i(files, bbox, run_dt, valid_dt, hours, levels=DEFAULT_LEVELS):
     ``T2M``, ``TD2M``, ``U10``, ``V10``); ``bbox`` is ``(north, west, south, east)``;
     ``run_dt``/``valid_dt`` are the run and valid datetimes; ``hours`` the valid
     hours (UTC) to extract. Returns a dict with 1D ``lat``/``lon``, the time-index
-    list ``idx``, and stacked fields ``T`` (per level), ``T2m``, ``Td``, ``U``, ``V``.
+    list ``idx``, and stacked fields ``T`` (per level), ``T2m``, ``Td``, ``U``, ``V``,
+    plus ``PS`` (surface pressure, hPa) when ``files`` has it, else ``None``. Pass ``PS``
+    to :func:`classify` -- without it every cell is treated as sea level.
     """
     import numpy as np
 
@@ -140,6 +142,9 @@ def read_icon2i(files, bbox, run_dt, valid_dt, hours, levels=DEFAULT_LEVELS):
     td, v = _open_grib_subset(files["TD2M"], bbox); Td = td[v].values - 273.15
     u, vu = _open_grib_subset(files["U10"], bbox); U = u[vu].values
     vv, vn = _open_grib_subset(files["V10"], bbox); V = vv[vn].values
+    PS = None
+    if "PS" in files:
+        ps, vp = _open_grib_subset(files["PS"], bbox); PS = ps[vp].values / 100.0   # Pa -> hPa
     lat = t2["latitude"].values; lon = t2["longitude"].values
     sh = (t2["step"].values / np.timedelta64(1, "h")).astype(int)
     idx = []
@@ -150,17 +155,97 @@ def read_icon2i(files, bbox, run_dt, valid_dt, hours, levels=DEFAULT_LEVELS):
             raise ValueError(f"valid {h:02d}Z needs forecast step +{target} h, "
                              f"beyond this run (max +{int(sh.max())} h)")
         idx.append(int(m[0]))
-    return dict(lat=lat, lon=lon, idx=idx, T=T, T2m=T2m, Td=Td, U=U, V=V)
+    return dict(lat=lat, lon=lon, idx=idx, T=T, T2m=T2m, Td=Td, U=U, V=V, PS=PS)
+
+
+def _std_height_at(ps_hpa, Z):
+    """Standard-atmosphere height (m) of a pressure, log-p interpolated in the ``Z`` table.
+
+    Extrapolates linearly in ln p beyond the table, so a 1013 hPa surface sits slightly
+    below the 1000 hPa height rather than being clamped onto it.
+    """
+    ps = np.asarray(ps_hpa, float)
+    lp = np.log(np.array(sorted(Z), float))            # ascending ln p
+    zz = np.array([Z[k] for k in sorted(Z)], float)    # heights, descending with p
+    slope_lo = (zz[1] - zz[0]) / (lp[1] - lp[0])
+    slope_hi = (zz[-1] - zz[-2]) / (lp[-1] - lp[-2])
+    lps = np.log(ps)
+    z = np.interp(lps, lp, zz)
+    z = np.where(lps < lp[0], zz[0] + slope_lo * (lps - lp[0]), z)
+    return np.where(lps > lp[-1], zz[-1] + slope_hi * (lps - lp[-1]), z)
+
+
+# The mixed-layer gradient needs the 850 hPa level clearly above the ground. Below this
+# depth (surface above ~800 hPa, i.e. the higher Apennine/Pyrenean ridges) the surface-to-
+# 850 hPa difference is a few metres of air and its slope is noise; the cell is left as
+# PYROCONV_NODATA rather than classified on it.
+_MIN_SFC_TO_850_M = 250.0
+
+
+def surface_layer_terms(T2m, th_by_level, ps_hpa, Z, *, abl_levels=None, excess_k=0.5):
+    """Terrain-aware surface-based terms for a pressure-level classifier.
+
+    Shared by :func:`classify` and the stand-alone map scripts, so the surface is handled one
+    way everywhere. ``T2m`` (deg C) and ``ps_hpa`` (hPa) are 2D; ``th_by_level`` maps pressure
+    level (hPa) -> 2D potential temperature (K); ``Z`` maps the same levels to standard
+    heights (m). The 2 m state is placed at ``ps``, not at 1000 hPa:
+
+    * ``th_sfc = theta(T2m, ps)`` and ``z_sfc`` = the standard height of ``ps``;
+    * ``ml_grad = (theta_850 - th_sfc) / (Z_850 - z_sfc)``;
+    * ``abl`` = height **above the surface** where theta first exceeds ``th_sfc + excess_k``,
+      searched upward through ``abl_levels`` (default: every level in ``Z``) and skipping
+      levels at or below the ground; it stays at the top level if never crossed;
+    * ``usable`` = the 850 hPa level is at least ``_MIN_SFC_TO_850_M`` above the ground.
+
+    Returns ``(th_sfc, z_sfc, ml_grad, abl, usable)``.
+    """
+    from pyflam.atmosphere import theta_kelvin
+
+    ps = np.asarray(ps_hpa, float)
+    th_sfc = theta_kelvin(T2m, ps)
+    z_sfc = _std_height_at(ps, Z)
+    usable = np.isfinite(ps) & (Z[850] - z_sfc >= _MIN_SFC_TO_850_M)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ml_grad = (th_by_level[850] - th_sfc) / np.where(usable, Z[850] - z_sfc, np.nan)
+
+    levs = sorted(abl_levels or Z, reverse=True)             # upward: high p -> low p
+    top = float(Z[levs[-1]])
+    abl = np.full(np.shape(th_sfc), top)
+    found = np.zeros(np.shape(th_sfc), bool)
+    z_prev, th_prev = z_sfc.copy(), th_sfc.copy()
+    target = th_sfc + excess_k
+    for p in levs:
+        zk, thk = float(Z[p]), np.asarray(th_by_level[p], float)
+        above = p < ps                                       # level is above the ground
+        hit = above & ~found & (thk > target)
+        denom = np.where(thk != th_prev, thk - th_prev, 1e9)
+        frac = np.clip((target - th_prev) / denom, 0.0, 1.0)
+        abl = np.where(hit, z_prev + frac * (zk - z_prev), abl)
+        found |= hit
+        z_prev = np.where(above, zk, z_prev)
+        th_prev = np.where(above, thk, th_prev)
+    return th_sfc, z_sfc, ml_grad, abl - z_sfc, usable
 
 
 def classify(T2m, RH, Tl, *, levels=DEFAULT_LEVELS, Z=None, fli=None,
-             fli_gate_kw=FLI_GATE_KW):
+             fli_gate_kw=FLI_GATE_KW, ps_hpa=None):
     """Per-cell pyroconvection class (0..4) for one time slice.
 
     ``T2m`` (deg C) and ``RH`` (%) are 2D surface fields; ``Tl`` maps each pressure
     level (hPa) to its 2D temperature field (deg C). ``fli`` (optional, kW/m) gates
     each cell to a surface plume below ``fli_gate_kw``. Returns an ``int16`` array
     of class *levels* (via ``PYROCONVECTION_TYPE_LEVEL``).
+
+    ``ps_hpa`` (2D surface pressure, hPa) should always be passed. The surface potential
+    temperature is ``theta(T2m, ps)`` and the surface sits at the standard height of ``ps``;
+    the ABL is measured above that surface. Cells whose surface is within
+    ``_MIN_SFC_TO_850_M`` of the 850 hPa level come back as ``PYROCONV_NODATA``.
+
+    Without ``ps_hpa`` every cell is treated as lying at 1000 hPa (the pre-2026-11 behaviour,
+    kept only for callers with no surface pressure). Over terrain that is wrong by the Exner
+    factor: at a 950 hPa surface theta_sfc comes out 4.4 K too cold, which adds 3.3e-3 K/m to
+    the mixed-layer gradient -- three times the ``_ML_STABLE`` gate -- so the hills read as
+    stable and the classes are biased quiet.
     """
     from pyflam.atmosphere import (
         lcl_height_m, theta_kelvin, pyroconvection_type,
@@ -171,25 +256,30 @@ def classify(T2m, RH, Tl, *, levels=DEFAULT_LEVELS, Z=None, fli=None,
     nlat, nlon = np.asarray(T2m).shape
     out = np.zeros((nlat, nlon), np.int16)
 
-    th_sfc = theta_kelvin(T2m, 1000.0)
     th = {p: theta_kelvin(Tl[p], float(p)) for p in levels}
-    ml_grad = (th[850] - th_sfc) / (Z[850] - Z[1000])
+    if ps_hpa is None:                                   # legacy: every cell at 1000 hPa
+        th_sfc = theta_kelvin(T2m, 1000.0)
+        usable = np.ones((nlat, nlon), bool)
+        ml_grad = (th[850] - th_sfc) / (Z[850] - Z[1000])
+        abl = np.full((nlat, nlon), Z[700])
+        for (zlo, tlo), (zhi, thi) in [((Z[1000], th_sfc), (Z[850], th[850])),
+                                       ((Z[850], th[850]), (Z[700], th[700]))]:
+            crossed = (thi > th_sfc + 0.5) & (abl == Z[700])
+            denom = np.where(thi != tlo, thi - tlo, 1e9)
+            frac = np.clip((th_sfc + 0.5 - tlo) / denom, 0.0, 1.0)
+            abl = np.where(crossed, zlo + frac * (zhi - zlo), abl)
+    else:
+        th_sfc, _z_sfc, ml_grad, abl, usable = surface_layer_terms(
+            T2m, th, ps_hpa, {p: Z[p] for p in Z}, abl_levels=(850, 700))
+        out[~usable] = PYROCONV_NODATA
     gamma = (th[500] - th[700]) / (Z[500] - Z[700])
     lcl = lcl_height_m(T2m, RH)
-
-    abl = np.full((nlat, nlon), Z[700])
-    for (zlo, tlo), (zhi, thi) in [((Z[1000], th_sfc), (Z[850], th[850])),
-                                   ((Z[850], th[850]), (Z[700], th[700]))]:
-        crossed = (thi > th_sfc + 0.5) & (abl == Z[700])
-        denom = np.where(thi != tlo, thi - tlo, 1e9)
-        frac = np.clip((th_sfc + 0.5 - tlo) / denom, 0.0, 1.0)
-        abl = np.where(crossed, zlo + frac * (zhi - zlo), abl)
     abl = np.maximum(abl, 100.0)
     ratio = lcl / abl
 
     for a in range(nlat):
         for b in range(nlon):
-            if abl[a, b] < ABL_MIN_M:
+            if not usable[a, b] or abl[a, b] < ABL_MIN_M:
                 continue
             fkw = None if fli is None else float(fli[a, b])
             out[a, b] = PYROCONVECTION_TYPE_LEVEL[pyroconvection_type(
@@ -931,11 +1021,6 @@ def iconeu_diagnostics(d, *, thresholds=None, ml_method="fit_in_ml", shear=True,
     t_top = _interp_at(z, T, abl)
     p_top = _interp_at(z, d["P"], abl)
     chi = plume_entrainment_fraction(lcl, pft["z_fc_m"])
-    rh_top_critical = critical_rh_for_cloud_persistence(
-        np.full(abl.shape, _REFERENCE_THETA_EXCESS_K), t_top, p_top, mixing_fraction=1.0) * 0 + \
-        critical_rh_for_cloud_persistence(
-            np.full(abl.shape, _REFERENCE_THETA_EXCESS_K), t_top, p_top,
-            mixing_fraction=1.0)
     # per-cell chi: evaluate elementwise, since mixing_fraction is scalar in the helper
     with np.errstate(invalid="ignore", divide="ignore"):
         qs_term = critical_rh_for_cloud_persistence(

@@ -53,6 +53,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **One reference gauge for dry thermodynamics.** `atmosphere.py` now defines p₀ and the
+  Poisson exponent once (`_P0_HPA = 1000`, `_P0_PA`, `_KAPPA_DRY = _RD / _CP_DRY = 0.28591`).
+  Previously θ was computed forward with a literal `0.286` (`theta_kelvin`,
+  `brunt_vaisala_squared`) but inverted with `_KAPPA_DRY` in the PFT's mixed-layer and
+  saturation-point steps, so the module carried two gauges. Dry-air c_p is merged at 1004
+  J kg⁻¹ K⁻¹ (`_CP_AIR` is now an alias, previously 1005), and the two `287.0` literals are
+  now `_RD`. Output drift: θ −0.005 / −0.011 / −0.023 K at 850 / 700 / 500 hPa; Briggs
+  buoyancy flux +0.1 % and Obukhov length −0.1 % (both ∝ c_p^∓1); PFT on the synthetic test columns +0.26 % /
+  −0.05 %, below the β-grid noise. A new test pins the gauge and fails if a re-typed
+  literal comes back. `spotting.py` keeps its own `_CP_AIR = 1005` (out of scope).
+  Recommendation 1 of `docs/deep_research_gauge_thermodynamics_2026-11-19.md`.
+- **`pyrocb_firepower_threshold_grid(moisture_reference=)`**, an opt-in research variant.
+  `"theta"` (the default) is Tory & Kepert's eq 30. `"surface_t"` applies the 15 K per g kg⁻¹
+  fire ratio per kelvin of the mixed layer's actual surface temperature, which removes the
+  reference-pressure dependence over high ground. On the GRAF capability-margin set it moves
+  the critical growth rate by −0.04 to +0.5 % on 24 of 27 columns and by +5.5 to +15.5 % on
+  three (Rojals, Guissona, Orista). Guissona's margin stays positive (+0.39 → +0.34), and no
+  detection count, Fisher p or rank correlation changes (`docs/gauge_audit/margin_*.txt`).
+  The default is unchanged. The cost ladder still uses the paper form.
+- **Reference-pressure covariance tests** (Recommendation 2 of the same report). The tests
+  move p₀ and assert that θ rescales as a pure dilation, and that `critical_rh_for_cloud_persistence`,
+  `fire_cape_grid` and `bulk_richardson_abl_grid` do not move. A further test pins PFT to
+  Tory & Kepert's (2021) own gauge (P₀ = 10⁵ Pa, Table 2; eq 30 applies the 15 K per g kg⁻¹ ratio
+  to βθ_ML). That gauge dependence is part of the published method and is reproduced, not
+  "fixed".
 - **Removed a threshold fitted to a third party's forecast, and annotated the provenance of
   every remaining one.** `PyroconvThresholds.rh_top_moist` was lowered from 80 % to 60 %
   because that "brings the deep-pyroCb fraction into agreement" with the Catalan Bombers
@@ -120,6 +145,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Fire Weather Preview treated every cell as sea level.** `pyroconv.classify` computed
+  the surface potential temperature as `theta_kelvin(T2m, 1000.0)`, so over terrain θ_sfc was
+  too cold by the Exner factor: 4.4 / 9.1 / 14.2 K on 950 / 900 / 850 hPa surfaces. That adds
+  3–10× the `_ML_STABLE` gate to the mixed-layer gradient, so hills read as stable and the
+  preview was biased toward the quiet classes. `ICON2I_FIRE_FIELDS` now downloads `PS`,
+  `read_icon2i` returns it, and `classify(..., ps_hpa=)` uses θ(T2m, ps), places the surface
+  at the standard height of ps, and measures the ABL above it. Cells less than 250 m below
+  850 hPa return `PYROCONV_NODATA` instead of a class. Without `ps_hpa` the old behaviour is
+  kept. The terrain logic lives in one helper, `pyroconv.surface_layer_terms`. It skips
+  pressure levels at or below the ground when searching for the ABL, and returns the ABL
+  height above the surface. The four stand-alone map scripts (`tests/pyroconv_map_tuscany*.py`,
+  `tests/pyroconv_icon2i_*.py`) now read surface pressure (Open-Meteo `surface_pressure`, GFS
+  `PRES:surface`, ICON-2I `PS`/`sp`) and call the helper. They render nodata cells in grey. The scripts' data paths, run date, output dir and `.lcp` can be overridden with `ICON2I_DIR`/`ICON2I_GRIB`, `RUN_DATE`, `OUTDIR` and `LCP`.
+  The pressure-aware path also measures the ABL **above the ground**. The legacy path counted it from sea level, so every cell got the 110 m height of the 1000 hPa level for free, and shallow stable layers cleared the 150 m `ABL_MIN_M` floor. On the real ICON-2I run of 2026-11-19 12Z (full Tuscany, 13,920 cells) the legacy path called 13,919 cells "convection plume". With surface pressure: 7,984 surface plume (mostly fog-capped lowlands with 50–100 m noon inversions), 4,362 convection plume, 161 overshooting, 496 resilient pyroCu, 588 deep pyroCu/pyroCb on the hills, and 329 high-ground nodata. A deep-class ridge cell checked by hand (900 hPa, 15 °C, θ_sfc 297.3 K vs θ₈₅₀ 296.5 K, LCL ≈ ABL ≈ 880 m) is genuinely well mixed. The legacy path had it stable because it put the 2 m state at 1000 hPa.
+- **`critical_rh_for_cloud_persistence` equated a θ excess with a temperature cooling.** The
+  latent cooling (L_v/c_p)Δq is a ΔT, but the plume excess is a Δθ. The excess is now
+  converted at the evaluation level, ΔT = Δθ (p/p₀)^κ. RH_crit rises by 0.5–4.4 points, e.g.
+  54.7 → 59.1 % for a 10 K excess at 700 hPa.
 - **`fire_parcel_theta_excess` was dimensionally wrong.** It computed `F / (rho * w0)`, which
   carries units of J/kg rather than kelvin — the specific heat capacity was absent from both
   the velocity and the temperature scale — and the result was added straight to a potential
