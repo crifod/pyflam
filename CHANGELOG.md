@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mari's pyroconvection reference scripts** in `pyroconv_script_MARI/`: ERA5 v1.1, ICON-2I MeteoHub v1.2 and WRF 1.5 km v1.7.4, with the WRF technical report. These are the originals that pyflam's classifier was ported from. They are credited to Mari as developer in the folder README, `NOTICE`, `README.md`, `CITATION.cff` (references) and `.zenodo.json` (contributor). They are not under the AGPL, and all rights remain with Mari.
 - **PyroCb Firepower Threshold, gridded** (`atmosphere.pyrocb_firepower_threshold_grid`) —
   Tory & Kepert (2021) eq 31 with their full section 4b–4c procedure: height-weighted mixed
   layer iterated until the ML-LCL sits inside it, the Tory et al. (2018) saturation-point curve

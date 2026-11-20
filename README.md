@@ -900,6 +900,11 @@ modified version, **or offers it to users over a network** (e.g. hosting the
 Streamlit GUI as a service), must make the complete corresponding source of their
 modified version available under the same terms.
 
+**Exception:** [`pyroconv_script_MARI/`](pyroconv_script_MARI/README.md) holds the
+pyroconvection reference scripts by **Mari** (ERA5, ICON-2I and WRF 1.5 km versions),
+which pyflam's pyroconvection classifier was ported from. They are credited to Mari as
+developer, are not under the AGPL, and all rights remain with Mari.
+
 pyflam is an independent open-source tool built from published, peer-reviewed fire
 science; it contains no FlamMap (or other proprietary tool) code, and
 FlamMap/BehavePlus are used only as external benchmarks for cross-validation.

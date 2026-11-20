@@ -14,6 +14,13 @@ version: 0.2.0
 date-released: "2026-07-21"
 # Concept DOI (Zenodo) — resolves to all versions.
 doi: "10.5281/zenodo.21129258"
+references:
+  - type: software
+    title: "Pyroconvection predisposition scripts for ERA5, ICON-2I and WRF 1.5 km"
+    authors:
+      - name: Mari
+    year: 2026
+    notes: "Reference implementation that pyflam's pyroconvection classifier was ported from; included in pyroconv_script_MARI/ (not under the AGPL; all rights remain with Mari)."
 keywords:
   - wildfire
   - fire behavior
