@@ -14,7 +14,7 @@ import pytest
 
 import pyflam
 from pyflam import pyroconvection
-from pyflam.atmosphere import AtmosphericProfile, AtmosphericState
+from pyflam.atmosphere import AtmosphereProvider, AtmosphericProfile, AtmosphericState
 
 SC = dict(m_1h=0.05, m_10h=0.06, m_100h=0.07, m_live_herb=0.6, m_live_woody=0.9)
 
@@ -154,3 +154,53 @@ def test_off_is_backward_compatible():
         wind_provider=_intensity_plume(0.02), return_history=True, **SC)
     np.testing.assert_array_equal(a["arrival_time"], b["arrival_time"])
     assert "pyroconvection" not in b
+
+
+# --- time-lag dead-fuel moisture (overnight recovery) -------------------------
+
+class _DryingDay(AtmosphereProvider):
+    """Humid pre-dawn air drying into a hot low-RH afternoon (a burn day)."""
+
+    def state_at(self, lat, lon, time=None):
+        h = time.hour + time.minute / 60.0
+        rh = max(15.0, min(95.0, 95.0 - 4.5 * (h - 4.0)))
+        return AtmosphericState(wind_speed=8.0, wind_direction=270.0,
+                                temperature=12.0 + 1.4 * (h - 4.0),
+                                relative_humidity=rh)
+
+
+def _lag_march(**kw):
+    from datetime import datetime
+    return pyflam.fire_atmosphere_march(
+        _ls(), [(20, 20)], total_time=40, dt=10, atmosphere=_DryingDay(),
+        location=(43.0, 11.0), start_time=datetime(2026, 7, 3, 14, 0),
+        wind_provider=_intensity_plume(0.02), return_history=True,
+        m_live_herb=0.6, m_live_woody=0.9, **kw)
+
+
+def test_lag_remembers_overnight_recovery():
+    """The spun-up slow classes stay moister than the instantaneous EMC, and the
+    lag ordering (1h driest, 100h wettest) holds at the start of the burn window."""
+    lag = _lag_march(fuel_moisture_lag=True, fuel_moisture_spinup_hours=12.0)
+    inst = _lag_march()                       # instantaneous EMC (no memory)
+    emc0 = inst["m_1h"][0]                     # EMC at 14:00
+    assert lag["m_1h"][0] <= lag["m_10h"][0] <= lag["m_100h"][0]
+    assert lag["m_100h"][0] > emc0            # 100-h remembers the humid morning
+    assert lag["m_10h"][0] > emc0
+
+
+def test_lag_init_seeds_dead_fuel_from_external_estimate():
+    """fuel_moisture_lag_init seeds the classes (e.g. FWI FFMC moisture); the slow
+    100-h class keeps that seed's memory through the overnight spin-up."""
+    seeded = _lag_march(fuel_moisture_lag=True, fuel_moisture_spinup_hours=12.0,
+                        fuel_moisture_lag_init=0.04)      # very dry FWI seed (4%)
+    equil = _lag_march(fuel_moisture_lag=True, fuel_moisture_spinup_hours=12.0)
+    # the dry seed leaves the 100-h class drier than the ambient-equilibrium start
+    assert seeded["m_100h"][0] < equil["m_100h"][0]
+
+
+def test_lag_requires_atmosphere_and_start_time():
+    with pytest.raises(ValueError, match="fuel_moisture_lag"):
+        pyflam.fire_atmosphere_march(
+            _ls(), [(20, 20)], total_time=40, dt=10, speed=8.0, direction=270.0,
+            wind_provider=_intensity_plume(0.02), fuel_moisture_lag=True, **SC)

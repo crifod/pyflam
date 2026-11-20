@@ -231,6 +231,10 @@ def fire_atmosphere_march(
     m_100h: float | None = None,
     m_live_herb: float = 0.0,
     m_live_woody: float = 0.0,
+    fuel_moisture_lag: bool = False,
+    fuel_moisture_spinup_hours: float = 0.0,
+    fuel_moisture_spinup_step: float = 60.0,
+    fuel_moisture_lag_init: float | tuple | None = None,
     load_factor: float = 1.0,
     wind_reduction_factor: float = 0.4,
     flame_residence: float | None = None,
@@ -278,6 +282,24 @@ def fire_atmosphere_march(
     convective heat flux from it -- so the fire responds to evolving weather, for
     a near-real-time forecast or a reanalysis. Without ``atmosphere`` the fixed
     ``speed``/``direction``/``m_1h``/``m_10h``/``m_100h`` are used throughout.
+
+    **Fuel-moisture memory.** By default the dead fuel moisture each increment is the
+    *instantaneous* equilibrium moisture content of the current weather (fuels snap to
+    it). Pass ``fuel_moisture_lag=True`` to instead carry the operational time-lag
+    model (:class:`~pyflam.atmosphere.DeadFuelMoistureModel`): the 1/10/100-h classes
+    are spun up from the equilibrium ``fuel_moisture_spinup_hours`` before
+    ``start_time`` (marched in ``fuel_moisture_spinup_step``-minute steps), then
+    stepped by each increment's ``dt`` toward the current EMC by their own lag. This
+    lets the slower classes *remember* the humid overnight/pre-dawn hours rather than
+    dropping instantly to the dry afternoon value -- so an afternoon burn runs on
+    fuels that are still recovering. Needs an ``atmosphere`` provider and
+    ``start_time``; works for point and (per-cell) ``spatial`` runs. The realised
+    ``m_1h``/``m_10h``/``m_100h`` are added to ``return_history``. Pass
+    ``fuel_moisture_lag_init`` (a fraction, or a 1/10/100-h tuple) to seed the
+    classes from an external estimate -- e.g. the FWI-spun-up FFMC fine fuel
+    moisture, which already carries weeks of drought -- instead of the ambient
+    equilibrium at spin-up start.
+
     With ``spatial=True`` the atmosphere is sampled **per cell** (gridded weather:
     wind and fuel moisture vary across the domain). With ``spatial=True`` *and*
     ``plume=True`` the fire's plume perturbation (a buoyant-CFD fire-vs-no-fire
@@ -349,6 +371,39 @@ def fire_atmosphere_march(
     fixed_moist = dict(m_1h=m_1h, m_10h=m_10h, m_100h=m_100h,
                        m_live_herb=m_live_herb, m_live_woody=m_live_woody)
 
+    # Optional time-lag dead-fuel model (fuels remember recent humidity). Spin it up
+    # from the equilibrium `fuel_moisture_spinup_hours` before the burn window so the
+    # slow classes carry the overnight/pre-dawn recovery into the run.
+    fm_model = [None]           # DeadFuelMoistureModel (stepped in `resolve`)
+    fm_last = [0.0]             # sim_min at the last moisture step
+    if fuel_moisture_lag:
+        if atmosphere is None or start_time is None:
+            raise ValueError(
+                "fuel_moisture_lag needs an `atmosphere` provider and a `start_time`")
+        from .atmosphere import DeadFuelMoistureModel
+
+        def _fm_state(clk):
+            if spatial:
+                return atmosphere.field_on(ls, clk)
+            lat, lon = (location or (None, None))
+            return atmosphere.state_at(lat, lon, clk)
+
+        t0 = start_time - timedelta(hours=float(fuel_moisture_spinup_hours))
+        if fuel_moisture_lag_init is not None:
+            # Seed the classes from an external estimate (e.g. the FWI-spun-up FFMC
+            # fine fuel moisture, which already integrates weeks of drought) instead
+            # of the ambient equilibrium; the slow 10/100-h classes then retain that
+            # drought memory through the overnight spin-up.
+            ini = fuel_moisture_lag_init
+            ini = (float(ini),) * 3 if np.ndim(ini) == 0 else tuple(map(float, ini))
+            fm_model[0] = DeadFuelMoistureModel(m_1h=ini[0], m_10h=ini[1], m_100h=ini[2])
+        else:
+            fm_model[0] = DeadFuelMoistureModel.equilibrium(_fm_state(t0))
+        step = max(1.0, float(fuel_moisture_spinup_step))
+        n_spin = int(round(float(fuel_moisture_spinup_hours) * 60.0 / step))
+        for k in range(1, n_spin + 1):
+            fm_model[0].update(_fm_state(t0 + timedelta(minutes=step * k)), step)
+
     crown_state = {"fire_type": None, "crown_fraction_burned": None}
 
     def build_field(wf, moist):
@@ -388,16 +443,25 @@ def fire_atmosphere_march(
         clock = (start_time + timedelta(minutes=sim_min)
                  if start_time is not None else None)
         m_live = {"m_live_herb": m_live_herb, "m_live_woody": m_live_woody}
+
+        def _dead(state):
+            """Instantaneous EMC, or the time-lag model stepped by the elapsed dt."""
+            if fm_model[0] is None:
+                return dead_fuel_moisture(state)
+            return fm_model[0].update(state, max(0.0, sim_min - fm_last[0]))
+
         if spatial:
             fld = atmosphere.field_on(ls, clock)
             pyro_state[0] = fld                # per-cell state for the plume factor
-            m = {**dead_fuel_moisture(fld), **m_live}
+            m = {**_dead(fld), **m_live}
+            fm_last[0] = sim_min
             aq = float(np.mean(ambient_surface_heat_flux(fld)))
             return m, None, None, aq, wind_field_from_state(fld, ls)
         lat, lon = (location or (None, None))
         st = atmosphere.state_at(lat, lon, clock)
         pyro_state[0] = st
-        m = {**dead_fuel_moisture(st), **m_live}
+        m = {**_dead(st), **m_live}
+        fm_last[0] = sim_min
         return m, st.wind_speed, st.wind_direction, \
             ambient_surface_heat_flux(st), None
 
@@ -428,7 +492,9 @@ def fire_atmosphere_march(
 
     wf_prev = wf
     history = {"winds": [wf], "fields": [field], "times": [dt],
-               "mean_wind": [_mean_ms(wf)], "plume_factor": [float(np.mean(plume_factor()))]}
+               "mean_wind": [_mean_ms(wf)], "plume_factor": [float(np.mean(plume_factor()))],
+               "m_1h": [moist["m_1h"]], "m_10h": [moist["m_10h"]],
+               "m_100h": [moist["m_100h"]]}
     t = dt
     while t < total_time - 1e-9:
         t_next = min(t + dt, total_time)
@@ -468,6 +534,9 @@ def fire_atmosphere_march(
             history["times"].append(t_next)
             history["mean_wind"].append(_mean_ms(wf))
             history["plume_factor"].append(float(np.mean(pf)))
+            history["m_1h"].append(moist["m_1h"])
+            history["m_10h"].append(moist["m_10h"])
+            history["m_100h"].append(moist["m_100h"])
         t = t_next
 
     out = {"arrival_time": arrival}

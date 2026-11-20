@@ -1,0 +1,4 @@
+# Regenerable binary outputs (rebuild via scripts/case_montale/):
+*.tif
+*.lcp
+pipeline_run.log

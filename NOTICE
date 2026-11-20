@@ -10,6 +10,11 @@ This program is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
 PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
 
+The folder pyroconv_script_MARI/ contains pyroconvection scripts and documents
+developed by Mari. They are published with credit to Mari as their developer.
+They are NOT covered by the AGPL licence above, and all rights remain with Mari.
+See pyroconv_script_MARI/README.md.
+
 FlamMap is a separate product of the USDA Forest Service / Missoula Fire
 Sciences Laboratory; this software is an independent reimplementation from
 published, peer-reviewed models and contains no FlamMap code.

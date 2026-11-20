@@ -232,3 +232,49 @@ def test_load_factor_per_cell_raster():
     assert np.allclose(left, left[0, 0])      # uniform within each region
     assert np.allclose(right, right[0, 0])
     assert right[0, 0] > left[0, 0]           # boosted load -> more intensity
+
+
+# --- Rothermel effective wind speed limit (Rothermel 1972; Andrews et al. 2013) ---
+
+def _kernel(code="TU5", **moist):
+    from pyflam.rothermel import surface_kernel
+    m = dict(m_1h=0.05, m_10h=0.06, m_100h=0.07, m_live_herb=0.30, m_live_woody=1.0)
+    m.update(moist)
+    return surface_kernel(pyflam.get_fuel_model(code), **m)
+
+
+def test_effective_wind_limit_off_by_default():
+    """The limit is opt-in; default rate_of_spread is unchanged."""
+    k = _kernel()
+    high = 60.0 * 88.0                                   # 60 mph midflame, ft/min
+    assert k.rate_of_spread(high, 0.8) == k.rate_of_spread(high, 0.8, effective_wind_limit=False)
+
+
+def test_effective_wind_limit_caps_the_effective_wind():
+    """With the limit on, the implied effective wind never exceeds 0.9*I_R."""
+    k = _kernel()
+    high = 250.0 * 88.0                                  # well above 0.9*I_R for TU5
+    phi_raw = float(k.wind_factor(high) + k.slope_factor(1.5))
+    phi_lim = float(k.limit_combined_factor(phi_raw))
+    assert phi_lim < phi_raw                             # the limit actually bit here
+    u_lim = (phi_lim * k.beta_ratio ** k.e / k.c) ** (1.0 / k.b)
+    assert u_lim <= k.effective_wind_limit() * (1 + 1e-6)
+    assert k.rate_of_spread(high, 1.5, effective_wind_limit=True) < k.rate_of_spread(high, 1.5)
+
+
+def test_effective_wind_limit_tames_spread_field_singularity():
+    """On a steep, windy synthetic landscape the limit bounds the runaway ROS."""
+    import numpy as np
+    from pyflam.landscape import Landscape
+    from pyflam.mtt import spread_field
+    n = 40
+    ls = Landscape(fuel_model=np.full((n, n), 165, "int16"),      # TU5, high-SAV
+                   slope=np.full((n, n), 120.0, "float32"),        # 120 % steep
+                   aspect=np.full((n, n), 180.0, "float32"),
+                   cellsize_x=10.0, cellsize_y=10.0, west=0.0, north=0.0)
+    kw = dict(m_1h=0.04, m_10h=0.05, m_100h=0.06, m_live_herb=0.30, m_live_woody=1.0,
+              wind_midflame=1000.0, wind_direction=180.0)
+    raw = spread_field(ls, **kw).ros_max.max()
+    lim = spread_field(ls, effective_wind_limit=True, **kw).ros_max.max()
+    assert lim < raw                                     # the limit reduces the peak
+    assert np.isfinite(lim) and lim < 1.0e5              # ...to a physical value (ft/min)

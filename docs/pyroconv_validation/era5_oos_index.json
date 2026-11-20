@@ -1,0 +1,34 @@
+{
+ "batea": {
+  "path": "/private/tmp/claude-501/-Users-cristianofoderi--softEST-firelab-flammap6-install-0828-2025-pyflam/48820477-a2f4-47be-a817-19bef54bec9e/scratchpad/era5o_batea_20240511_15.nc",
+  "when": "2024-05-11T15:30:00"
+ },
+ "etos": {
+  "path": "/private/tmp/claude-501/-Users-cristianofoderi--softEST-firelab-flammap6-install-0828-2025-pyflam/48820477-a2f4-47be-a817-19bef54bec9e/scratchpad/era5o_etos_20250703_13.nc",
+  "when": "2025-07-03T13:51:00"
+ },
+ "katsimidi": {
+  "path": "/private/tmp/claude-501/-Users-cristianofoderi--softEST-firelab-flammap6-install-0828-2025-pyflam/48820477-a2f4-47be-a817-19bef54bec9e/scratchpad/era5o_katsimidi_20240629_12.nc",
+  "when": "2024-06-29T12:16:00"
+ },
+ "la-figuera": {
+  "path": "/private/tmp/claude-501/-Users-cristianofoderi--softEST-firelab-flammap6-install-0828-2025-pyflam/48820477-a2f4-47be-a817-19bef54bec9e/scratchpad/era5o_la-figuera_20240728_14.nc",
+  "when": "2024-07-28T14:29:00"
+ },
+ "lavrio": {
+  "path": "/private/tmp/claude-501/-Users-cristianofoderi--softEST-firelab-flammap6-install-0828-2025-pyflam/48820477-a2f4-47be-a817-19bef54bec9e/scratchpad/era5o_lavrio_20250808_16.nc",
+  "when": "2025-08-08T16:05:00"
+ },
+ "mequinensa": {
+  "path": "/private/tmp/claude-501/-Users-cristianofoderi--softEST-firelab-flammap6-install-0828-2025-pyflam/48820477-a2f4-47be-a817-19bef54bec9e/scratchpad/era5o_mequinensa_20240703_15.nc",
+  "when": "2024-07-03T15:23:00"
+ },
+ "thimari": {
+  "path": "/private/tmp/claude-501/-Users-cristianofoderi--softEST-firelab-flammap6-install-0828-2025-pyflam/48820477-a2f4-47be-a817-19bef54bec9e/scratchpad/era5o_thimari_20250626_12.nc",
+  "when": "2025-06-26T12:00:00"
+ },
+ "varnavas": {
+  "path": "/private/tmp/claude-501/-Users-cristianofoderi--softEST-firelab-flammap6-install-0828-2025-pyflam/48820477-a2f4-47be-a817-19bef54bec9e/scratchpad/era5o_varnavas_20240811_15.nc",
+  "when": "2024-08-11T15:49:00"
+ }
+}

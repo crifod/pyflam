@@ -1,0 +1,57 @@
+case                                   gauge                                steps   PFT GW   dPFT%  z_fc m  dth K   thML
+hot-dry (rh25, abl1800), ps=1000 hPa   baseline (as coded)                     60   8555.1    0.00    9834  36.86  318.0
+hot-dry (rh25, abl1800), ps=1000 hPa   baseline (as coded)                    600   8387.1    0.00    9793  36.44  318.0
+hot-dry (rh25, abl1800), ps=1000 hPa   p0=1013.25 hPa                          60   8581.2    0.30    9830  37.00  319.2
+hot-dry (rh25, abl1800), ps=1000 hPa   p0=1013.25 hPa                         600   8412.7    0.30    9790  36.57  319.2
+hot-dry (rh25, abl1800), ps=1000 hPa   p0=local ps                             60   8555.1    0.00    9834  36.86  318.0
+hot-dry (rh25, abl1800), ps=1000 hPa   p0=local ps                            600   8387.1    0.00    9793  36.44  318.0
+hot-dry (rh25, abl1800), ps=1000 hPa   kappa forward=inverse=Rd/cp             60   8555.1    0.00    9834  36.86  318.0
+hot-dry (rh25, abl1800), ps=1000 hPa   kappa forward=inverse=Rd/cp            600   8387.1    0.00    9793  36.44  318.0
+hot-dry (rh25, abl1800), ps=1000 hPa   moisture per K of T, not theta          60   8555.1    0.00    9834  36.86  318.0
+hot-dry (rh25, abl1800), ps=1000 hPa   moisture per K of T, not theta         600   8387.1    0.00    9793  36.44  318.0
+hot-dry (rh25, abl1800), ps=1000 hPa   p0=local ps + per-K-of-T                60   8555.1    0.00    9834  36.86  318.0
+hot-dry (rh25, abl1800), ps=1000 hPa   p0=local ps + per-K-of-T               600   8387.1    0.00    9793  36.44  318.0
+hot-dry (rh25, abl1800), ps=1000 hPa   h2m=12 K/(g/kg) [comparator]           600   7546.5  -10.02    9456  35.16  318.0
+hot-dry (rh25, abl1800), ps=1000 hPa   h2m=18 K/(g/kg) [comparator]           600   9036.4    7.74   10043  37.33  318.0
+hot-dry (rh25, abl1800), ps=850 hPa    baseline (as coded)                     60   3737.8    0.00    7664  26.52  318.0
+hot-dry (rh25, abl1800), ps=850 hPa    baseline (as coded)                    600   3679.9    0.00    7643  26.24  318.0
+hot-dry (rh25, abl1800), ps=850 hPa    p0=1013.25 hPa                          60   3748.2    0.28    7660  26.62  319.2
+hot-dry (rh25, abl1800), ps=850 hPa    p0=1013.25 hPa                         600   3690.1    0.28    7640  26.34  319.2
+hot-dry (rh25, abl1800), ps=850 hPa    p0=local ps                             60   3886.5    3.98    7810  26.55  303.5
+hot-dry (rh25, abl1800), ps=850 hPa    p0=local ps                            600   3851.2    4.65    7798  26.39  303.5
+hot-dry (rh25, abl1800), ps=850 hPa    kappa forward=inverse=Rd/cp             60   3737.8    0.00    7664  26.52  318.0
+hot-dry (rh25, abl1800), ps=850 hPa    kappa forward=inverse=Rd/cp            600   3679.9    0.00    7643  26.24  318.0
+hot-dry (rh25, abl1800), ps=850 hPa    moisture per K of T, not theta          60   4071.3    8.92    7810  27.81  318.0
+hot-dry (rh25, abl1800), ps=850 hPa    moisture per K of T, not theta         600   4034.4    9.63    7798  27.65  318.0
+hot-dry (rh25, abl1800), ps=850 hPa    p0=local ps + per-K-of-T                60   3886.5    3.98    7810  26.55  303.5
+hot-dry (rh25, abl1800), ps=850 hPa    p0=local ps + per-K-of-T               600   3851.2    4.65    7798  26.39  303.5
+hot-dry (rh25, abl1800), ps=850 hPa    h2m=12 K/(g/kg) [comparator]           600   3268.6  -11.18    7339  25.29  318.0
+hot-dry (rh25, abl1800), ps=850 hPa    h2m=18 K/(g/kg) [comparator]           600   4295.0   16.71    7972  28.16  318.0
+moist (rh45, abl1200), ps=1000 hPa     baseline (as coded)                     60   2378.3    0.00    7269  18.75  317.9
+moist (rh45, abl1200), ps=1000 hPa     baseline (as coded)                    600   2264.6    0.00    7210  18.15  317.9
+moist (rh45, abl1200), ps=1000 hPa     p0=1013.25 hPa                          60   2386.3    0.34    7268  18.82  319.1
+moist (rh45, abl1200), ps=1000 hPa     p0=1013.25 hPa                         600   2272.2    0.34    7208  18.22  319.1
+moist (rh45, abl1200), ps=1000 hPa     p0=local ps                             60   2378.3    0.00    7269  18.75  317.9
+moist (rh45, abl1200), ps=1000 hPa     p0=local ps                            600   2264.6    0.00    7210  18.15  317.9
+moist (rh45, abl1200), ps=1000 hPa     kappa forward=inverse=Rd/cp             60   2378.3    0.00    7269  18.75  317.9
+moist (rh45, abl1200), ps=1000 hPa     kappa forward=inverse=Rd/cp            600   2264.6    0.00    7210  18.15  317.9
+moist (rh45, abl1200), ps=1000 hPa     moisture per K of T, not theta          60   2378.3    0.00    7269  18.75  317.9
+moist (rh45, abl1200), ps=1000 hPa     moisture per K of T, not theta         600   2264.6    0.00    7210  18.15  317.9
+moist (rh45, abl1200), ps=1000 hPa     p0=local ps + per-K-of-T                60   2378.3    0.00    7269  18.75  317.9
+moist (rh45, abl1200), ps=1000 hPa     p0=local ps + per-K-of-T               600   2264.6    0.00    7210  18.15  317.9
+moist (rh45, abl1200), ps=1000 hPa     h2m=12 K/(g/kg) [comparator]           600   2092.2   -7.61    7055  17.52  317.9
+moist (rh45, abl1200), ps=1000 hPa     h2m=18 K/(g/kg) [comparator]           600   2392.3    5.64    7321  18.60  317.9
+moist (rh45, abl1200), ps=850 hPa      baseline (as coded)                     60   1519.1    0.00    6145  16.77  317.0
+moist (rh45, abl1200), ps=850 hPa      baseline (as coded)                    600   1519.4    0.00    6145  16.77  317.0
+moist (rh45, abl1200), ps=850 hPa      p0=1013.25 hPa                          60   1523.8    0.31    6142  16.83  318.2
+moist (rh45, abl1200), ps=850 hPa      p0=1013.25 hPa                         600   1524.1    0.31    6143  16.83  318.2
+moist (rh45, abl1200), ps=850 hPa      p0=local ps                             60   1544.7    1.69    6223  16.62  302.6
+moist (rh45, abl1200), ps=850 hPa      p0=local ps                            600   1478.4   -2.70    6180  16.13  302.6
+moist (rh45, abl1200), ps=850 hPa      kappa forward=inverse=Rd/cp             60   1519.1    0.00    6145  16.77  317.0
+moist (rh45, abl1200), ps=850 hPa      kappa forward=inverse=Rd/cp            600   1519.4    0.00    6145  16.77  317.0
+moist (rh45, abl1200), ps=850 hPa      moisture per K of T, not theta          60   1618.2    6.52    6223  17.41  317.0
+moist (rh45, abl1200), ps=850 hPa      moisture per K of T, not theta         600   1548.7    1.93    6180  16.89  317.0
+moist (rh45, abl1200), ps=850 hPa      p0=local ps + per-K-of-T                60   1544.7    1.69    6223  16.62  302.6
+moist (rh45, abl1200), ps=850 hPa      p0=local ps + per-K-of-T               600   1478.4   -2.70    6180  16.13  302.6
+moist (rh45, abl1200), ps=850 hPa      h2m=12 K/(g/kg) [comparator]           600   1377.2   -9.36    5964  16.13  317.0
+moist (rh45, abl1200), ps=850 hPa      h2m=18 K/(g/kg) [comparator]           600   1627.4    7.11    6277  17.21  317.0

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS launchd job: run the Tuscany pyroconvection daily generator every morning.
+  Install:
+    cp tests/it.pyflam.pyroconv-daily.plist ~/Library/LaunchAgents/
+    launchctl load   ~/Library/LaunchAgents/it.pyflam.pyroconv-daily.plist
+  Run once now:  launchctl start it.pyflam.pyroconv-daily
+  Disable:       launchctl unload ~/Library/LaunchAgents/it.pyflam.pyroconv-daily.plist
+  Logs:          /tmp/pyroconv-daily.out  /tmp/pyroconv-daily.err
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>it.pyflam.pyroconv-daily</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/cristianofoderi/-softEST/firelab-flammap6_install_0828_2025/pyflam/tests/run_pyroconv_daily.sh</string>
+    </array>
+    <!-- 07:30 local each day (ICON-2I 00Z run is available by ~05Z UTC) -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key><integer>7</integer>
+        <key>Minute</key><integer>30</integer>
+    </dict>
+    <!-- if the Mac was asleep at 07:30, run as soon as it wakes -->
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>/tmp/pyroconv-daily.out</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/pyroconv-daily.err</string>
+</dict>
+</plist>

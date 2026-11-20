@@ -77,13 +77,13 @@ def test_make_run_dir_and_zip(tmp_path):
 
 def _levels_from_gamma(gamma_700_500):
     """Build a 700/500 hPa temperature pair giving a target gamma_theta (K/m)."""
-    from pyflam.atmosphere import theta_kelvin
+    from pyflam.atmosphere import theta_kelvin, _KAPPA_DRY, _P0_HPA
     # theta at 700 fixed; solve theta500 = theta700 + gamma*(Z500 - Z700), then
-    # back out T from theta. theta = (T+273.15)*(1000/p)^0.286.
+    # back out T from theta with the module gauge: theta = (T+273.15)*(P0/p)^kappa.
     Z = pc.STD_LEVEL_HEIGHT_M
     th700 = theta_kelvin(5.0, 700.0)
     th500 = th700 + gamma_700_500 * (Z[500] - Z[700])
-    t500 = th500 * (500.0 / 1000.0) ** 0.286 - 273.15
+    t500 = th500 * (500.0 / _P0_HPA) ** _KAPPA_DRY - 273.15
     return 5.0, t500
 
 
@@ -129,3 +129,83 @@ def test_fire_size_hist_returns_figure():
     from pyflam_gui.core import plotting
     fig = plotting.fire_size_hist(np.array([1e4, 5e4, 0.0, np.nan, 2e5]), to_ha=1e-4)
     assert fig is not None
+
+
+def _mixed_column_at(ps_hpa, theta=310.0, gamma=3.0e-3):
+    """A column well mixed at ``theta`` from a surface at ``ps_hpa`` up to 700 hPa."""
+    from pyflam.atmosphere import _KAPPA_DRY, _P0_HPA
+    Z = pc.STD_LEVEL_HEIGHT_M
+    t_at = lambda th, p: th * (p / _P0_HPA) ** _KAPPA_DRY - 273.15
+    T2m = np.array([[t_at(theta, ps_hpa)]])
+    Tl = {850: np.array([[t_at(theta, 850.0)]]), 700: np.array([[t_at(theta, 700.0)]]),
+          500: np.array([[t_at(theta + gamma * (Z[500] - Z[700]), 500.0)]])}
+    return T2m, np.array([[25.0]]), Tl
+
+
+def _captured_ml_grad(monkeypatch, *args, **kw):
+    """Run classify and return the mixed-layer gradient it handed to the ladder."""
+    import pyflam.atmosphere as atm
+    seen = []
+    real = atm.pyroconvection_type
+
+    def spy(**k):
+        seen.append(k["ml_theta_gradient"])
+        return real(**k)
+    monkeypatch.setattr(atm, "pyroconvection_type", spy)
+    out = pc.classify(*args, **kw)
+    return out, (seen[0] if seen else None)
+
+
+def test_classify_uses_surface_pressure_for_surface_theta(monkeypatch):
+    """A well-mixed column on a 950 hPa surface has ~zero ML gradient -- not a stable one.
+
+    Before 2026-11 the 2 m state was treated as lying at 1000 hPa, which made theta_sfc
+    4.4 K too cold on a 950 hPa surface and read a neutral mixed layer as 3x the stable gate.
+    """
+    from pyflam.atmosphere import _ML_STABLE
+    T2m, RH, Tl = _mixed_column_at(950.0)
+    _, legacy = _captured_ml_grad(monkeypatch, T2m, RH, Tl)
+    _, fixed = _captured_ml_grad(monkeypatch, T2m, RH, Tl, ps_hpa=np.array([[950.0]]))
+    assert legacy > 2.0 * _ML_STABLE           # the bias the fix removes
+    assert abs(fixed) < 1.0e-6                 # well mixed is well mixed, at any elevation
+
+
+def test_classify_sea_level_matches_legacy_gradient(monkeypatch):
+    """At a 1000 hPa surface the pressure-aware path reproduces the old gradient exactly."""
+    T2m, RH, Tl = _mixed_column_at(1000.0, theta=305.0)
+    Tl[850] = Tl[850] + 1.0                    # some structure, so the gradient is non-zero
+    _, legacy = _captured_ml_grad(monkeypatch, T2m, RH, Tl)
+    _, fixed = _captured_ml_grad(monkeypatch, T2m, RH, Tl, ps_hpa=np.array([[1000.0]]))
+    assert fixed == pytest.approx(legacy, rel=1e-12)
+
+
+def test_classify_high_ground_is_nodata_not_quiet():
+    """A surface too close to 850 hPa gives no ML gradient: an honest blank, not class 0."""
+    T2m, RH, Tl = _mixed_column_at(950.0)
+    out = pc.classify(T2m, RH, Tl, ps_hpa=np.array([[820.0]]))
+    assert out[0, 0] == pc.PYROCONV_NODATA
+
+
+def test_surface_layer_terms_skips_underground_levels_and_measures_abl_above_ground():
+    """A level below the ground must not count as the ABL top, however warm it is.
+
+    On a 900 hPa surface the 1000 and 925 hPa values are extrapolations into the rock;
+    the ABL is found in the air above and returned as a height above the surface.
+    """
+    from pyflam.atmosphere import theta_kelvin
+    Z = {1000: 110.0, 925: 760.0, 850: 1457.0, 700: 3012.0, 500: 5574.0}
+    ps = np.array([[900.0]])
+    t2m = np.array([[20.0]])
+    th_sfc = float(theta_kelvin(20.0, 900.0))
+    th = {1000: np.array([[th_sfc + 9.0]]),        # underground and "warm": must be ignored
+          925: np.array([[th_sfc + 9.0]]),
+          850: np.array([[th_sfc + 0.2]]),
+          700: np.array([[th_sfc + 3.0]]),
+          500: np.array([[th_sfc + 12.0]])}
+    _, z_sfc, ml_grad, abl, usable = pc.surface_layer_terms(t2m, th, ps, Z)
+    assert usable[0, 0]
+    assert 900.0 < z_sfc[0, 0] < 1457.0
+    assert ml_grad[0, 0] == pytest.approx(0.2 / (1457.0 - z_sfc[0, 0]))
+    # crossing between 850 (+0.2) and 700 (+3.0) at +0.5 K, then counted from the ground
+    expect = 1457.0 + (0.3 / 2.8) * (3012.0 - 1457.0) - z_sfc[0, 0]
+    assert abl[0, 0] == pytest.approx(expect)

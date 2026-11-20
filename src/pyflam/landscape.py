@@ -190,6 +190,7 @@ def basic_fire_behavior(
     wind_midflame: float | np.ndarray = 0.0,
     load_factor: float = 1.0,
     nodata: float = np.nan,
+    effective_wind_limit: bool = False,
 ) -> dict[str, np.ndarray]:
     """Per-cell surface fire behavior over a whole landscape.
 
@@ -239,7 +240,8 @@ def basic_fire_behavior(
             else load_factor.get(num, 1.0)
         for sub, p in kernel_param_groups(mask, {"load_factor": lf, **moist}):
             kernel = surface_kernel(fm, **p)
-            r = kernel.rate_of_spread(wind[sub], tan_slope[sub])
+            r = kernel.rate_of_spread(wind[sub], tan_slope[sub],
+                                      effective_wind_limit=effective_wind_limit)
             i_byram = kernel.heat_per_unit_area * r / 60.0
             ros[sub] = r
             ri[sub] = kernel.reaction_intensity

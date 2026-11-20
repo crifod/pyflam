@@ -1,0 +1,137 @@
+[
+ {
+  "slug": "ede",
+  "obs_class": "Surface plume",
+  "br_max": 180.0
+ },
+ {
+  "slug": "rojals-plans-de-sant-joan",
+  "obs_class": "Surface plume",
+  "br_max": 0.2
+ },
+ {
+  "slug": "drunen",
+  "obs_class": "Surface plume",
+  "br_max": null
+ },
+ {
+  "slug": "orista-traveries-obertes",
+  "obs_class": "Surface plume",
+  "br_max": null
+ },
+ {
+  "slug": "varnavas",
+  "obs_class": "Convective plume",
+  "br_max": 2750.0
+ },
+ {
+  "slug": "katsimidi",
+  "obs_class": "Convective plume",
+  "br_max": 2000.0
+ },
+ {
+  "slug": "lavrio",
+  "obs_class": "Convective plume",
+  "br_max": 795.0
+ },
+ {
+  "slug": "patagual",
+  "obs_class": "Convective plume",
+  "br_max": 230.0
+ },
+ {
+  "slug": "granyena",
+  "obs_class": "Convective plume",
+  "br_max": 190.0
+ },
+ {
+  "slug": "vega-honda",
+  "obs_class": "Convective plume",
+  "br_max": 170.0
+ },
+ {
+  "slug": "thimari",
+  "obs_class": "Convective plume",
+  "br_max": 110.0
+ },
+ {
+  "slug": "manuel-rodriguez",
+  "obs_class": "Convective plume",
+  "br_max": 110.0
+ },
+ {
+  "slug": "san-patricio",
+  "obs_class": "Convective plume",
+  "br_max": 100.0
+ },
+ {
+  "slug": "batea",
+  "obs_class": "Convective plume",
+  "br_max": 100.0
+ },
+ {
+  "slug": "mequinensa",
+  "obs_class": "Convective plume",
+  "br_max": 70.0
+ },
+ {
+  "slug": "etos",
+  "obs_class": "Convective plume",
+  "br_max": 65.0
+ },
+ {
+  "slug": "junquillos",
+  "obs_class": "Convective plume",
+  "br_max": 40.0
+ },
+ {
+  "slug": "vilanova-de-meia",
+  "obs_class": "Convective plume",
+  "br_max": null
+ },
+ {
+  "slug": "la-figuera",
+  "obs_class": "Convective plume",
+  "br_max": null
+ },
+ {
+  "slug": "martorell",
+  "obs_class": "PyroCu",
+  "br_max": 90.0
+ },
+ {
+  "slug": "el-valle-2",
+  "obs_class": "Overshooting PyroCu",
+  "br_max": 780.0
+ },
+ {
+  "slug": "pauls",
+  "obs_class": "Overshooting PyroCu",
+  "br_max": 775.0
+ },
+ {
+  "slug": "la-capellania",
+  "obs_class": "Overshooting PyroCu",
+  "br_max": 120.0
+ },
+ {
+  "slug": "pont-de-vilomara",
+  "obs_class": "Resilient PyroCu",
+  "br_max": 600.0
+ },
+ {
+  "slug": "tortosa",
+  "obs_class": "Resilient PyroCu",
+  "br_max": 40.0
+ },
+ {
+  "slug": "guissona",
+  "obs_class": "Deep PyroCu / PyroCb",
+  "br_max": 6000.0
+ },
+ {
+  "slug": "santa-coloma-de-queralt",
+  "obs_class": "Deep PyroCu / PyroCb",
+  "br_max": 450.0
+ }
+]

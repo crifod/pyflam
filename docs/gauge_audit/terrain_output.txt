@@ -1,0 +1,8 @@
+hot-dry (rh25, abl1800)    ps= 1000  (p0/ps)^k=1.000  as-coded=   8388  p0=ps:  +0.0%  moist-per-T:  +0.0%
+hot-dry (rh25, abl1800)    ps=  925  (p0/ps)^k=1.023  as-coded=   5828  p0=ps:  -1.1%  moist-per-T:  +1.2%
+hot-dry (rh25, abl1800)    ps=  850  (p0/ps)^k=1.048  as-coded=   3682  p0=ps:  +4.5%  moist-per-T:  +9.4%
+hot-dry (rh25, abl1800)    ps=  750  (p0/ps)^k=1.086  as-coded=   2038  p0=ps:  -3.7%  moist-per-T:  +4.5%
+moist (rh45, abl1200)      ps= 1000  (p0/ps)^k=1.000  as-coded=   2262  p0=ps:  +0.0%  moist-per-T:  +0.0%
+moist (rh45, abl1200)      ps=  925  (p0/ps)^k=1.023  as-coded=   1880  p0=ps:  -1.4%  moist-per-T:  +0.8%
+moist (rh45, abl1200)      ps=  850  (p0/ps)^k=1.048  as-coded=   1518  p0=ps:  -3.0%  moist-per-T:  +1.6%
+moist (rh45, abl1200)      ps=  750  (p0/ps)^k=1.086  as-coded=    821  p0=ps:  -4.6%  moist-per-T:  +3.6%

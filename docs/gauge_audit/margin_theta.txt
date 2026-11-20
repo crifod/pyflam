@@ -1,0 +1,46 @@
+### moisture_reference = theta
+window             n     rho         p
++/- 2 h           22  +0.249    0.2502
++/- 4 h           22  +0.281    0.1910
++/- 8 h           22  +0.321    0.1292
+whole fire        22  +0.204    0.3518
+
+ladder prediction  27  -0.178    0.3650   (reference)
+
+fire                       obs  crit ha/h  max ha/h (whole)  margin
+guissona                     4       3186              7869   +0.39
+santa-coloma-de-queralt      4      10302               358   -1.46
+tortosa                      3       1380                46   -1.47
+pont-de-vilomara             3       6377              1081   -0.77
+la-capellania                2      10327               113   -1.96
+el-valle-2                   2       9717               705   -1.14
+el-valle-2                   2       5172               705   -0.87
+pauls                        2       6776               739   -0.96
+pauls                        2      11914               739   -1.21
+pauls                        2      29394               739   -1.60
+martorell                    2       1610               103   -1.19
+vilanova-de-meia             1       1428                45   -1.50
+manuel-rodriguez             1        681               216   -0.50
+patagual                     1      23193               266   -1.94
+vega-honda                   1      16774              3597   -0.67
+junquillos                   1      16599                53   -2.49
+san-patricio                 1      20992                18   -3.06
+san-patricio                 1      23752                18   -3.11
+san-patricio                 1       7020                18   -2.58
+granyena                     1        653               134   -0.69
+granyena                     1        594               134   -0.65
+rojals-plans-de-sant-joan    0       4155               nan    +nan
+ede                          0       2695               151   -1.25
+drunen                       0       9293               nan    +nan
+orista-traveries-obertes     0       1367               nan    +nan
+orista-traveries-obertes     0       7245               nan    +nan
+rojals-plans-de-sant-joan    0       3351               nan    +nan
+
+class balance (obs): {0: 6, 1: 10, 2: 7, 3: 2, 4: 2}
+majority-class baseline: always predict 1 -> 10/27 = 37%
+ladder exact           : 12/27 = 44%
+ladder predictions     : {1: 20, 2: 4, 3: 1, 4: 2}
+
+margin>0 detects class>=4: TP=1 FP=0 FN=1 TN=20  (n=22, one-tailed Fisher p=0.091)
+
+margin>0 detects class>=3: TP=1 FP=0 FN=3 TN=18  (n=22, one-tailed Fisher p=0.182)
